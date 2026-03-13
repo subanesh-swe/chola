@@ -1,0 +1,241 @@
+syntax = "proto3";
+package orchestrator;
+
+// ============================================================================
+// Service Definition
+// ============================================================================
+
+service Orchestrator {
+  // Worker registration with the controller
+  rpc Register (RegisterRequest) returns (RegisterResponse);
+
+  // Bidirectional heartbeat stream
+  rpc Heartbeat (stream HeartbeatMessage) returns (stream HeartbeatAck);
+
+  // Controller pushes job assignments to worker (server-side stream)
+  rpc JobStream (JobStreamRequest) returns (stream JobAssignment);
+
+  // Worker reports job status updates
+  rpc ReportJobStatus (JobStatusUpdate) returns (JobStatusAck);
+
+  // Worker streams logs to controller (client-side stream)
+  rpc StreamLogs (stream LogChunk) returns (LogAck);
+
+  // Reconnect: worker sends current state, controller reconciles
+  rpc Reconnect (ReconnectRequest) returns (ReconnectResponse);
+
+  // Submit a job to the controller (client API)
+  rpc SubmitJob (SubmitJobRequest) returns (SubmitJobResponse);
+
+  // Query job status (client API)
+  rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
+
+  // Stream job logs in real-time (client API)
+  rpc WatchJobLogs (WatchJobLogsRequest) returns (stream LogChunk);
+
+  // Cancel a running job (client API)
+  rpc CancelJob (CancelJobRequest) returns (CancelJobResponse);
+}
+
+// ============================================================================
+// Registration
+// ============================================================================
+
+message RegisterRequest {
+  string worker_id = 1;
+  string hostname = 2;
+  uint32 total_cpu = 3;
+  uint64 total_memory_mb = 4;
+  uint64 total_disk_mb = 5;
+  string disk_type = 6;            // "nvme" | "sata"
+  repeated string supported_job_types = 7;
+  bool docker_enabled = 8;
+}
+
+message RegisterResponse {
+  bool accepted = 1;
+  string message = 2;
+  uint32 heartbeat_interval_secs = 3;
+}
+
+// ============================================================================
+// Heartbeat
+// ============================================================================
+
+message HeartbeatMessage {
+  string worker_id = 1;
+  double used_cpu_percent = 2;
+  uint64 used_memory_mb = 3;
+  uint64 used_disk_mb = 4;
+  repeated string running_job_ids = 5;
+  double system_load = 6;
+  int64 timestamp_unix = 7;
+}
+
+message HeartbeatAck {
+  bool ok = 1;
+  string message = 2;
+}
+
+// ============================================================================
+// Job Assignment
+// ============================================================================
+
+message JobStreamRequest {
+  string worker_id = 1;
+}
+
+message JobAssignment {
+  string job_id = 1;
+  string command = 2;
+  string job_type = 3;             // "common" | "heavy" | "nix" | "test"
+  uint32 required_cpu = 4;
+  uint64 required_memory_mb = 5;
+  uint64 required_disk_mb = 6;
+  bool isolation_required = 7;
+  string branch_id = 8;
+  map<string, string> environment = 9;
+
+  // Cancel directive - when present, worker should cancel this job
+  CancelDirective cancel = 10;
+}
+
+message CancelDirective {
+  string job_id = 1;
+  string reason = 2;
+  int32 signal = 3;  // Signal to send: 2=SIGINT, 15=SIGTERM, 9=SIGKILL
+}
+
+// ============================================================================
+// Job Status
+// ============================================================================
+
+message JobStatusUpdate {
+  string worker_id = 1;
+  string job_id = 2;
+  JobState state = 3;
+  string message = 4;
+  int32 exit_code = 5;
+  int64 timestamp_unix = 6;
+  string output = 7;
+}
+
+enum JobState {
+  JOB_STATE_UNKNOWN = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_ASSIGNED = 2;
+  JOB_STATE_RUNNING = 3;
+  JOB_STATE_SUCCESS = 4;
+  JOB_STATE_FAILED = 5;
+  JOB_STATE_CANCELLED = 6;
+}
+
+message JobStatusAck {
+  bool ok = 1;
+  string message = 2;
+}
+
+// ============================================================================
+// Log Streaming
+// ============================================================================
+
+message LogChunk {
+  string worker_id = 1;
+  string job_id = 2;
+  uint64 offset = 3;
+  bytes data = 4;
+  int64 timestamp_unix = 5;
+}
+
+message LogAck {
+  string job_id = 1;
+  uint64 last_offset = 2;
+}
+
+// ============================================================================
+// Reconnect
+// ============================================================================
+
+message ReconnectRequest {
+  string worker_id = 1;
+  repeated RunningJobInfo running_jobs = 2;
+}
+
+message RunningJobInfo {
+  string job_id = 1;
+  JobState state = 2;
+  uint64 log_offset = 3;
+}
+
+message ReconnectResponse {
+  bool accepted = 1;
+  string message = 2;
+  repeated LogResumeDirective log_resumes = 3;
+}
+
+message LogResumeDirective {
+  string job_id = 1;
+  uint64 resume_from_offset = 2;
+}
+
+// ============================================================================
+// Job Submission (Client API)
+// ============================================================================
+
+message SubmitJobRequest {
+  string job_id = 1;
+  string command = 2;
+  string job_type = 3;             // "common" | "heavy" | "nix" | "test"
+  uint32 required_cpu = 4;
+  uint64 required_memory_mb = 5;
+  uint64 required_disk_mb = 6;
+  bool isolation_required = 7;
+  string branch_id = 8;
+  map<string, string> environment = 9;
+}
+
+message SubmitJobResponse {
+  bool accepted = 1;
+  string message = 2;
+  string job_id = 3;
+}
+
+// ============================================================================
+// Job Status Query (Client API)
+// ============================================================================
+
+message GetJobStatusRequest {
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  bool found = 1;
+  string job_id = 2;
+  JobState state = 3;
+  string message = 4;
+  int32 exit_code = 5;
+  string output = 6;
+}
+
+// ============================================================================
+// Log Watching (Client API)
+// ============================================================================
+
+message WatchJobLogsRequest {
+  string job_id = 1;
+  uint64 from_offset = 2;  // 0 = from beginning
+}
+
+// ============================================================================
+// Job Cancellation (Client API)
+// ============================================================================
+
+message CancelJobRequest {
+  string job_id = 1;
+  string reason = 2;
+}
+
+message CancelJobResponse {
+  bool accepted = 1;
+  string message = 2;
+}

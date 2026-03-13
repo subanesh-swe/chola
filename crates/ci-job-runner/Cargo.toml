@@ -1,0 +1,20 @@
+[package]
+name = "ci-job-runner"
+description = "CLI tool to submit jobs to CI Controller"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ci-job-runner"
+path = "src/main.rs"
+
+[dependencies]
+ci-core = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

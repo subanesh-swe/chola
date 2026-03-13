@@ -1,0 +1,29 @@
+worker_id: "worker-a"
+hostname: "build-node-1"
+
+controller:
+  address: "http://localhost:50051"
+
+resources:
+  total_cpu: 16
+  total_memory_gb: 128
+  total_disk_gb: 500
+  disk_type: "nvme"
+
+capabilities:
+  supported_job_types:
+    - "common"
+    - "heavy"
+    - "nix"
+    - "test"
+  docker_enabled: true
+
+heartbeat:
+  interval_secs: 3
+
+execution:
+  work_dir: "/tmp/ci-worker/jobs"
+  log_dir: "/tmp/ci-worker/logs"
+
+logging:
+  level: "info"

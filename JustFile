@@ -1,0 +1,34 @@
+set shell := ["bash", "-cu"]
+
+controller:
+    cargo run -p ci-controller -- --config config/controller.example.yaml
+
+# Usage: 
+#   just worker         -> uses config/worker.example.yaml
+#   just worker custom  -> uses config/custom.example.yaml
+worker name='worker-1':
+    cargo run -p ci-worker -- --config config/{{name}}.example.yaml
+
+job-runner job_id cmd:
+    cargo run -p ci-job-runner -- \
+        --config config/controller.example.yaml \
+        --job-id {{job_id}} \
+        -- \
+        '{{cmd}}'
+
+# Generate a unique ID using a timestamp and a random string
+job_id := `date +job-%Y%m%dT%H%M%S-` + `head /dev/urandom | tr -dc a-z0-9 | head -c 4`
+
+# job-runner-auto submits a job with auto-generated job ID
+# The command is automatically quoted, so you can use &&, ;, |, etc. directly:
+#
+#   just job-runner-auto "echo \"started at \$(date)\" && sleep 30 && echo \"done\""
+#
+# NOTE: Use \" for literal quotes and \$ to prevent variable expansion on client side.
+# The $(date) will be expanded on the WORKER side when the command runs.
+job-runner-auto cmd:
+    cargo run -p ci-job-runner -- \
+        --config config/controller.example.yaml \
+        --job-id {{job_id}} \
+        -- \
+        '{{cmd}}'

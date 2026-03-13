@@ -1,0 +1,25 @@
+[package]
+name = "ci-core"
+description = "ci-core"
+version.workspace = true
+edition.workspace = true
+
+include = [
+  "Cargo.toml",
+  "src/**/*",
+  "proto/orchestrator.proto"
+]
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+prost-build = { version = "0.13"}

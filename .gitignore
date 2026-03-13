@@ -1,0 +1,34 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Nix
+result
+result-*
+.pre-commit-config.yaml
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Config files (may contain secrets)
+*.yaml
+*.yml
+!*.example.yaml
+
+# TLS certificates
+certs/
+
+# Logs
+logs/
+*.log
+
+# SQLite
+*.db
+
+# OS
+.DS_Store
+.direnv/flake-profile*
+.gitignore

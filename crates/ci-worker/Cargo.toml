@@ -1,0 +1,25 @@
+[package]
+name = "ci-worker"
+description = "ci-worker"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ci-worker"
+path = "src/main.rs"
+
+[dependencies]
+ci-core = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+libc = "0.2"

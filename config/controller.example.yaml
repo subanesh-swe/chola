@@ -1,0 +1,24 @@
+bind_address: "0.0.0.0:50051"
+
+storage:
+  postgres:
+    url: "postgres://ci:ci@localhost:5432/ci_orchestrator"
+    max_connections: 10
+
+redis:
+  url: "redis://localhost:6379"
+  key_prefix: "ci:"
+
+scheduling:
+  strategy: "best-fit"
+  nvme_preference: true
+  branch_affinity: true
+
+workers:
+  heartbeat_interval_secs: 3
+  heartbeat_timeout_secs: 10
+  max_reconnect_attempts: 5
+
+logging:
+  level: "info"
+  log_dir: "logs/"
