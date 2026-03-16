@@ -6,6 +6,164 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
+// ── Process-tree termination helpers ────────────────────────────────────────
+
+/// Walk `/proc` to collect every descendant PID of `root_pid` (breadth-first).
+///
+/// Reading `/proc/<n>/status` for every numeric entry in `/proc` is O(n) in the
+/// total number of processes on the machine, but it is correct across process-group
+/// boundaries — unlike `kill(-pgid, sig)` which misses descendants that called
+/// `setpgid`/`setsid` (e.g. nix build sandboxes).
+fn collect_descendants(root_pid: i32) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec::new();
+    // frontier: PIDs whose children we still need to discover
+    let mut frontier: Vec<i32> = vec![root_pid];
+
+    while !frontier.is_empty() {
+        let mut next_frontier: Vec<i32> = Vec::new();
+        // Snapshot /proc once per generation
+        let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+            break;
+        };
+        for entry in proc_dir.flatten() {
+            let name = entry.file_name();
+            let Ok(child_pid) = name.to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            if child_pid == root_pid {
+                continue; // skip root itself
+            }
+            let status_path = format!("/proc/{}/status", child_pid);
+            let Ok(status) = std::fs::read_to_string(&status_path) else {
+                continue; // process may have already exited
+            };
+            for line in status.lines() {
+                if let Some(rest) = line.strip_prefix("PPid:") {
+                    let ppid: i32 = rest.trim().parse().unwrap_or(0);
+                    if frontier.contains(&ppid) {
+                        result.push(child_pid);
+                        next_frontier.push(child_pid);
+                    }
+                    break;
+                }
+            }
+        }
+        frontier = next_frontier;
+    }
+
+    result
+}
+
+/// Send `signal` to the process and all its descendants, wait for them to exit,
+/// then force-kill any survivors with SIGKILL — mirroring the Python psutil pattern.
+///
+/// This does NOT reap the direct child (call `child.wait()` yourself after this
+/// returns, since only the parent process may call waitpid on a child).
+async fn terminate_process_tree(pid: i32, signal: i32) {
+    info!(
+        "Sending signal {} to process tree (root PID: {})",
+        signal, pid
+    );
+
+    // Snapshot all descendants BEFORE signalling — some may exit and their PIDs
+    // may be reused if we wait until after signals are sent.
+    let descendants = collect_descendants(pid);
+    info!(
+        "Found {} descendant process(es) under PID {}",
+        descendants.len(),
+        pid
+    );
+
+    // ── 1. Signal the root process ──────────────────────────────────────────
+    // SAFETY: `pid` came from a child we just spawned with Command::spawn().
+    // Race: if the child already exited and the PID was reused we may signal
+    // an unrelated process — this is an inherent POSIX limitation.  We check
+    // the return value and log, but do not abort.
+    let rc = unsafe { libc::kill(pid, signal) };
+    if rc != 0 {
+        warn!(
+            "kill({}, {}) failed: {}",
+            pid,
+            signal,
+            std::io::Error::last_os_error()
+        );
+    } else {
+        info!("Sent signal {} to root PID {}", signal, pid);
+    }
+
+    // ── 2. Wait up to 5 s for the root to exit ──────────────────────────────
+    // We poll with kill(pid, 0): returns 0 while alive, -1/ESRCH when gone.
+    // (The child is reaped by `child.wait()` in the caller; here we only
+    //  check liveness so we can decide whether to escalate.)
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // SAFETY: same as above.
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            info!("Root process {} exited.", pid);
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            warn!(
+                "Root process {} did not exit in 5 s after signal {}.",
+                pid, signal
+            );
+            break;
+        }
+    }
+
+    // ── 3. Signal all descendant processes ──────────────────────────────────
+    for &child_pid in &descendants {
+        // SAFETY: same race caveat as above; we ignore ESRCH (already gone).
+        let rc = unsafe { libc::kill(child_pid, signal) };
+        if rc == 0 {
+            info!("Sent signal {} to descendant PID {}", signal, child_pid);
+        }
+        // silently skip ESRCH — process may have already exited on its own
+    }
+
+    // ── 4. Wait up to 10 s for descendants; SIGKILL survivors ───────────────
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // SAFETY: kill(pid, 0) is a liveness probe, no signal is delivered.
+        let alive: Vec<i32> = descendants
+            .iter()
+            .copied()
+            .filter(|&p| unsafe { libc::kill(p, 0) } == 0)
+            .collect();
+
+        if alive.is_empty() {
+            info!("All descendant processes exited.");
+            break;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            warn!(
+                "{} descendant(s) still alive after 10 s — sending SIGKILL",
+                alive.len()
+            );
+            for &child_pid in &alive {
+                warn!("Force-killing descendant PID {}", child_pid);
+                // SAFETY: same rationale; SIGKILL cannot be caught or ignored.
+                let _ = unsafe { libc::kill(child_pid, libc::SIGKILL) };
+            }
+            break;
+        }
+    }
+
+    // ── 5. Ensure root is gone (escalate to SIGKILL if needed) ──────────────
+    // SAFETY: liveness probe.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        warn!("Root process {} still alive — sending SIGKILL", pid);
+        // SAFETY: same rationale as above.
+        let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+
+    info!("Process tree termination complete for PID {}.", pid);
+}
+
 /// A single line of log output from the executor
 #[derive(Debug, Clone)]
 pub struct LogLine {
@@ -225,53 +383,58 @@ impl Executor {
                 }
             }
 
-            // Cancellation signal - receives the signal to send
+            // Cancellation signal — receives the signal number to send (e.g. SIGINT=2)
             Some(signal) = cancel_rx.recv() => {
-                info!("Received cancel signal for job, sending signal {} to process group {}", signal, -pid);
+                info!(
+                    "Received cancel signal for job, terminating process tree (root PID: {})",
+                    pid
+                );
 
-                // Mark as cancelled
+                // Set the cancelled flag so the reader tasks break out of their
+                // next_line() loop on the next iteration check.
                 running_job.lock().await.cancelled = true;
 
-                // Kill the entire process group
-                // Use negative PID to kill the process group
-                let pgid = -pid;
+                // Walk the entire process tree and terminate every process,
+                // including grandchildren that created their own process groups
+                // (e.g. nix build sandboxes). Escalates to SIGKILL automatically
+                // if any process does not exit within its grace period.
+                terminate_process_tree(pid, signal).await;
 
-                // Send the requested signal (e.g., SIGINT=2, SIGTERM=15, SIGKILL=9)
-                let signal_result = unsafe { libc::kill(pgid, signal) };
-                if signal_result != 0 {
-                    warn!("Signal {} failed for process group {}", signal, pgid);
-                } else {
-                    info!("Successfully sent signal {} to process group {}", signal, pgid);
+                // Reap the direct child (`sh`).  This MUST be called here because
+                // only the parent process may waitpid() on a child; terminate_process_tree
+                // can only probe liveness via kill(pid, 0) for the root.
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(5),
+                    child.wait(),
+                )
+                .await
+                {
+                    Ok(Ok(status)) => info!("Direct child reaped: {:?}", status),
+                    Ok(Err(e))     => warn!("Error reaping direct child: {}", e),
+                    Err(_)         => error!("Timed out waiting for direct child to be reaped"),
                 }
 
-                // If not SIGKILL, give processes a moment to exit gracefully
-                if signal != libc::SIGKILL {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-                    // Check if still running, then force kill
-                    let check_result = unsafe { libc::kill(pgid, 0) };
-                    if check_result == 0 {
-                        warn!("Process group still alive after signal {}, sending SIGKILL", signal);
-                        let _ = unsafe { libc::kill(pgid, libc::SIGKILL) };
-                    }
-                }
-
-                // Wait for process to be reaped
-                match child.wait().await {
-                    Ok(status) => {
-                        info!("Process terminated after cancel: {:?}", status);
-                    }
-                    Err(e) => {
-                        warn!("Error waiting for cancelled process: {}", e);
-                    }
-                }
+                // Abort the stdout/stderr reader tasks.
+                //
+                // Descendants that survived in their own process groups keep the
+                // pipe write-ends open, so `lines.next_line().await` blocks forever.
+                // Aborting the tasks:
+                //   1. Cancels the blocked next_line() call immediately.
+                //   2. Drops the `log_tx` sender clones held by each task.
+                //   3. Closes the channel → log streamer finishes at once.
+                info!("Aborting pipe reader tasks to unblock log streamer");
+                stdout_handle.abort();
+                stderr_handle.abort();
 
                 // Return negative of the signal to indicate cancellation
                 -signal
             }
         };
 
-        // Wait for both readers to finish (they may have stopped due to cancellation)
+        // Wait for both readers to finish.
+        // Normal exit path: give up to 2s for the pipe to drain naturally.
+        // Cancellation path: tasks were aborted above so these resolve instantly
+        // (with JoinError::Cancelled, which we intentionally ignore).
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), stdout_handle).await;
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), stderr_handle).await;
 
