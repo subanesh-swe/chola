@@ -172,6 +172,7 @@ pub struct LogLine {
 }
 
 /// Result of a job execution
+#[derive(Debug)]
 pub struct ExecutionResult {
     pub exit_code: i32,
     pub output: String,
@@ -252,6 +253,8 @@ impl Executor {
         mut cancel_rx: mpsc::Receiver<i32>,
     ) -> anyhow::Result<ExecutionResult> {
         info!("Executing command (streaming): {}", command);
+        info!("Working directory: {}", work_dir);
+        info!("Log path: {}", log_path);
 
         // Use process group(0) to create a new process group
         // This allows us to kill all child processes on cancel

@@ -221,7 +221,7 @@ async fn run_session(
                             continue;
                         }
 
-                        info!("Received job assignment: {}", job_id);
+                        info!("Received job assignment: {} (command: {})", job_id, assignment.command);
 
                         {
                             let jobs = running_jobs.read().await;
@@ -249,11 +249,16 @@ async fn run_session(
                         let job_client = client.clone();
                         let log_client = client.clone();
                         let worker_id_clone = config.worker_id.clone();
+                        let job_id_clone = job_id.clone();
                         let running_jobs_clone = running_jobs.clone();
+                        let command_clone = assignment.command.clone();
+
+                        info!("Spawning job {} with command: {}", job_id_clone, command_clone);
 
                         tokio::spawn(async move {
+                            info!("Job {} task started, calling run_job_with_streaming", job_id_clone);
                             run_job_with_streaming(
-                                &worker_id_clone, &job_id, &assignment.command,
+                                &worker_id_clone, &job_id_clone, &command_clone,
                                 &work_dir, &log_dir, &job_client, &log_client,
                                 running_jobs_clone.clone(), cancel_rx,
                             ).await;
@@ -319,8 +324,14 @@ async fn run_job_with_streaming(
     running_jobs: Arc<tokio::sync::RwLock<Vec<RunningJobState>>>,
     cancel_rx: mpsc::Receiver<i32>,
 ) {
+    info!(
+        "run_job_with_streaming: job_id={}, command={}",
+        job_id, command
+    );
+
     // Report job started
-    let _ = job_client
+    info!("Reporting job {} as Running to controller", job_id);
+    let status_result = job_client
         .report_job_status(JobStatusUpdate {
             worker_id: worker_id.to_string(),
             job_id: job_id.to_string(),
@@ -331,10 +342,13 @@ async fn run_job_with_streaming(
             output: String::new(),
         })
         .await;
+    info!("Reported job {} as Running: {:?}", job_id, status_result);
 
     // Set up: Executor → mpsc → LogStreamer → gRPC StreamLogs → Controller
     let (log_tx, log_rx) = mpsc::channel(256);
     let log_path = format!("{}/{}.log", log_dir, job_id);
+
+    info!("Starting log streamer for job {} at {}", job_id, log_path);
 
     // Start log streamer in background
     let streamer = LogStreamer::new();
@@ -343,11 +357,21 @@ async fn run_job_with_streaming(
     let slc = log_client.clone();
     let log_handle = tokio::spawn(async move { streamer.stream(sw, sj, log_rx, slc).await });
 
+    info!(
+        "Log streamer spawned, now executing command for job {}",
+        job_id
+    );
+
     // Execute — lines flow through log_tx to streamer
     let executor = Executor::new();
     let result = executor
         .execute_streaming(command, work_dir, &log_path, log_tx, cancel_rx)
         .await;
+
+    info!(
+        "Command execution finished for job {}: {:?}",
+        job_id, result
+    );
 
     // Wait for log streamer to finish flushing
     let log_bytes = match log_handle.await {

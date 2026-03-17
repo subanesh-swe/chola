@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use tokio::sync::broadcast;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// A log chunk with metadata for broadcasting
 #[derive(Clone, Debug)]
@@ -141,7 +141,7 @@ impl LogAggregator {
         };
         let _ = state.broadcast_tx.send(chunk_data);
 
-        info!(
+        debug!(
             "Log chunk: job={}, offset={}, bytes={}, total={}",
             job_id, offset, chunk_len, state.total_bytes
         );
