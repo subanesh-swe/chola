@@ -23,5 +23,10 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
+deadpool-redis = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tokio-util = { workspace = true }
+rand = { workspace = true }

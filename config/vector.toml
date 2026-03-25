@@ -1,0 +1,45 @@
+# Vector configuration for CI log shipping
+# Run with: vector --config config/vector.toml
+
+[sources.controller_logs]
+type = "file"
+include = ["/var/log/ci-orchestrator/**/*.log"]
+read_from = "beginning"
+
+[transforms.parse_metadata]
+type = "remap"
+inputs = ["controller_logs"]
+source = '''
+  # Extract job_group_id and stage_name from file path
+  # Path format: /var/log/ci-orchestrator/{job_group_id}/{stage_name}.log
+  # Or legacy:   /var/log/ci-orchestrator/{job_id}.log
+  segments = split(string!(.file), "/")
+  if length(segments) >= 2 {
+    .stage_name = replace(segments[-1], ".log", "")
+    .job_group_id = segments[-2]
+  }
+  .source = "controller"
+'''
+
+[sources.worker_logs]
+type = "file"
+include = ["/tmp/ci-worker/logs/**/*.log"]
+read_from = "beginning"
+
+[transforms.parse_worker_metadata]
+type = "remap"
+inputs = ["worker_logs"]
+source = '''
+  segments = split(string!(.file), "/")
+  if length(segments) >= 2 {
+    .stage_name = replace(segments[-1], ".log", "")
+    .job_group_id = segments[-2]
+  }
+  .source = "worker"
+'''
+
+[sinks.opensearch]
+type = "elasticsearch"
+inputs = ["parse_metadata", "parse_worker_metadata"]
+endpoints = ["http://localhost:9200"]
+bulk.index = "ci-logs-%Y.%m.%d"

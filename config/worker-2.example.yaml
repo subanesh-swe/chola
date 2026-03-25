@@ -1,5 +1,6 @@
 worker_id: "worker-b"
 hostname: "build-node-2"
+http_port: 8082
 
 controller:
   address: "http://localhost:50051"

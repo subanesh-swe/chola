@@ -1,19 +1,48 @@
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use ci_core::models::config::WorkerConfig;
 use ci_core::proto::orchestrator::{
-    JobState, JobStatusUpdate, ReconnectRequest, RegisterRequest, RunningJobInfo,
+    JobState, JobStatusAck, JobStatusUpdate, ReconnectRequest, RegisterRequest, RunningJobInfo,
 };
 
-use crate::executor::Executor;
+use crate::executor::{ExecutionResult, Executor};
 use crate::grpc_client::GrpcClient;
 use crate::log_streamer::LogStreamer;
 use crate::reconnect::ReconnectHandler;
+use crate::stage_runner::{StageResult, StageRunner, StageState};
+
+/// Context for a job execution, grouping related parameters.
+struct JobContext {
+    worker_id: String,
+    job_id: String,
+    command: String,
+    work_dir: String,
+    log_dir: String,
+    pre_script: String,
+    post_script: String,
+    max_duration_secs: i32,
+    job_group_id: String,
+    stage_name: String,
+}
+
+/// Outcome of a job or stage execution, used to build the final status report.
+struct StatusReport {
+    state: JobState,
+    message: String,
+    exit_code: i32,
+    phase: String,
+    pre_exit_code: i32,
+    post_exit_code: i32,
+}
 
 /// Main worker agent loop with reconnect support
-pub async fn run(config: WorkerConfig) -> anyhow::Result<()> {
+pub async fn run(
+    config: WorkerConfig,
+    metrics: Option<crate::http_server::WorkerMetrics>,
+) -> anyhow::Result<()> {
     info!("Worker agent starting");
 
     tokio::fs::create_dir_all(&config.execution.work_dir).await?;
@@ -31,57 +60,43 @@ pub async fn run(config: WorkerConfig) -> anyhow::Result<()> {
 
     // Main reconnect loop
     loop {
-        match run_session(&config, &running_jobs, &reconnect_handler).await {
+        match run_session(&config, &running_jobs, &reconnect_handler, &metrics).await {
             Ok(_) => {
                 info!("Agent session ended gracefully");
                 break;
             }
             Err(e) => {
                 error!("Session error: {}", e);
-                warn!("Attempting to reconnect...");
+                warn!("Attempting to reconnect with exponential backoff...");
 
-                // Prepare reconnect state
-                let jobs_snapshot = running_jobs.read().await.clone();
-                let running_job_infos: Vec<RunningJobInfo> = jobs_snapshot
-                    .iter()
-                    .map(|j| RunningJobInfo {
-                        job_id: j.job_id.clone(),
-                        state: JobState::Running as i32,
-                        log_offset: j.log_offset,
-                    })
-                    .collect();
-
-                // Try to reconnect with backoff
-                let client = GrpcClient::connect(&config.controller.address).await;
-                match client {
-                    Ok(client) => {
-                        let reconnect_result = reconnect_handler
-                            .reconnect(config.worker_id.clone(), |req| {
-                                let client = client.clone();
-                                async move { client.reconnect(req).await }
-                            })
-                            .await;
-
-                        match reconnect_result {
-                            Ok(result) => {
-                                let resume_directives =
-                                    ReconnectHandler::process_resume_directives(&result.response);
-                                info!(
-                                    "Reconnected successfully, received {} resume directives",
-                                    resume_directives.len()
-                                );
-                                handle_resume_directives(&running_jobs, &resume_directives).await;
-                            }
-                            Err(e) => {
-                                error!("Reconnect failed: {}", e);
-                                // Clear running jobs state since controller doesn't know about them
-                                running_jobs.write().await.clear();
-                            }
+                let controller_addr = config.controller.address.clone();
+                let reconnect_result = reconnect_handler
+                    .reconnect(config.worker_id.clone(), |req| {
+                        let addr = controller_addr.clone();
+                        async move {
+                            let client = GrpcClient::connect(&addr).await?;
+                            client.reconnect(req).await
                         }
+                    })
+                    .await;
+
+                match reconnect_result {
+                    Ok(result) => {
+                        let resume_directives =
+                            ReconnectHandler::process_resume_directives(&result.response);
+                        info!(
+                            "Reconnected after {} attempt(s) in {:?}, received {} resume directive(s)",
+                            result.attempts,
+                            result.total_duration,
+                            resume_directives.len()
+                        );
+                        handle_resume_directives(&running_jobs, &resume_directives).await;
+                        // Continue to next loop iteration which will call run_session again
                     }
                     Err(e) => {
-                        error!("Failed to connect to controller: {}", e);
+                        error!("Reconnect gave up after all attempts: {}", e);
                         running_jobs.write().await.clear();
+                        return Err(e);
                     }
                 }
             }
@@ -95,7 +110,8 @@ pub async fn run(config: WorkerConfig) -> anyhow::Result<()> {
 async fn run_session(
     config: &WorkerConfig,
     running_jobs: &Arc<tokio::sync::RwLock<Vec<RunningJobState>>>,
-    _reconnect_handler: &ReconnectHandler,
+    reconnect_handler: &ReconnectHandler,
+    metrics: &Option<crate::http_server::WorkerMetrics>,
 ) -> anyhow::Result<()> {
     let client = GrpcClient::connect(&config.controller.address).await?;
 
@@ -144,29 +160,51 @@ async fn run_session(
         handle_resume_directives(running_jobs, &resume_directives).await;
     }
 
+    // Register any currently running jobs with the reconnect handler so it
+    // has an up-to-date picture of worker state for the next reconnect attempt.
+    let jobs_snapshot = running_jobs.read().await.clone();
+    for job in &jobs_snapshot {
+        reconnect_handler
+            .register_job(job.job_id.clone(), job.log_offset)
+            .await;
+    }
+
+    // Shared cancellation token: heartbeat task and main select loop both watch
+    // this. When either stream fails the token is cancelled, causing a clean
+    // shutdown of all tasks and triggering the outer reconnect loop.
+    let cancel_token = CancellationToken::new();
+
     let (hb_tx, hb_rx) = mpsc::channel(32);
     let hb_interval = config.heartbeat.interval_secs;
     let worker_id = config.worker_id.clone();
     let running_jobs_for_hb = running_jobs.clone();
+    let hb_token = cancel_token.clone();
 
     tokio::spawn(async move {
         let mut interval =
             tokio::time::interval(tokio::time::Duration::from_secs(hb_interval.into()));
         loop {
-            interval.tick().await;
-            let jobs = running_jobs_for_hb.read().await.clone();
-            let job_ids: Vec<String> = jobs.iter().map(|j| j.job_id.clone()).collect();
-            let msg = ci_core::proto::orchestrator::HeartbeatMessage {
-                worker_id: worker_id.clone(),
-                used_cpu_percent: 0.0,
-                used_memory_mb: 0,
-                used_disk_mb: 0,
-                running_job_ids: job_ids,
-                system_load: 0.0,
-                timestamp_unix: chrono::Utc::now().timestamp(),
-            };
-            if hb_tx.send(msg).await.is_err() {
-                break;
+            tokio::select! {
+                _ = hb_token.cancelled() => {
+                    info!("Heartbeat task cancelled, stopping");
+                    break;
+                }
+                _ = interval.tick() => {
+                    let jobs = running_jobs_for_hb.read().await.clone();
+                    let job_ids: Vec<String> = jobs.iter().map(|j| j.job_id.clone()).collect();
+                    let msg = ci_core::proto::orchestrator::HeartbeatMessage {
+                        worker_id: worker_id.clone(),
+                        used_cpu_percent: 0.0,
+                        used_memory_mb: 0,
+                        used_disk_mb: 0,
+                        running_job_ids: job_ids,
+                        system_load: 0.0,
+                        timestamp_unix: chrono::Utc::now().timestamp(),
+                    };
+                    if hb_tx.send(msg).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -178,6 +216,11 @@ async fn run_session(
 
     loop {
         tokio::select! {
+            _ = cancel_token.cancelled() => {
+                info!("Session cancelled, shutting down");
+                return Err(anyhow::anyhow!("Session cancelled"));
+            }
+
             res = hb_stream.message() => {
                 match res {
                     Ok(Some(ack)) => {
@@ -187,10 +230,12 @@ async fn run_session(
                     }
                     Ok(None) => {
                         warn!("Heartbeat stream closed by server");
+                        cancel_token.cancel();
                         return Err(anyhow::anyhow!("Heartbeat stream closed"));
                     }
                     Err(e) => {
                         error!("Heartbeat stream error: {}", e);
+                        cancel_token.cancel();
                         return Err(anyhow::anyhow!("Heartbeat error: {}", e));
                     }
                 }
@@ -199,87 +244,148 @@ async fn run_session(
             res = job_stream.message() => {
                 match res {
                     Ok(Some(assignment)) => {
-                        let job_id = assignment.job_id.clone();
-
-                        // Check for cancel directive
-                        if let Some(cancel) = &assignment.cancel {
-                            info!("Received cancel directive for job {}: {} (signal={})",
-                                  job_id, cancel.reason, cancel.signal);
-
-                            // Find the job and send cancel signal
-                            let jobs = running_jobs.read().await;
-                            if let Some(job) = jobs.iter().find(|j| j.job_id == job_id) {
-                                if let Some(cancel_tx) = &job.cancel_tx {
-                                    // Send the signal number to use for killing the process
-                                    let signal = if cancel.signal > 0 { cancel.signal } else { 15 }; // default to SIGTERM
-                                    let _ = cancel_tx.send(signal).await;
-                                    info!("Sent cancel signal {} to job {}", signal, job_id);
-                                }
-                            } else {
-                                warn!("Received cancel for unknown job {}", job_id);
-                            }
-                            continue;
-                        }
-
-                        info!("Received job assignment: {} (command: {})", job_id, assignment.command);
-
-                        {
-                            let jobs = running_jobs.read().await;
-                            if jobs.iter().any(|j| j.job_id == job_id) {
-                                info!("Job {} already running, skipping", job_id);
-                                continue;
-                            }
-                        }
-
-                        // Create cancel channel
-                        let (cancel_tx, cancel_rx) = mpsc::channel(1);
-
-                        // Add to running jobs
-                        {
-                            let mut jobs = running_jobs.write().await;
-                            jobs.push(RunningJobState {
-                                job_id: job_id.clone(),
-                                log_offset: 0,
-                                cancel_tx: Some(cancel_tx),
-                            });
-                        }
-
-                        let work_dir = config.execution.work_dir.clone();
-                        let log_dir = config.execution.log_dir.clone();
-                        let job_client = client.clone();
-                        let log_client = client.clone();
-                        let worker_id_clone = config.worker_id.clone();
-                        let job_id_clone = job_id.clone();
-                        let running_jobs_clone = running_jobs.clone();
-                        let command_clone = assignment.command.clone();
-
-                        info!("Spawning job {} with command: {}", job_id_clone, command_clone);
-
-                        tokio::spawn(async move {
-                            info!("Job {} task started, calling run_job_with_streaming", job_id_clone);
-                            run_job_with_streaming(
-                                &worker_id_clone, &job_id_clone, &command_clone,
-                                &work_dir, &log_dir, &job_client, &log_client,
-                                running_jobs_clone.clone(), cancel_rx,
-                            ).await;
-
-                            let mut jobs = running_jobs_clone.write().await;
-                            jobs.retain(|j| j.job_id != job_id);
-                            info!("Job {} removed from running list", job_id);
-                        });
+                        handle_job_assignment(
+                            config, &client, &assignment,
+                            running_jobs, metrics,
+                        ).await;
                     }
                     Ok(None) => {
                         warn!("Job stream closed by server");
+                        cancel_token.cancel();
                         return Err(anyhow::anyhow!("Job stream closed"));
                     }
                     Err(e) => {
                         error!("Job stream error: {}", e);
+                        cancel_token.cancel();
                         return Err(anyhow::anyhow!("Job stream error: {}", e));
                     }
                 }
             }
         }
     }
+}
+
+/// Handle a single job assignment message from the controller.
+#[tracing::instrument(skip_all, fields(job_id = %assignment.job_id))]
+async fn handle_job_assignment(
+    config: &WorkerConfig,
+    client: &GrpcClient,
+    assignment: &ci_core::proto::orchestrator::JobAssignment,
+    running_jobs: &Arc<tokio::sync::RwLock<Vec<RunningJobState>>>,
+    metrics: &Option<crate::http_server::WorkerMetrics>,
+) {
+    let job_id = assignment.job_id.clone();
+
+    // Check for cancel directive
+    if let Some(cancel) = &assignment.cancel {
+        info!(
+            "Received cancel directive for job {}: {} (signal={})",
+            job_id, cancel.reason, cancel.signal
+        );
+
+        let jobs = running_jobs.read().await;
+        if let Some(job) = jobs.iter().find(|j| j.job_id == job_id) {
+            if let Some(cancel_tx) = &job.cancel_tx {
+                let signal = if cancel.signal > 0 { cancel.signal } else { 15 };
+                let _ = cancel_tx.send(signal).await;
+                info!("Sent cancel signal {} to job {}", signal, job_id);
+            }
+        } else {
+            warn!("Received cancel for unknown job {}", job_id);
+        }
+        return;
+    }
+
+    info!(
+        "Received job assignment: {} (command: {})",
+        job_id, assignment.command
+    );
+
+    {
+        let jobs = running_jobs.read().await;
+        if jobs.iter().any(|j| j.job_id == job_id) {
+            info!("Job {} already running, skipping", job_id);
+            return;
+        }
+    }
+
+    // Create cancel channel
+    let (cancel_tx, cancel_rx) = mpsc::channel(1);
+
+    // Add to running jobs
+    {
+        let mut jobs = running_jobs.write().await;
+        jobs.push(RunningJobState {
+            job_id: job_id.clone(),
+            log_offset: 0,
+            cancel_tx: Some(cancel_tx),
+        });
+    }
+
+    let ctx = JobContext {
+        worker_id: config.worker_id.clone(),
+        job_id: job_id.clone(),
+        command: assignment.command.clone(),
+        work_dir: config.execution.work_dir.clone(),
+        log_dir: config.execution.log_dir.clone(),
+        pre_script: assignment.pre_script.clone(),
+        post_script: assignment.post_script.clone(),
+        max_duration_secs: assignment.max_duration_secs,
+        job_group_id: assignment.job_group_id.clone(),
+        stage_name: assignment.stage_name.clone(),
+    };
+
+    let job_client = client.clone();
+    let log_client = client.clone();
+    let running_jobs_clone = running_jobs.clone();
+    let metrics_clone = metrics.clone();
+
+    info!("Spawning job {} with command: {}", ctx.job_id, ctx.command);
+
+    tokio::spawn(async move {
+        if let Some(ref m) = metrics_clone {
+            m.active_jobs
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            m.jobs_executed
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        info!(
+            "Job {} task started, calling run_job_with_streaming",
+            ctx.job_id
+        );
+        let result_state = run_job_with_streaming(
+            &ctx,
+            &job_client,
+            &log_client,
+            running_jobs_clone.clone(),
+            cancel_rx,
+        )
+        .await;
+
+        if let Some(ref m) = metrics_clone {
+            m.active_jobs
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            match result_state {
+                ci_core::proto::orchestrator::JobState::Success => {
+                    m.jobs_succeeded
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                ci_core::proto::orchestrator::JobState::Cancelled => {
+                    m.jobs_cancelled
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                _ => {
+                    m.jobs_failed
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+
+        let mut jobs = running_jobs_clone.write().await;
+        jobs.retain(|j| j.job_id != job_id);
+        info!("Job {} removed from running list", job_id);
+    });
 }
 
 /// Handle resume directives from controller after reconnect
@@ -312,86 +418,75 @@ struct RunningJobState {
     cancel_tx: Option<mpsc::Sender<i32>>,
 }
 
-/// Execute a single job with log streaming pipeline.
-async fn run_job_with_streaming(
-    worker_id: &str,
-    job_id: &str,
-    command: &str,
-    work_dir: &str,
-    log_dir: &str,
-    job_client: &GrpcClient,
-    log_client: &GrpcClient,
-    running_jobs: Arc<tokio::sync::RwLock<Vec<RunningJobState>>>,
-    cancel_rx: mpsc::Receiver<i32>,
-) {
-    info!(
-        "run_job_with_streaming: job_id={}, command={}",
-        job_id, command
-    );
-
-    // Report job started
-    info!("Reporting job {} as Running to controller", job_id);
-    let status_result = job_client
+/// Send a job status update to the controller.
+async fn report_status(
+    client: &GrpcClient,
+    ctx: &JobContext,
+    report: StatusReport,
+) -> anyhow::Result<ci_core::proto::orchestrator::JobStatusAck> {
+    client
         .report_job_status(JobStatusUpdate {
-            worker_id: worker_id.to_string(),
-            job_id: job_id.to_string(),
-            state: JobState::Running as i32,
-            message: "Job started".to_string(),
-            exit_code: 0,
+            worker_id: ctx.worker_id.clone(),
+            job_id: ctx.job_id.clone(),
+            state: report.state as i32,
+            message: report.message,
+            exit_code: report.exit_code,
             timestamp_unix: chrono::Utc::now().timestamp(),
             output: String::new(),
+            job_group_id: ctx.job_group_id.clone(),
+            stage_name: ctx.stage_name.clone(),
+            phase: report.phase,
+            pre_exit_code: report.pre_exit_code,
+            post_exit_code: report.post_exit_code,
         })
-        .await;
-    info!("Reported job {} as Running: {:?}", job_id, status_result);
+        .await
+}
 
-    // Set up: Executor → mpsc → LogStreamer → gRPC StreamLogs → Controller
-    let (log_tx, log_rx) = mpsc::channel(256);
-    let log_path = format!("{}/{}.log", log_dir, job_id);
+/// Determine the final status report from a successful StageResult.
+fn determine_final_state_from_stage(result: &StageResult) -> StatusReport {
+    let pre_exit_code = result.pre_exit_code.unwrap_or(0);
+    let post_exit_code = result.post_exit_code.unwrap_or(0);
 
-    info!("Starting log streamer for job {} at {}", job_id, log_path);
-
-    // Start log streamer in background
-    let streamer = LogStreamer::new();
-    let sw = worker_id.to_string();
-    let sj = job_id.to_string();
-    let slc = log_client.clone();
-    let log_handle = tokio::spawn(async move { streamer.stream(sw, sj, log_rx, slc).await });
-
-    info!(
-        "Log streamer spawned, now executing command for job {}",
-        job_id
-    );
-
-    // Execute — lines flow through log_tx to streamer
-    let executor = Executor::new();
-    let result = executor
-        .execute_streaming(command, work_dir, &log_path, log_tx, cancel_rx)
-        .await;
-
-    info!(
-        "Command execution finished for job {}: {:?}",
-        job_id, result
-    );
-
-    // Wait for log streamer to finish flushing
-    let log_bytes = match log_handle.await {
-        Ok(Ok(bytes)) => {
-            info!("Log stream for job {} done: {} bytes", job_id, bytes);
-            bytes
-        }
-        Ok(Err(e)) => {
-            warn!("Log stream error for job {}: {}", job_id, e);
-            0
-        }
-        Err(e) => {
-            warn!("Log stream panic for job {}: {}", job_id, e);
-            0
-        }
+    let phase = if result.pre_exit_code.is_some() && result.pre_exit_code != Some(0) {
+        "pre_script".to_string()
+    } else if result.command_exit_code != 0 {
+        "command".to_string()
+    } else if result.post_exit_code.is_some() && result.post_exit_code != Some(0) {
+        "post_script".to_string()
+    } else {
+        "command".to_string()
     };
 
-    // Determine final state
-    // Negative exit code indicates cancellation by signal: -2=SIGINT, -9=SIGKILL, -15=SIGTERM
-    let (state, exit_code, message) = match &result {
+    let (state, message) = match result.final_state {
+        StageState::Success => (
+            JobState::Success,
+            "Stage completed successfully".to_string(),
+        ),
+        StageState::Failed => (
+            JobState::Failed,
+            format!("Stage failed in phase: {}", phase),
+        ),
+        StageState::Cancelled => (
+            JobState::Cancelled,
+            "Stage cancelled or timed out".to_string(),
+        ),
+    };
+
+    StatusReport {
+        state,
+        message,
+        exit_code: result.command_exit_code,
+        phase,
+        pre_exit_code,
+        post_exit_code,
+    }
+}
+
+/// Determine the final status report from an executor result (legacy path).
+fn determine_final_state_from_executor(
+    result: &Result<ExecutionResult, anyhow::Error>,
+) -> StatusReport {
+    match result {
         Ok(r) if r.exit_code < 0 => {
             let signal = -r.exit_code;
             let signal_name = match signal {
@@ -400,51 +495,186 @@ async fn run_job_with_streaming(
                 15 => "SIGTERM",
                 _ => "unknown signal",
             };
-            (
-                JobState::Cancelled,
-                r.exit_code,
-                format!(
-                    "Job cancelled by {} signal ({} bytes of logs)",
-                    signal_name, log_bytes
-                ),
-            )
+            StatusReport {
+                state: JobState::Cancelled,
+                exit_code: r.exit_code,
+                message: format!("Job cancelled by {} signal", signal_name),
+                phase: "command".to_string(),
+                pre_exit_code: 0,
+                post_exit_code: 0,
+            }
         }
-        Ok(r) if r.exit_code == 0 => (
-            JobState::Success,
-            0,
-            format!("Job completed successfully ({} bytes of logs)", log_bytes),
-        ),
-        Ok(r) => (
-            JobState::Failed,
-            r.exit_code,
-            format!(
-                "Job failed with exit code {} ({} bytes of logs)",
-                r.exit_code, log_bytes
-            ),
-        ),
-        Err(e) => (JobState::Failed, -1, format!("Job execution error: {}", e)),
+        Ok(r) if r.exit_code == 0 => StatusReport {
+            state: JobState::Success,
+            exit_code: 0,
+            message: "Job completed successfully".to_string(),
+            phase: "command".to_string(),
+            pre_exit_code: 0,
+            post_exit_code: 0,
+        },
+        Ok(r) => StatusReport {
+            state: JobState::Failed,
+            exit_code: r.exit_code,
+            message: format!("Job failed with exit code {}", r.exit_code),
+            phase: "command".to_string(),
+            pre_exit_code: 0,
+            post_exit_code: 0,
+        },
+        Err(e) => StatusReport {
+            state: JobState::Failed,
+            exit_code: -1,
+            message: format!("Job execution error: {}", e),
+            phase: "command".to_string(),
+            pre_exit_code: 0,
+            post_exit_code: 0,
+        },
+    }
+}
+
+/// Execute a single job with log streaming pipeline.
+#[tracing::instrument(skip_all, fields(job_id = %ctx.job_id, stage = %ctx.stage_name))]
+async fn run_job_with_streaming(
+    ctx: &JobContext,
+    job_client: &GrpcClient,
+    log_client: &GrpcClient,
+    running_jobs: Arc<tokio::sync::RwLock<Vec<RunningJobState>>>,
+    cancel_rx: mpsc::Receiver<i32>,
+) -> ci_core::proto::orchestrator::JobState {
+    info!(
+        "run_job_with_streaming: job_id={}, command={}",
+        ctx.job_id, ctx.command
+    );
+
+    let has_stage_scripts = !ctx.pre_script.is_empty() || !ctx.post_script.is_empty();
+
+    // Report job started
+    info!("Reporting job {} as Running to controller", ctx.job_id);
+    let status_result = report_status(
+        job_client,
+        ctx,
+        StatusReport {
+            state: JobState::Running,
+            message: "Job started".to_string(),
+            exit_code: 0,
+            phase: "command".to_string(),
+            pre_exit_code: 0,
+            post_exit_code: 0,
+        },
+    )
+    .await;
+    info!(
+        "Reported job {} as Running: {:?}",
+        ctx.job_id, status_result
+    );
+
+    // Set up: Executor -> mpsc -> LogStreamer -> gRPC StreamLogs -> Controller
+    let (log_tx, log_rx) = mpsc::channel(256);
+
+    // Determine log path based on whether this is a grouped stage or a legacy job
+    let log_path_buf = StageRunner::log_path(
+        &ctx.log_dir,
+        &ctx.job_group_id,
+        &ctx.stage_name,
+        &ctx.job_id,
+    );
+    let log_path = log_path_buf.to_string_lossy().to_string();
+
+    info!(
+        "Starting log streamer for job {} at {}",
+        ctx.job_id, log_path
+    );
+
+    // Start log streamer in background
+    let streamer = LogStreamer::new();
+    let sw = ctx.worker_id.clone();
+    let sj = ctx.job_id.clone();
+    let slc = log_client.clone();
+    let log_handle = tokio::spawn(async move { streamer.stream(sw, sj, log_rx, slc).await });
+
+    info!(
+        "Log streamer spawned, now executing command for job {}",
+        ctx.job_id
+    );
+
+    // Choose execution path: StageRunner (with pre/post) or direct Executor (legacy)
+    let report = if has_stage_scripts || ctx.max_duration_secs > 0 {
+        let stage_runner = StageRunner::new();
+        let result = stage_runner
+            .run_stage(
+                &ctx.command,
+                &ctx.pre_script,
+                &ctx.post_script,
+                &ctx.work_dir,
+                &log_path,
+                log_tx,
+                cancel_rx,
+                ctx.max_duration_secs,
+            )
+            .await;
+
+        match result {
+            Ok(stage_result) => determine_final_state_from_stage(&stage_result),
+            Err(e) => StatusReport {
+                state: JobState::Failed,
+                exit_code: -1,
+                message: format!("Stage execution error: {}", e),
+                pre_exit_code: 0,
+                post_exit_code: 0,
+                phase: "command".to_string(),
+            },
+        }
+    } else {
+        let executor = Executor::new();
+        let result = executor
+            .execute_streaming(&ctx.command, &ctx.work_dir, &log_path, log_tx, cancel_rx)
+            .await;
+        determine_final_state_from_executor(&result)
+    };
+
+    info!(
+        "Command execution finished for job {}: exit_code={}",
+        ctx.job_id, report.exit_code
+    );
+
+    // Wait for log streamer to finish flushing
+    let log_bytes = match log_handle.await {
+        Ok(Ok(bytes)) => {
+            info!("Log stream for job {} done: {} bytes", ctx.job_id, bytes);
+            bytes
+        }
+        Ok(Err(e)) => {
+            warn!("Log stream error for job {}: {}", ctx.job_id, e);
+            0
+        }
+        Err(e) => {
+            warn!("Log stream panic for job {}: {}", ctx.job_id, e);
+            0
+        }
     };
 
     // Update log offset in running state
     {
         let mut jobs = running_jobs.write().await;
-        if let Some(job) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+        if let Some(job) = jobs.iter_mut().find(|j| j.job_id == ctx.job_id) {
             job.log_offset = log_bytes;
         }
     }
 
     // Report completion
-    let _ = job_client
-        .report_job_status(JobStatusUpdate {
-            worker_id: worker_id.to_string(),
-            job_id: job_id.to_string(),
-            state: state as i32,
-            message,
-            exit_code,
-            timestamp_unix: chrono::Utc::now().timestamp(),
-            output: String::new(), // output is in the log stream now
-        })
-        .await;
+    let final_message = format!("{} ({} bytes of logs)", report.message, log_bytes);
+    let exit_code = report.exit_code;
+    let final_state = report.state;
+    let _ = report_status(
+        job_client,
+        ctx,
+        StatusReport {
+            message: final_message,
+            ..report
+        },
+    )
+    .await;
 
-    info!("Job {} completed with exit code {}", job_id, exit_code);
+    info!("Job {} completed with exit code {}", ctx.job_id, exit_code);
+
+    final_state
 }

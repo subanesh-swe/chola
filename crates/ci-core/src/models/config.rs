@@ -17,6 +17,31 @@ pub struct ControllerConfig {
     pub jobs: JobsConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default = "default_controller_http_port")]
+    pub http_port: u16,
+}
+
+fn default_controller_http_port() -> u16 {
+    8080
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +151,14 @@ pub struct WorkerConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub reconnect: ReconnectConfig,
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    #[serde(default = "default_worker_http_port")]
+    pub http_port: u16,
+}
+
+fn default_worker_http_port() -> u16 {
+    8081
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

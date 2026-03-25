@@ -35,6 +35,15 @@ service Orchestrator {
 
   // Cancel a running job (client API)
   rpc CancelJob (CancelJobRequest) returns (CancelJobResponse);
+
+  // Client reserves a worker for a multi-stage build pipeline
+  rpc ReserveWorker (ReserveWorkerRequest) returns (ReserveWorkerResponse);
+
+  // Client submits a single stage within a job group
+  rpc SubmitStage (SubmitStageRequest) returns (SubmitStageResponse);
+
+  // Client gets job group status with all stage states
+  rpc GetJobGroupStatus (GetJobGroupStatusRequest) returns (GetJobGroupStatusResponse);
 }
 
 // ============================================================================
@@ -98,6 +107,12 @@ message JobAssignment {
 
   // Cancel directive - when present, worker should cancel this job
   CancelDirective cancel = 10;
+  // New fields for job groups
+  string job_group_id = 11;
+  string stage_name = 12;
+  string pre_script = 13;
+  string post_script = 14;
+  int32 max_duration_secs = 15;
 }
 
 message CancelDirective {
@@ -118,6 +133,11 @@ message JobStatusUpdate {
   int32 exit_code = 5;
   int64 timestamp_unix = 6;
   string output = 7;
+  string job_group_id = 8;
+  string stage_name = 9;
+  string phase = 10;  // "pre_script", "command", "post_script"
+  int32 pre_exit_code = 11;
+  int32 post_exit_code = 12;
 }
 
 enum JobState {
@@ -224,6 +244,8 @@ message GetJobStatusResponse {
 message WatchJobLogsRequest {
   string job_id = 1;
   uint64 from_offset = 2;  // 0 = from beginning
+  string job_group_id = 3;
+  string stage_name = 4;
 }
 
 // ============================================================================
@@ -233,9 +255,85 @@ message WatchJobLogsRequest {
 message CancelJobRequest {
   string job_id = 1;
   string reason = 2;
+  string job_group_id = 3;
 }
 
 message CancelJobResponse {
   bool accepted = 1;
   string message = 2;
+}
+
+// ============================================================================
+// Worker Reservation (Client API)
+// ============================================================================
+
+message ReserveWorkerRequest {
+    string repo_name = 1;
+    string repo_url = 2;
+    string branch = 3;
+    string commit_sha = 4;
+    repeated string stages = 5;
+}
+
+message StageInfo {
+    string stage_name = 1;
+    string command = 2;
+    int32 required_cpu = 3;
+    int32 required_memory_mb = 4;
+    int32 required_disk_mb = 5;
+    int32 max_duration_secs = 6;
+    string parallel_group = 7;
+    string job_type = 8;
+}
+
+message ReserveWorkerResponse {
+    string job_group_id = 1;
+    string worker_id = 2;
+    repeated StageInfo stages = 3;
+    bool success = 4;
+    string message = 5;
+}
+
+// ============================================================================
+// Stage Submission (Client API)
+// ============================================================================
+
+message SubmitStageRequest {
+    string job_group_id = 1;
+    string job_id = 2;
+    string stage_name = 3;
+    string command_override = 4;
+    map<string, string> environment = 5;
+}
+
+message SubmitStageResponse {
+    string job_id = 1;
+    string stage_name = 2;
+    bool accepted = 3;
+    string message = 4;
+}
+
+// ============================================================================
+// Job Group Status (Client API)
+// ============================================================================
+
+message GetJobGroupStatusRequest {
+    string job_group_id = 1;
+}
+
+message StageStatus {
+    string job_id = 1;
+    string stage_name = 2;
+    string state = 3;
+    int32 exit_code = 4;
+    string worker_id = 5;
+    int64 started_at = 6;
+    int64 completed_at = 7;
+}
+
+message GetJobGroupStatusResponse {
+    string job_group_id = 1;
+    string state = 2;
+    string worker_id = 3;
+    repeated StageStatus stages = 4;
 }

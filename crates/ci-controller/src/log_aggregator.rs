@@ -38,6 +38,8 @@ pub struct LogAggregator {
     jobs: HashMap<String, JobLogState>,
     /// Default channel capacity for broadcast channels
     broadcast_capacity: usize,
+    /// Directory to write log files for Vector to tail
+    log_dir: Option<String>,
 }
 
 impl LogAggregator {
@@ -45,6 +47,15 @@ impl LogAggregator {
         Self {
             jobs: HashMap::new(),
             broadcast_capacity: 256, // Buffer up to 256 log chunks per job
+            log_dir: None,
+        }
+    }
+
+    pub fn with_log_dir(log_dir: String) -> Self {
+        Self {
+            jobs: HashMap::new(),
+            broadcast_capacity: 256,
+            log_dir: Some(log_dir),
         }
     }
 
@@ -131,6 +142,23 @@ impl LogAggregator {
 
         // Store the log data
         state.log_data.extend_from_slice(data);
+
+        // Write to disk for Vector to tail
+        if let Some(ref log_dir) = self.log_dir {
+            let log_path = format!("{}/{}.log", log_dir, job_id);
+            // Use sync write since we're in a sync context (behind RwLock)
+            if let Some(parent) = std::path::Path::new(&log_path).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                use std::io::Write;
+                let _ = file.write_all(data);
+            }
+        }
 
         // Broadcast to live subscribers (ignore errors if no subscribers)
         let chunk_data = LogChunkData {

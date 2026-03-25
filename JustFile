@@ -1,34 +1,179 @@
 set shell := ["bash", "-cu"]
 
+# Default controller gRPC address
+controller_addr := "http://localhost:50051"
+
+# ─── Build ────────────────────────────────────────────────────────────────────
+
+# Build all workspace binaries
+build:
+    cargo build --workspace
+
+# Check all workspace crates without linking
+check:
+    cargo check --workspace
+
+# Run clippy lints
+lint:
+    cargo clippy --workspace
+
+# Format all code
+fmt:
+    cargo fmt --all
+
+# ─── Controller ───────────────────────────────────────────────────────────────
+
 controller:
     cargo run -p ci-controller -- --config config/controller.example.yaml
 
-# Usage: 
-#   just worker         -> uses config/worker.example.yaml
-#   just worker custom  -> uses config/custom.example.yaml
+# ─── Worker ───────────────────────────────────────────────────────────────────
+
+# Usage:
+#   just worker           -> uses config/worker-1.example.yaml
+#   just worker worker-2  -> uses config/worker-2.example.yaml
 worker name='worker-1':
     cargo run -p ci-worker -- --config config/{{name}}.example.yaml
 
-job-runner job_id cmd:
+# ─── Job Runner (new subcommand-based CLI) ────────────────────────────────────
+
+# Reserve a worker for a multi-stage build pipeline
+# Usage: just reserve my-service "build,test,push-docker-image"
+reserve repo stages:
     cargo run -p ci-job-runner -- \
-        --config config/controller.example.yaml \
+        --controller {{controller_addr}} \
+        reserve \
+        --repo {{repo}} \
+        --stages {{stages}}
+
+# Reserve with full options
+# Usage: just reserve-full my-service "git@github.com:org/repo.git" main abc123 "build,test"
+reserve-full repo repo_url branch commit stages:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        reserve \
+        --repo {{repo}} \
+        --repo-url {{repo_url}} \
+        --branch {{branch}} \
+        --commit {{commit}} \
+        --stages {{stages}}
+
+# Run a stage within a reserved job group
+# Usage: just run-stage <job_group_id> build
+run-stage group_id stage:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        run \
+        --job-group-id {{group_id}} \
+        --stage {{stage}}
+
+# Run a stage with a specific job ID
+run-stage-with-id group_id job_id stage:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        run \
+        --job-group-id {{group_id}} \
         --job-id {{job_id}} \
-        -- \
-        '{{cmd}}'
+        --stage {{stage}}
+
+# Watch logs for a job group (all stages)
+logs-group group_id:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        logs \
+        --job-group-id {{group_id}}
+
+# Watch logs for a specific stage
+logs-stage group_id stage:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        logs \
+        --job-group-id {{group_id}} \
+        --stage {{stage}}
+
+# Watch logs for a specific job ID
+logs-job job_id:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        logs \
+        --job-id {{job_id}}
+
+# Cancel an entire job group
+cancel-group group_id:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        cancel \
+        --job-group-id {{group_id}}
+
+# Cancel a specific job
+cancel-job job_id:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        cancel \
+        --job-id {{job_id}}
+
+# Get status of a job group with all stage states
+status group_id:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        status \
+        --job-group-id {{group_id}}
+
+# ─── Legacy single-job submission ─────────────────────────────────────────────
 
 # Generate a unique ID using a timestamp and a random string
 job_id := `date +job-%Y%m%dT%H%M%S-` + `head /dev/urandom | tr -dc a-z0-9 | head -c 4`
 
-# job-runner-auto submits a job with auto-generated job ID
-# The command is automatically quoted, so you can use &&, ;, |, etc. directly:
-#
-#   just job-runner-auto "echo \"started at \$(date)\" && sleep 30 && echo \"done\""
-#
-# NOTE: Use \" for literal quotes and \$ to prevent variable expansion on client side.
-# The $(date) will be expanded on the WORKER side when the command runs.
-job-runner-auto cmd:
+# Submit a single job (legacy mode, backward compatible)
+# Usage: just submit job-001 "echo hello"
+submit job_id cmd:
     cargo run -p ci-job-runner -- \
-        --config config/controller.example.yaml \
+        --controller {{controller_addr}} \
+        submit \
         --job-id {{job_id}} \
         -- \
         '{{cmd}}'
+
+# Submit with auto-generated job ID
+# Usage: just submit-auto "echo hello && sleep 5 && echo done"
+submit-auto cmd:
+    cargo run -p ci-job-runner -- \
+        --controller {{controller_addr}} \
+        submit \
+        --job-id {{job_id}} \
+        -- \
+        '{{cmd}}'
+
+# ─── Infrastructure ───────────────────────────────────────────────────────────
+
+# Start Vector log shipper (requires vector binary)
+vector:
+    vector --config config/vector.toml
+
+# Run database migrations (requires running Postgres)
+migrate:
+    @echo "Running migrations against Postgres..."
+    @echo "Ensure DATABASE_URL is set or Postgres is running at postgres://ci:ci@localhost:5432/ci_orchestrator"
+    @for f in migrations/*.sql; do echo "  -> $$f"; psql "postgres://ci:ci@localhost:5432/ci_orchestrator" -f "$$f"; done
+
+# ─── Full pipeline example ────────────────────────────────────────────────────
+
+# Example: reserve + run stages sequentially
+# Usage: just pipeline my-service "build,test"
+#   (this reserves a worker, then you manually run stages with just run-stage)
+pipeline repo stages:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== Reserving worker for {{repo}} ==="
+    OUTPUT=$(cargo run -p ci-job-runner -- --controller {{controller_addr}} reserve --repo {{repo}} --stages {{stages}} 2>/dev/null)
+    echo "$OUTPUT"
+    GROUP_ID=$(echo "$OUTPUT" | grep -oP 'job_group_id=\K[^ ]+')
+    echo ""
+    echo "=== Reserved: $GROUP_ID ==="
+    echo "Run stages with:"
+    IFS=',' read -ra STAGE_LIST <<< "{{stages}}"
+    for stage in "${STAGE_LIST[@]}"; do
+        echo "  just run-stage $GROUP_ID $stage"
+    done
+    echo ""
+    echo "Check status with:"
+    echo "  just status $GROUP_ID"

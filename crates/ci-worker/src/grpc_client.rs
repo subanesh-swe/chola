@@ -20,8 +20,45 @@ pub struct GrpcClient {
 
 impl GrpcClient {
     pub async fn connect(addr: &str) -> anyhow::Result<Self> {
+        Self::connect_with_tls(addr, None).await
+    }
+
+    pub async fn connect_with_tls(
+        addr: &str,
+        tls_config: Option<&ci_core::models::config::TlsClientConfig>,
+    ) -> anyhow::Result<Self> {
         info!("Connecting to controller at {}", addr);
-        let client = OrchestratorClient::connect(addr.to_string()).await?;
+
+        let mut endpoint = tonic::transport::Channel::from_shared(addr.to_string())?;
+
+        if let Some(tls) = tls_config {
+            if tls.enabled {
+                let mut tls_conf = tonic::transport::ClientTlsConfig::new();
+
+                // Load CA certificate
+                if let Some(ref ca_path) = tls.ca_cert {
+                    let ca = tokio::fs::read(ca_path).await?;
+                    let ca_cert = tonic::transport::Certificate::from_pem(ca);
+                    tls_conf = tls_conf.ca_certificate(ca_cert);
+                }
+
+                // Load client certificate for mTLS
+                if let Some(ref cert_path) = tls.client_cert {
+                    if let Some(ref key_path) = tls.client_key {
+                        let cert = tokio::fs::read(cert_path).await?;
+                        let key = tokio::fs::read(key_path).await?;
+                        let identity = tonic::transport::Identity::from_pem(cert, key);
+                        tls_conf = tls_conf.identity(identity);
+                    }
+                }
+
+                endpoint = endpoint.tls_config(tls_conf)?;
+                info!("TLS enabled for controller connection");
+            }
+        }
+
+        let channel = endpoint.connect().await?;
+        let client = OrchestratorClient::new(channel);
         Ok(Self { client })
     }
 

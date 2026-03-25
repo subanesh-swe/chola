@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
@@ -7,33 +7,398 @@ use ci_core::models::config::ControllerConfig;
 use ci_core::models::job::{Job, JobType};
 use ci_core::proto::orchestrator::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
-    CancelDirective, CancelJobRequest, CancelJobResponse, GetJobStatusRequest,
-    GetJobStatusResponse, HeartbeatAck, HeartbeatMessage, JobAssignment, JobStatusAck,
-    JobStatusUpdate, JobStreamRequest, LogAck, LogChunk, LogResumeDirective, ReconnectRequest,
-    ReconnectResponse, RegisterRequest, RegisterResponse, SubmitJobRequest, SubmitJobResponse,
-    WatchJobLogsRequest,
+    CancelDirective, CancelJobRequest, CancelJobResponse, GetJobGroupStatusRequest,
+    GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse, HeartbeatAck,
+    HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest, LogAck,
+    LogChunk, LogResumeDirective, ReconnectRequest, ReconnectResponse, RegisterRequest,
+    RegisterResponse, ReserveWorkerRequest, ReserveWorkerResponse, SubmitJobRequest,
+    SubmitJobResponse, SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
 };
 
+use crate::job_group_registry::JobGroupRegistry;
 use crate::job_registry::JobRegistry;
 use crate::log_aggregator::LogAggregator;
+use crate::monitoring::Metrics;
+use crate::scheduler::{BestFitScheduler, Scheduler};
 use crate::worker_registry::WorkerRegistry;
+
+// ---------------------------------------------------------------------------
+// Helper functions (extracted from RPC handlers)
+// ---------------------------------------------------------------------------
+
+/// Build a `JobAssignment` proto from a domain `Job`.
+fn build_job_assignment(job: Job) -> JobAssignment {
+    JobAssignment {
+        job_id: job.job_id,
+        command: job.command,
+        job_type: job.job_type.to_string(),
+        required_cpu: job.required_cpu,
+        required_memory_mb: job.required_memory_mb,
+        required_disk_mb: job.required_disk_mb,
+        isolation_required: job.isolation_required,
+        branch_id: job.branch_id.unwrap_or_default(),
+        environment: job.environment,
+        cancel: None,
+        job_group_id: job
+            .job_group_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+        stage_name: job.stage_name.unwrap_or_default(),
+        pre_script: job.pre_script.unwrap_or_default(),
+        post_script: job.post_script.unwrap_or_default(),
+        max_duration_secs: job.max_duration_secs.unwrap_or(0),
+    }
+}
+
+/// Build a cancel-only `JobAssignment` for sending a cancellation directive to a worker.
+fn build_cancel_assignment(job_id: &str, reason: &str) -> JobAssignment {
+    JobAssignment {
+        job_id: job_id.to_string(),
+        command: String::new(),
+        job_type: String::new(),
+        required_cpu: 0,
+        required_memory_mb: 0,
+        required_disk_mb: 0,
+        isolation_required: false,
+        branch_id: String::new(),
+        environment: std::collections::HashMap::new(),
+        cancel: Some(CancelDirective {
+            job_id: job_id.to_string(),
+            reason: reason.to_string(),
+            signal: 2,
+        }),
+        job_group_id: String::new(),
+        stage_name: String::new(),
+        pre_script: String::new(),
+        post_script: String::new(),
+        max_duration_secs: 0,
+    }
+}
+
+/// Convert a domain `JobState` to its protobuf i32 representation.
+fn job_state_to_proto(state: ci_core::models::job::JobState) -> i32 {
+    match state {
+        ci_core::models::job::JobState::Queued => {
+            ci_core::proto::orchestrator::JobState::Queued as i32
+        }
+        ci_core::models::job::JobState::Assigned => {
+            ci_core::proto::orchestrator::JobState::Assigned as i32
+        }
+        ci_core::models::job::JobState::Running => {
+            ci_core::proto::orchestrator::JobState::Running as i32
+        }
+        ci_core::models::job::JobState::Success => {
+            ci_core::proto::orchestrator::JobState::Success as i32
+        }
+        ci_core::models::job::JobState::Failed => {
+            ci_core::proto::orchestrator::JobState::Failed as i32
+        }
+        ci_core::models::job::JobState::Cancelled => {
+            ci_core::proto::orchestrator::JobState::Cancelled as i32
+        }
+        ci_core::models::job::JobState::Unknown => {
+            ci_core::proto::orchestrator::JobState::Unknown as i32
+        }
+    }
+}
+
+/// Try to dispatch a queued job to the given worker via its job stream channel.
+///
+/// Returns `true` if the channel is still open (caller should continue looping),
+/// `false` if the channel closed (caller should break).
+async fn dispatch_job_for_worker(
+    state: &Arc<ControllerState>,
+    worker_id: &str,
+    job_tx: &tokio::sync::mpsc::Sender<Result<JobAssignment, Status>>,
+) -> bool {
+    let scheduler = BestFitScheduler {
+        nvme_preference: state.config.scheduling.nvme_preference,
+        branch_affinity: true,
+    };
+
+    // Check if any queued job is a fit for this worker.
+    let job_id_to_assign: Option<String> = {
+        let job_registry = state.job_registry.read().await;
+        let worker_registry = state.worker_registry.read().await;
+
+        match worker_registry.get(worker_id) {
+            Some(worker_state) => {
+                let workers = vec![worker_state];
+                let queued = job_registry.queued_jobs();
+
+                queued.iter().find_map(|queued_job| {
+                    // Only dispatch jobs that are either unassigned (general queue)
+                    // or explicitly targeted at this worker (stage jobs).
+                    let targeted_elsewhere = queued_job
+                        .assigned_worker
+                        .as_deref()
+                        .map(|w| w != worker_id)
+                        .unwrap_or(false);
+                    if targeted_elsewhere {
+                        return None;
+                    }
+
+                    // For jobs with an explicit worker assignment (submit_stage path),
+                    // bypass the scheduler and dispatch directly.
+                    let explicitly_targeted = queued_job
+                        .assigned_worker
+                        .as_deref()
+                        .map(|w| w == worker_id)
+                        .unwrap_or(false);
+
+                    if explicitly_targeted
+                        || scheduler.select_worker(queued_job, &workers).is_some()
+                    {
+                        Some(queued_job.job_id.clone())
+                    } else {
+                        None
+                    }
+                })
+            }
+            None => None,
+        }
+    };
+
+    if let Some(_job_id) = job_id_to_assign {
+        let mut job_registry_w = state.job_registry.write().await;
+        if let Some(job) = job_registry_w.next_job_for(worker_id) {
+            let assignment = build_job_assignment(job);
+            if job_tx.send(Ok(assignment)).await.is_err() {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Core logic for the `reserve_worker` RPC.
+async fn do_reserve_worker(
+    state: &Arc<ControllerState>,
+    req: &ReserveWorkerRequest,
+) -> Result<ReserveWorkerResponse, Status> {
+    // Pick the first connected worker
+    let worker_id = {
+        let registry = state.worker_registry.read().await;
+        let connected = registry.connected_workers();
+        connected.first().map(|w| w.info.worker_id.clone())
+    };
+
+    let worker_id = match worker_id {
+        Some(id) => id,
+        None => {
+            return Ok(ReserveWorkerResponse {
+                job_group_id: String::new(),
+                worker_id: String::new(),
+                stages: Vec::new(),
+                success: false,
+                message: "No connected workers available".to_string(),
+            });
+        }
+    };
+
+    // Create a job group in-memory
+    let mut group = ci_core::models::job_group::JobGroup::new(
+        uuid::Uuid::new_v4(), // repo_id placeholder
+        Some(req.branch.clone()).filter(|s| !s.is_empty()),
+        Some(req.commit_sha.clone()).filter(|s| !s.is_empty()),
+    );
+    group.reserved_worker_id = Some(worker_id.clone());
+    group.state = ci_core::models::job_group::JobGroupState::Reserved;
+    group.updated_at = chrono::Utc::now();
+
+    let group_id = group.id;
+
+    // Build stage info from request stages
+    let stage_infos: Vec<ci_core::proto::orchestrator::StageInfo> = req
+        .stages
+        .iter()
+        .map(|name| ci_core::proto::orchestrator::StageInfo {
+            stage_name: name.clone(),
+            command: String::new(),
+            required_cpu: 0,
+            required_memory_mb: 0,
+            required_disk_mb: 0,
+            max_duration_secs: 0,
+            parallel_group: String::new(),
+            job_type: "common".to_string(),
+        })
+        .collect();
+
+    // Add to job group registry
+    {
+        let mut jg_registry = state.job_group_registry.write().await;
+        jg_registry.add_group(group);
+    }
+
+    // TODO: Persist job group to PostgreSQL via storage.rs
+    // TODO: Reserve worker in Redis via ReservationManager for distributed locking
+
+    info!(
+        "Worker {} reserved for group {} (repo: {}, branch: {})",
+        worker_id, group_id, req.repo_name, req.branch
+    );
+
+    Ok(ReserveWorkerResponse {
+        job_group_id: group_id.to_string(),
+        worker_id,
+        stages: stage_infos,
+        success: true,
+        message: "Worker reserved successfully".to_string(),
+    })
+}
+
+/// Core logic for the `submit_stage` RPC.
+async fn do_submit_stage(
+    state: &Arc<ControllerState>,
+    req: SubmitStageRequest,
+) -> Result<SubmitStageResponse, Status> {
+    let group_id = uuid::Uuid::parse_str(&req.job_group_id)
+        .map_err(|e| Status::invalid_argument(format!("Invalid job_group_id: {}", e)))?;
+
+    // Verify the group exists and get the reserved worker
+    let worker_id = {
+        let jg_registry = state.job_group_registry.read().await;
+        let group = jg_registry.get(&group_id).ok_or_else(|| {
+            Status::not_found(format!("Job group {} not found", req.job_group_id))
+        })?;
+        group.reserved_worker_id.clone().ok_or_else(|| {
+            Status::failed_precondition(format!(
+                "Job group {} has no reserved worker",
+                req.job_group_id
+            ))
+        })?
+    };
+
+    // Determine the job ID (use provided or generate)
+    let job_id = if req.job_id.is_empty() {
+        format!("{}-{}", group_id, req.stage_name)
+    } else {
+        req.job_id.clone()
+    };
+
+    // Determine command: use override if provided, otherwise use stage_name as placeholder
+    let command = if req.command_override.is_empty() {
+        format!("echo 'Running stage: {}'", req.stage_name)
+    } else {
+        req.command_override.clone()
+    };
+
+    // Create the job
+    let mut job = Job::new(
+        job_id.clone(),
+        command.clone(),
+        JobType::Common,
+        0, // required_cpu
+        0, // required_memory_mb
+        0, // required_disk_mb
+    );
+    job.job_group_id = Some(group_id);
+    job.stage_name = Some(req.stage_name.clone());
+    job.assigned_worker = Some(worker_id.clone());
+    job.environment = req.environment.clone();
+    job.state = ci_core::models::job::JobState::Queued;
+
+    // Add to both registries
+    {
+        let mut jg_registry = state.job_group_registry.write().await;
+        // Update group state to Running if it was Reserved
+        if let Some(group) = jg_registry.get(&group_id) {
+            if group.state == ci_core::models::job_group::JobGroupState::Reserved {
+                jg_registry.update_state(
+                    &group_id,
+                    ci_core::models::job_group::JobGroupState::Running,
+                );
+            }
+        }
+        jg_registry.add_job_to_group(&group_id, job.clone());
+    }
+    {
+        let mut job_registry = state.job_registry.write().await;
+        job_registry.add_job(job);
+    }
+
+    // Wake all waiting job_stream tasks to check for new work
+    state.scheduler_notify.notify_waiters();
+
+    // Dispatch the job to the reserved worker via job stream
+    {
+        let senders = state.job_stream_senders.read().await;
+        if let Some(sender) = senders.get(&worker_id) {
+            let assignment = JobAssignment {
+                job_id: job_id.clone(),
+                command,
+                job_type: "common".to_string(),
+                required_cpu: 0,
+                required_memory_mb: 0,
+                required_disk_mb: 0,
+                isolation_required: false,
+                branch_id: String::new(),
+                environment: req.environment,
+                cancel: None,
+                job_group_id: group_id.to_string(),
+                stage_name: req.stage_name.clone(),
+                pre_script: String::new(),
+                post_script: String::new(),
+                max_duration_secs: 0,
+            };
+            if sender.send(Ok(assignment)).await.is_err() {
+                warn!(
+                    "Failed to send stage job {} to worker {} (channel closed)",
+                    job_id, worker_id
+                );
+            } else {
+                info!("Stage job {} dispatched to worker {}", job_id, worker_id);
+            }
+        } else {
+            warn!(
+                "No job stream channel for worker {} - job {} will be picked up on next poll",
+                worker_id, job_id
+            );
+        }
+    }
+
+    // TODO: Persist job to PostgreSQL via storage.rs
+
+    Ok(SubmitStageResponse {
+        job_id,
+        stage_name: req.stage_name,
+        accepted: true,
+        message: "Stage submitted successfully".to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// State & Service definitions
+// ---------------------------------------------------------------------------
 
 /// Shared controller state
 pub struct ControllerState {
     pub config: ControllerConfig,
-    pub worker_registry: RwLock<WorkerRegistry>,
+    /// Worker registry — shared with the HTTP sidecar via `Arc`.
+    pub worker_registry: Arc<RwLock<WorkerRegistry>>,
     pub job_registry: RwLock<JobRegistry>,
     pub log_aggregator: RwLock<LogAggregator>,
+    /// Job-group registry — shared with the HTTP sidecar via `Arc`.
+    pub job_group_registry: Arc<RwLock<JobGroupRegistry>>,
     /// Channel to send job assignments (including cancel directives) to workers (worker_id -> sender)
     pub job_stream_senders: RwLock<
         std::collections::HashMap<String, tokio::sync::mpsc::Sender<Result<JobAssignment, Status>>>,
     >,
+    /// Notify to wake the scheduler when a job is submitted or worker state changes
+    pub scheduler_notify: Notify,
+    /// Prometheus-compatible metrics — shared with the HTTP sidecar via `Clone`.
+    pub metrics: Metrics,
 }
 
 /// gRPC service implementation
 pub struct OrchestratorService {
     state: Arc<ControllerState>,
 }
+
+// ---------------------------------------------------------------------------
+// Orchestrator trait implementation
+// ---------------------------------------------------------------------------
 
 #[tonic::async_trait]
 impl Orchestrator for OrchestratorService {
@@ -108,10 +473,12 @@ impl Orchestrator for OrchestratorService {
         let job_tx = tx.clone();
 
         tokio::spawn(async move {
-            // Job assignment loop
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            // Job assignment loop: wake on scheduler notify or 30s fallback
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = state.scheduler_notify.notified() => {}
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {}
+                }
 
                 // Check if channel is still open
                 if job_tx.is_closed() {
@@ -119,23 +486,8 @@ impl Orchestrator for OrchestratorService {
                     break;
                 }
 
-                let mut registry = state.job_registry.write().await;
-                if let Some(job) = registry.next_job_for(&worker_id) {
-                    let assignment = JobAssignment {
-                        job_id: job.job_id,
-                        command: job.command,
-                        job_type: job.job_type.to_string(),
-                        required_cpu: job.required_cpu,
-                        required_memory_mb: job.required_memory_mb,
-                        required_disk_mb: job.required_disk_mb,
-                        isolation_required: job.isolation_required,
-                        branch_id: job.branch_id.unwrap_or_default(),
-                        environment: job.environment,
-                        cancel: None, // No cancel directive for normal job assignment
-                    };
-                    if job_tx.send(Ok(assignment)).await.is_err() {
-                        break;
-                    }
+                if !dispatch_job_for_worker(&state, &worker_id, &job_tx).await {
+                    break;
                 }
             }
 
@@ -294,29 +646,7 @@ impl Orchestrator for OrchestratorService {
 
         match registry.get(&req.job_id) {
             Some(job) => {
-                let state = match job.state {
-                    ci_core::models::job::JobState::Queued => {
-                        ci_core::proto::orchestrator::JobState::Queued as i32
-                    }
-                    ci_core::models::job::JobState::Assigned => {
-                        ci_core::proto::orchestrator::JobState::Assigned as i32
-                    }
-                    ci_core::models::job::JobState::Running => {
-                        ci_core::proto::orchestrator::JobState::Running as i32
-                    }
-                    ci_core::models::job::JobState::Success => {
-                        ci_core::proto::orchestrator::JobState::Success as i32
-                    }
-                    ci_core::models::job::JobState::Failed => {
-                        ci_core::proto::orchestrator::JobState::Failed as i32
-                    }
-                    ci_core::models::job::JobState::Cancelled => {
-                        ci_core::proto::orchestrator::JobState::Cancelled as i32
-                    }
-                    ci_core::models::job::JobState::Unknown => {
-                        ci_core::proto::orchestrator::JobState::Unknown as i32
-                    }
-                };
+                let state = job_state_to_proto(job.state);
 
                 // Get log data from aggregator
                 let log_aggregator = self.state.log_aggregator.read().await;
@@ -346,6 +676,7 @@ impl Orchestrator for OrchestratorService {
         }
     }
 
+    #[tracing::instrument(skip(self, request), fields(job_id = %request.get_ref().job_id))]
     async fn submit_job(
         &self,
         request: Request<SubmitJobRequest>,
@@ -384,6 +715,10 @@ impl Orchestrator for OrchestratorService {
         // Add to registry
         let mut registry = self.state.job_registry.write().await;
         registry.add_job(job);
+        drop(registry);
+
+        // Wake all waiting job_stream tasks to check for new work
+        self.state.scheduler_notify.notify_waiters();
 
         Ok(Response::new(SubmitJobResponse {
             accepted: true,
@@ -498,6 +833,7 @@ impl Orchestrator for OrchestratorService {
         )))
     }
 
+    #[tracing::instrument(skip(self, request), fields(job_id = %request.get_ref().job_id, reason = %request.get_ref().reason))]
     async fn cancel_job(
         &self,
         request: Request<CancelJobRequest>,
@@ -519,23 +855,7 @@ impl Orchestrator for OrchestratorService {
                 // Send cancel directive to the worker via the job stream
                 let senders = self.state.job_stream_senders.read().await;
                 if let Some(sender) = senders.get(&worker_id) {
-                    // Send a JobAssignment with cancel directive set
-                    let cancel_assignment = JobAssignment {
-                        job_id: req.job_id.clone(),
-                        command: String::new(),
-                        job_type: String::new(),
-                        required_cpu: 0,
-                        required_memory_mb: 0,
-                        required_disk_mb: 0,
-                        isolation_required: false,
-                        branch_id: String::new(),
-                        environment: std::collections::HashMap::new(),
-                        cancel: Some(CancelDirective {
-                            job_id: req.job_id.clone(),
-                            reason: req.reason.clone(),
-                            signal: 2, // SIGINT - user pressed Ctrl+C
-                        }),
-                    };
+                    let cancel_assignment = build_cancel_assignment(&req.job_id, &req.reason);
                     if sender.send(Ok(cancel_assignment)).await.is_err() {
                         warn!("Failed to send cancel directive to worker {}", worker_id);
                     } else {
@@ -567,29 +887,174 @@ impl Orchestrator for OrchestratorService {
             }
         }
     }
+
+    #[tracing::instrument(skip(self, request), fields(repo = %request.get_ref().repo_name, branch = %request.get_ref().branch))]
+    async fn reserve_worker(
+        &self,
+        request: Request<ReserveWorkerRequest>,
+    ) -> Result<Response<ReserveWorkerResponse>, Status> {
+        let req = request.into_inner();
+        info!(
+            "ReserveWorker request: repo={} branch={} stages={:?}",
+            req.repo_name, req.branch, req.stages
+        );
+
+        let response = do_reserve_worker(&self.state, &req).await?;
+        Ok(Response::new(response))
+    }
+
+    #[tracing::instrument(skip(self, request), fields(group = %request.get_ref().job_group_id, stage = %request.get_ref().stage_name))]
+    async fn submit_stage(
+        &self,
+        request: Request<SubmitStageRequest>,
+    ) -> Result<Response<SubmitStageResponse>, Status> {
+        let req = request.into_inner();
+        info!(
+            "SubmitStage request: group={} stage={} job_id={}",
+            req.job_group_id, req.stage_name, req.job_id
+        );
+
+        let response = do_submit_stage(&self.state, req).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn get_job_group_status(
+        &self,
+        request: Request<GetJobGroupStatusRequest>,
+    ) -> Result<Response<GetJobGroupStatusResponse>, Status> {
+        let req = request.into_inner();
+        info!("GetJobGroupStatus request: group={}", req.job_group_id);
+
+        let group_id = uuid::Uuid::parse_str(&req.job_group_id)
+            .map_err(|e| Status::invalid_argument(format!("Invalid job_group_id: {}", e)))?;
+
+        let jg_registry = self.state.job_group_registry.read().await;
+        let group = jg_registry.get(&group_id).ok_or_else(|| {
+            Status::not_found(format!("Job group {} not found", req.job_group_id))
+        })?;
+
+        let jobs = jg_registry.get_jobs_for_group(&group_id);
+
+        let stage_statuses: Vec<ci_core::proto::orchestrator::StageStatus> = jobs
+            .iter()
+            .map(|job| {
+                let state_str = job.state.to_string();
+                ci_core::proto::orchestrator::StageStatus {
+                    job_id: job.job_id.clone(),
+                    stage_name: job.stage_name.clone().unwrap_or_default(),
+                    state: state_str,
+                    exit_code: job.exit_code.unwrap_or(0),
+                    worker_id: job.assigned_worker.clone().unwrap_or_default(),
+                    started_at: job.started_at.map(|t| t.timestamp()).unwrap_or(0),
+                    completed_at: job.completed_at.map(|t| t.timestamp()).unwrap_or(0),
+                }
+            })
+            .collect();
+
+        // TODO: Also check PostgreSQL for persisted state if not found in-memory
+
+        Ok(Response::new(GetJobGroupStatusResponse {
+            job_group_id: group_id.to_string(),
+            state: group.state.to_string(),
+            worker_id: group.reserved_worker_id.clone().unwrap_or_default(),
+            stages: stage_statuses,
+        }))
+    }
 }
 
-/// Start the gRPC server
-pub async fn run(config: ControllerConfig) -> anyhow::Result<()> {
+/// Start the gRPC server.
+///
+/// Accepts the shared registries and metrics instance so the HTTP sidecar
+/// (started in `main.rs`) can observe the same live data.
+pub async fn run(
+    config: ControllerConfig,
+    worker_registry: Arc<RwLock<WorkerRegistry>>,
+    job_group_registry: Arc<RwLock<JobGroupRegistry>>,
+    metrics: Metrics,
+) -> anyhow::Result<()> {
     let addr = config.bind_address.parse()?;
 
     let state = Arc::new(ControllerState {
         config: config.clone(),
-        worker_registry: RwLock::new(WorkerRegistry::new()),
+        worker_registry,
         job_registry: RwLock::new(JobRegistry::new()),
         log_aggregator: RwLock::new(LogAggregator::new()),
+        job_group_registry,
         job_stream_senders: RwLock::new(std::collections::HashMap::new()),
+        scheduler_notify: Notify::new(),
+        metrics,
     });
 
+    // ── Heartbeat timeout detection background task ───────────────────────────
+    {
+        let state_for_hb = state.clone();
+        let hb_timeout = config.workers.heartbeat_timeout_secs as u64;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(hb_timeout));
+            loop {
+                interval.tick().await;
+                let timed_out = {
+                    let mut registry = state_for_hb.worker_registry.write().await;
+                    registry.check_heartbeat_timeouts(hb_timeout)
+                };
+                if !timed_out.is_empty() {
+                    // Update connected-workers gauge
+                    let connected = {
+                        let registry = state_for_hb.worker_registry.read().await;
+                        registry.connected_workers().len() as i64
+                    };
+                    state_for_hb.metrics.set_connected_workers(connected);
+
+                    // Mark jobs as unknown for every dead worker
+                    let mut job_registry = state_for_hb.job_registry.write().await;
+                    for worker_id in &timed_out {
+                        job_registry.mark_unknown_for_worker(worker_id);
+                    }
+                }
+            }
+        });
+    }
+
     let service = OrchestratorService { state };
+    // TODO: Add Tower auth interceptor when config.auth.enabled is true
     let server = OrchestratorServer::new(service);
 
     info!("Controller gRPC server listening on {}", addr);
 
-    tonic::transport::Server::builder()
-        .add_service(server)
-        .serve(addr)
-        .await?;
+    let mut server_builder = tonic::transport::Server::builder();
+
+    // Configure TLS if enabled
+    if let Some(ref tls) = config.tls {
+        if tls.enabled {
+            let cert = tokio::fs::read(
+                tls.server_cert
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("server_cert required when TLS is enabled"))?,
+            )
+            .await?;
+            let key = tokio::fs::read(
+                tls.server_key
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("server_key required when TLS is enabled"))?,
+            )
+            .await?;
+
+            let mut tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(tonic::transport::Identity::from_pem(cert, key));
+
+            // Add CA cert for client verification (mTLS)
+            if let Some(ref ca_path) = tls.ca_cert {
+                let ca = tokio::fs::read(ca_path).await?;
+                let ca_cert = tonic::transport::Certificate::from_pem(ca);
+                tls_config = tls_config.client_ca_root(ca_cert);
+            }
+
+            server_builder = server_builder.tls_config(tls_config)?;
+            info!("TLS enabled for gRPC server");
+        }
+    }
+
+    server_builder.add_service(server).serve(addr).await?;
 
     Ok(())
 }

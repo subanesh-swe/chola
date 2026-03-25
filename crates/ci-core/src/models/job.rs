@@ -72,6 +72,28 @@ pub struct Job {
     pub submitter_connection_id: Option<String>,
     /// Cancel reason if the job was cancelled
     pub cancel_reason: Option<String>,
+    /// Job group this job belongs to (None for legacy single jobs)
+    pub job_group_id: Option<uuid::Uuid>,
+    /// Stage config ID from the database
+    pub stage_config_id: Option<uuid::Uuid>,
+    /// Stage name (e.g., "build", "test", "push-docker-image")
+    pub stage_name: Option<String>,
+    /// Pre-script to run before the main command
+    pub pre_script: Option<String>,
+    /// Post-script to run after the main command (MUST run even on abort)
+    pub post_script: Option<String>,
+    /// Pre-script exit code
+    pub pre_exit_code: Option<i32>,
+    /// Post-script exit code
+    pub post_exit_code: Option<i32>,
+    /// Maximum duration in seconds before timeout
+    pub max_duration_secs: Option<i32>,
+    /// Log file path
+    pub log_path: Option<String>,
+    /// When the job started running
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the job completed
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Job {
@@ -103,6 +125,17 @@ impl Job {
             updated_at: now,
             submitter_connection_id: None,
             cancel_reason: None,
+            job_group_id: None,
+            stage_config_id: None,
+            stage_name: None,
+            pre_script: None,
+            post_script: None,
+            pre_exit_code: None,
+            post_exit_code: None,
+            max_duration_secs: None,
+            log_path: None,
+            started_at: None,
+            completed_at: None,
         }
     }
 }

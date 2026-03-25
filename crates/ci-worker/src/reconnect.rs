@@ -4,6 +4,7 @@ use ci_core::proto::orchestrator::{
     JobState, LogResumeDirective, ReconnectRequest, ReconnectResponse, RunningJobInfo,
 };
 // Note: LogResumeDirective is used in tests
+use rand::Rng;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
@@ -190,6 +191,15 @@ impl ReconnectHandler {
                         ),
                         self.config.max_backoff,
                     );
+
+                    // Add jitter: ±25% of current backoff to prevent thundering herd
+                    let jitter_range = current_backoff.as_millis() as u64 / 4;
+                    if jitter_range > 0 {
+                        let jitter = rand::thread_rng().gen_range(0..jitter_range);
+                        current_backoff += Duration::from_millis(jitter);
+                        // Re-cap after jitter
+                        current_backoff = std::cmp::min(current_backoff, self.config.max_backoff);
+                    }
                 }
             }
         }
@@ -205,6 +215,14 @@ impl ReconnectHandler {
             .map(|directive| (directive.job_id.clone(), directive.resume_from_offset))
             .collect()
     }
+}
+
+/// Determine if a stage should be migrated to a new worker.
+/// Returns true if the stage config allows worker migration and the stage has not yet completed.
+/// The actual migration logic lives in the controller; the worker uses this to decide
+/// whether to release/requeue a stage rather than marking it permanently failed.
+pub fn should_migrate_stage(allow_worker_migration: bool, stage_completed: bool) -> bool {
+    allow_worker_migration && !stage_completed
 }
 
 impl Default for ReconnectHandler {

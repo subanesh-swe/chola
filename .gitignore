@@ -31,4 +31,6 @@ logs/
 # OS
 .DS_Store
 .direnv/flake-profile*
-.gitignore
+
+# Local dev files (has its own git repo)
+local/
