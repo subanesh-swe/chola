@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use tokio::sync::{broadcast, Notify, RwLock};
+use tokio::sync::broadcast;
+use tonic::service::interceptor::InterceptedService;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
-use ci_core::models::config::ControllerConfig;
 use ci_core::models::job::{Job, JobType};
 use ci_core::proto::orchestrator::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
@@ -15,12 +15,42 @@ use ci_core::proto::orchestrator::{
     SubmitJobResponse, SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
 };
 
-use crate::job_group_registry::JobGroupRegistry;
-use crate::job_registry::JobRegistry;
-use crate::log_aggregator::LogAggregator;
-use crate::monitoring::Metrics;
 use crate::scheduler::{BestFitScheduler, Scheduler};
-use crate::worker_registry::WorkerRegistry;
+use crate::state::ControllerState;
+
+// ---------------------------------------------------------------------------
+// Auth interceptor
+// ---------------------------------------------------------------------------
+
+fn auth_interceptor(
+    config: ci_core::models::config::AuthConfig,
+) -> impl Fn(tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> + Clone {
+    move |req: tonic::Request<()>| -> Result<tonic::Request<()>, tonic::Status> {
+        if !config.enabled {
+            return Ok(req);
+        }
+
+        let token = config.token.as_deref().unwrap_or("");
+        if token.is_empty() {
+            return Ok(req);
+        }
+
+        let meta = req.metadata();
+        let auth = meta
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let expected = format!("Bearer {}", token);
+        if auth != expected {
+            return Err(tonic::Status::unauthenticated(
+                "Invalid or missing auth token",
+            ));
+        }
+
+        Ok(req)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helper functions (extracted from RPC handlers)
@@ -220,7 +250,14 @@ async fn do_reserve_worker(
     let mut selected = None;
     for wid in &candidate_ids {
         if let Some(redis) = &state.redis_store {
-            match redis.reserve_worker(wid, &group_id.to_string(), 7200).await {
+            match redis
+                .reserve_worker(
+                    wid,
+                    &group_id.to_string(),
+                    state.config.workers.reservation_timeout_secs,
+                )
+                .await
+            {
                 Ok(true) => {
                     let _ = redis.remove_available_worker(wid).await;
                     selected = Some(wid.clone());
@@ -252,9 +289,67 @@ async fn do_reserve_worker(
         }
     };
 
+    // Look up repo by name — must exist in DB
+    let repo_id = if let Some(storage) = &state.storage {
+        match storage.get_repo_by_name(&req.repo_name).await {
+            Ok(Some(repo)) => repo.id,
+            Ok(None) => {
+                return Ok(ReserveWorkerResponse {
+                    job_group_id: String::new(),
+                    worker_id: String::new(),
+                    stages: Vec::new(),
+                    success: false,
+                    message: format!(
+                        "Repo '{}' not found — create it in the DB first",
+                        req.repo_name
+                    ),
+                });
+            }
+            Err(e) => {
+                warn!("Failed to lookup repo {}: {}", req.repo_name, e);
+                uuid::Uuid::new_v4()
+            }
+        }
+    } else {
+        uuid::Uuid::new_v4() // no DB — in-memory only
+    };
+
+    // Dedup: return existing active group for same repo+branch+commit
+    if let Some(storage) = &state.storage {
+        let branch = Some(req.branch.as_str()).filter(|s| !s.is_empty());
+        let commit = Some(req.commit_sha.as_str()).filter(|s| !s.is_empty());
+        if let Ok(Some(existing)) = storage.find_active_job_group(repo_id, branch, commit).await {
+            info!(
+                "Returning existing active group {} for {}@{:?}",
+                existing.id, req.repo_name, branch
+            );
+            let stages = req
+                .stages
+                .iter()
+                .map(|name| ci_core::proto::orchestrator::StageInfo {
+                    stage_name: name.clone(),
+                    command: String::new(),
+                    required_cpu: 0,
+                    required_memory_mb: 0,
+                    required_disk_mb: 0,
+                    max_duration_secs: 0,
+                    parallel_group: String::new(),
+                    job_type: "common".to_string(),
+                })
+                .collect();
+            return Ok(ReserveWorkerResponse {
+                job_group_id: existing.id.to_string(),
+                worker_id: existing.reserved_worker_id.unwrap_or_default(),
+                stages,
+                success: true,
+                message: "Existing active group returned".to_string(),
+            });
+        }
+    }
+
     // Redis lock acquired (or no Redis) -- now create the in-memory group
     let mut group = ci_core::models::job_group::JobGroup::new(
-        uuid::Uuid::new_v4(), // repo_id placeholder
+        repo_id,
         Some(req.branch.clone()).filter(|s| !s.is_empty()),
         Some(req.commit_sha.clone()).filter(|s| !s.is_empty()),
     );
@@ -451,6 +546,12 @@ async fn do_submit_stage(
         }
     }
 
+    // Refresh reservation TTL so long-running pipelines don't expire mid-build
+    if let Some(redis) = &state.redis_store {
+        let ttl = state.config.workers.reservation_timeout_secs;
+        let _ = redis.refresh_reservation_ttl(&worker_id, ttl).await;
+    }
+
     Ok(SubmitStageResponse {
         job_id,
         stage_name: req.stage_name,
@@ -460,31 +561,8 @@ async fn do_submit_stage(
 }
 
 // ---------------------------------------------------------------------------
-// State & Service definitions
+// Service definition
 // ---------------------------------------------------------------------------
-
-/// Shared controller state
-pub struct ControllerState {
-    pub config: ControllerConfig,
-    /// Worker registry — shared with the HTTP sidecar via `Arc`.
-    pub worker_registry: Arc<RwLock<WorkerRegistry>>,
-    pub job_registry: RwLock<JobRegistry>,
-    pub log_aggregator: RwLock<LogAggregator>,
-    /// Job-group registry — shared with the HTTP sidecar via `Arc`.
-    pub job_group_registry: Arc<RwLock<JobGroupRegistry>>,
-    /// Channel to send job assignments (including cancel directives) to workers (worker_id -> sender)
-    pub job_stream_senders: RwLock<
-        std::collections::HashMap<String, tokio::sync::mpsc::Sender<Result<JobAssignment, Status>>>,
-    >,
-    /// Notify to wake the scheduler when a job is submitted or worker state changes
-    pub scheduler_notify: Notify,
-    /// Prometheus-compatible metrics — shared with the HTTP sidecar via `Clone`.
-    pub metrics: Metrics,
-    /// PostgreSQL storage (None if unavailable)
-    pub storage: Option<Arc<crate::storage::Storage>>,
-    /// Redis store (None if unavailable)
-    pub redis_store: Option<Arc<crate::redis_store::RedisStore>>,
-}
 
 /// gRPC service implementation
 pub struct OrchestratorService {
@@ -1155,42 +1233,19 @@ impl Orchestrator for OrchestratorService {
 
 /// Start the gRPC server.
 ///
-/// Accepts the shared registries and metrics instance so the HTTP sidecar
-/// (started in `main.rs`) can observe the same live data.
-pub async fn run(
-    config: ControllerConfig,
-    worker_registry: Arc<RwLock<WorkerRegistry>>,
-    job_group_registry: Arc<RwLock<JobGroupRegistry>>,
-    metrics: Metrics,
-    storage: Option<Arc<crate::storage::Storage>>,
-    redis_store: Option<Arc<crate::redis_store::RedisStore>>,
-) -> anyhow::Result<()> {
-    let addr = config.bind_address.parse()?;
-
-    let log_agg = match &config.logging.log_dir {
-        Some(dir) => LogAggregator::with_log_dir(dir.clone()),
-        None => LogAggregator::new(),
-    };
-
-    let state = Arc::new(ControllerState {
-        config: config.clone(),
-        worker_registry,
-        job_registry: RwLock::new(JobRegistry::new()),
-        log_aggregator: RwLock::new(log_agg),
-        job_group_registry,
-        job_stream_senders: RwLock::new(std::collections::HashMap::new()),
-        scheduler_notify: Notify::new(),
-        metrics,
-        storage,
-        redis_store,
-    });
+/// Accepts the fully-constructed shared `ControllerState` so both the gRPC and
+/// HTTP servers observe the same live data.
+pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
+    let addr = state.config.bind_address.parse()?;
 
     // ── Heartbeat timeout detection background task ───────────────────────────
     {
         let state_for_hb = state.clone();
-        let hb_timeout = config.workers.heartbeat_timeout_secs as u64;
+        let hb_timeout = state.config.workers.heartbeat_timeout_secs as u64;
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(hb_timeout));
+            let check_interval = std::cmp::max(hb_timeout / 2, 1);
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(check_interval));
             loop {
                 interval.tick().await;
                 let timed_out = {
@@ -1263,7 +1318,7 @@ pub async fn run(
     // ── Orphan job cleanup background task ────────────────────────────────────
     {
         let state_for_orphan = state.clone();
-        let orphan_timeout = config.jobs.orphan_timeout_secs;
+        let orphan_timeout = state.config.jobs.orphan_timeout_secs;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             loop {
@@ -1277,16 +1332,57 @@ pub async fn run(
         });
     }
 
+    // ── Stuck group reaper — every 5 minutes ─────────────────────────────────
+    {
+        let state_reaper = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let mut jgr = state_reaper.job_group_registry.write().await;
+                let now = chrono::Utc::now();
+                let stuck: Vec<uuid::Uuid> = jgr
+                    .active_groups()
+                    .iter()
+                    .filter(|g| {
+                        matches!(g.state, ci_core::models::job_group::JobGroupState::Running)
+                            && (now - g.updated_at).num_hours() >= 4
+                    })
+                    .map(|g| g.id)
+                    .collect();
+                for gid in stuck {
+                    warn!("Failing stuck group {} (running > 4h)", gid);
+                    jgr.update_state(&gid, ci_core::models::job_group::JobGroupState::Failed);
+                }
+            }
+        });
+    }
+
+    // ── Log buffer cleanup background task ────────────────────────────────────
+    {
+        let state_for_log_cleanup = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                let mut la = state_for_log_cleanup.log_aggregator.write().await;
+                la.cleanup_old_logs(3600); // clean buffers finalized >1h ago
+            }
+        });
+    }
+
+    let tls_config = state.config.tls.clone();
+    let auth_config = state.config.auth.clone();
     let service = OrchestratorService { state };
-    // TODO: Add Tower auth interceptor when config.auth.enabled is true
-    let server = OrchestratorServer::new(service);
+    let interceptor = auth_interceptor(auth_config);
+    let server = InterceptedService::new(OrchestratorServer::new(service), interceptor);
 
     info!("Controller gRPC server listening on {}", addr);
 
     let mut server_builder = tonic::transport::Server::builder();
 
     // Configure TLS if enabled
-    if let Some(ref tls) = config.tls {
+    if let Some(ref tls) = tls_config {
         if tls.enabled {
             let cert = tokio::fs::read(
                 tls.server_cert

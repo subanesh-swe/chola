@@ -30,3 +30,7 @@ serde_json = { workspace = true }
 axum = { workspace = true }
 tokio-util = { workspace = true }
 rand = { workspace = true }
+argon2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+tower-http = { workspace = true }
+axum-extra = { workspace = true }

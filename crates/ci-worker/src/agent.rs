@@ -70,11 +70,14 @@ pub async fn run(
                 warn!("Attempting to reconnect with exponential backoff...");
 
                 let controller_addr = config.controller.address.clone();
+                let reconnect_auth_token = config.auth_token.clone();
                 let reconnect_result = reconnect_handler
                     .reconnect(config.worker_id.clone(), |req| {
                         let addr = controller_addr.clone();
+                        let token = reconnect_auth_token.clone();
                         async move {
-                            let client = GrpcClient::connect(&addr).await?;
+                            let client =
+                                GrpcClient::connect_with_options(&addr, None, token).await?;
                             client.reconnect(req).await
                         }
                     })
@@ -113,7 +116,12 @@ async fn run_session(
     reconnect_handler: &ReconnectHandler,
     metrics: &Option<crate::http_server::WorkerMetrics>,
 ) -> anyhow::Result<()> {
-    let client = GrpcClient::connect(&config.controller.address).await?;
+    let client = GrpcClient::connect_with_options(
+        &config.controller.address,
+        config.controller.tls.as_ref(),
+        config.auth_token.clone(),
+    )
+    .await?;
 
     // Check if we need to register or reconnect
     let jobs_snapshot = running_jobs.read().await.clone();

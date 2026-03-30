@@ -19,6 +19,32 @@ just build
 
 ---
 
+## Environment Variables
+
+Database connection fields can be overridden via env vars. Env wins over config file. The controller logs the source of each field on startup.
+
+| Env Var | Config Field | Description |
+|---------|-------------|-------------|
+| `CHOLA_DB_HOST` | `storage.postgres.host` | Database host |
+| `CHOLA_DB_PORT` | `storage.postgres.port` | Database port (default: 5432) |
+| `CHOLA_DB_NAME` | `storage.postgres.database` | Database name |
+| `CHOLA_DB_USER` | `storage.postgres.user` | Database user |
+| `CHOLA_DB_PASSWORD` | `storage.postgres.password` | Database password |
+| `CHOLA_REDIS_HOST` | `redis.host` | Redis host |
+| `CHOLA_REDIS_PORT` | `redis.port` | Redis port (default: 6379) |
+| `CHOLA_REDIS_PASSWORD` | `redis.password` | Redis password |
+
+```bash
+# Example: override credentials for production
+export CHOLA_DB_HOST=db.prod.internal
+export CHOLA_DB_USER=chola_app
+export CHOLA_DB_PASSWORD=real_secret
+export CHOLA_REDIS_HOST=redis.prod.internal
+export CHOLA_REDIS_PASSWORD=redis_secret
+```
+
+---
+
 ## 1. Start the Controller
 
 ```bash
@@ -389,13 +415,177 @@ curl -s http://localhost:8080/api/v1/workers | jq .
 
 ---
 
+## 11. Web Dashboard
+
+The web dashboard provides a UI for viewing builds, workers, repos, and managing users.
+
+### Prerequisites
+
+```bash
+# Install frontend dependencies
+just frontend-install
+
+# Start the controller (must be running for API proxy)
+just controller
+```
+
+### Development Mode
+
+```bash
+# Start Vite dev server (proxies /api/* to controller:8080)
+just frontend-dev
+# Opens at http://localhost:3000
+```
+
+### Production Build
+
+```bash
+just frontend-build
+# Output: frontend/dist/ (served by controller via axum)
+```
+
+### Default Login
+
+When `auth.enabled = true` in controller config, a default admin user is seeded on startup:
+
+| Field | Value |
+|-------|-------|
+| Username | `admin` |
+| Password | `changeme` |
+| Role | `super_admin` |
+
+Change these in `config/controller.example.yaml` under `auth:`.
+
+### User Roles
+
+| Role | Permissions |
+|------|-------------|
+| `super_admin` | Everything + user management |
+| `admin` | Manage repos, cancel jobs, manage workers |
+| `operator` | Trigger builds, view all |
+| `viewer` | Read-only access |
+
+---
+
+## 12. REST API (Dashboard Backend)
+
+All endpoints under `/api/v1/`. Protected endpoints require `Authorization: Bearer <token>`.
+
+### Authentication
+
+```bash
+# Login — returns JWT token
+curl -s -X POST http://localhost:8080/api/v1/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"changeme"}' | jq .
+
+# Response:
+# { "token": "eyJ...", "expires_at": "...", "user": { "id", "username", "role" } }
+
+# Use token for subsequent requests
+TOKEN="eyJ..."
+
+# Get current user
+curl -s http://localhost:8080/api/v1/auth/me \
+    -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### Dashboard
+
+```bash
+# Summary stats
+curl -s http://localhost:8080/api/v1/dashboard/summary \
+    -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### Repos
+
+```bash
+# List repos
+curl -s http://localhost:8080/api/v1/repos \
+    -H "Authorization: Bearer $TOKEN" | jq .
+
+# Create repo (admin+)
+curl -s -X POST http://localhost:8080/api/v1/repos \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"repo_name":"my-service","repo_url":"git@github.com:org/my-service.git"}' | jq .
+
+# List stage configs for a repo
+curl -s http://localhost:8080/api/v1/repos/<REPO_ID>/stages \
+    -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### Builds (Job Groups)
+
+```bash
+# List builds (paginated, filterable)
+curl -s "http://localhost:8080/api/v1/job-groups?limit=20&offset=0&state=running" \
+    -H "Authorization: Bearer $TOKEN" | jq .
+
+# Get build detail with all stages
+curl -s http://localhost:8080/api/v1/job-groups/<GROUP_ID> \
+    -H "Authorization: Bearer $TOKEN" | jq .
+
+# Cancel build (admin+)
+curl -s -X POST http://localhost:8080/api/v1/job-groups/<GROUP_ID>/cancel \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"reason":"Cancelled from API"}' | jq .
+```
+
+### Workers
+
+```bash
+# List workers
+curl -s http://localhost:8080/api/v1/workers \
+    -H "Authorization: Bearer $TOKEN" | jq .
+
+# Drain worker (admin+)
+curl -s -X POST http://localhost:8080/api/v1/workers/<WORKER_ID>/drain \
+    -H "Authorization: Bearer $TOKEN" | jq .
+
+# Undrain worker
+curl -s -X POST http://localhost:8080/api/v1/workers/<WORKER_ID>/undrain \
+    -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### Users (super_admin only)
+
+```bash
+# List users
+curl -s http://localhost:8080/api/v1/users \
+    -H "Authorization: Bearer $TOKEN" | jq .
+
+# Create user
+curl -s -X POST http://localhost:8080/api/v1/users \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"dev1","password":"secret","display_name":"Developer 1","role":"operator"}' | jq .
+```
+
+### Live Log Streaming (SSE)
+
+```bash
+# Stream logs for a running job (Server-Sent Events)
+curl -N http://localhost:8080/api/v1/jobs/<JOB_ID>/logs/stream \
+    -H "Authorization: Bearer $TOKEN"
+
+# Get accumulated logs (paginated)
+curl -s http://localhost:8080/api/v1/jobs/<JOB_ID>/logs \
+    -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+---
+
 ## Quick Reference
 
 ```bash
 # ── Start everything ──
-just controller                    # terminal 1
+just controller                    # terminal 1 (gRPC:50051 + HTTP:8080)
 just worker worker-1               # terminal 2
 just worker worker-2               # terminal 3
+just frontend-dev                  # terminal 4 (http://localhost:3000)
 
 # ── Single job (quick test) ──
 just submit-auto "echo hello"
@@ -405,6 +595,12 @@ just reserve my-repo "build,test"
 just run-stage <GROUP_ID> build
 just run-stage <GROUP_ID> test
 just status <GROUP_ID>
+
+# ── Dashboard ──
+just login admin changeme          # get JWT token
+just dashboard <TOKEN>             # summary stats
+just api-builds <TOKEN>            # list builds
+just api-workers <TOKEN>           # list workers
 
 # ── Observe ──
 just logs-group <GROUP_ID>

@@ -1,8 +1,6 @@
 use ci_core::proto::orchestrator::{
-    orchestrator_client::OrchestratorClient, CancelJobRequest, JobState, SubmitStageRequest,
-    WatchJobLogsRequest,
+    CancelJobRequest, JobState, SubmitStageRequest, WatchJobLogsRequest,
 };
-use tonic::transport::Channel;
 use tracing::{info, warn};
 
 use super::submit::{
@@ -10,7 +8,7 @@ use super::submit::{
 };
 
 pub async fn execute(
-    client: &mut OrchestratorClient<Channel>,
+    client: &mut super::Client,
     job_group_id: String,
     job_id: Option<String>,
     stage: String,

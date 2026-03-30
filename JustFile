@@ -143,6 +143,63 @@ submit-auto cmd:
         -- \
         '{{cmd}}'
 
+# ─── Frontend ─────────────────────────────────────────────────────────────────
+
+# Install frontend dependencies
+frontend-install:
+    cd frontend && npm install
+
+# Start frontend dev server (proxy to controller:8080)
+frontend-dev:
+    cd frontend && npm run dev
+
+# Build frontend for production
+frontend-build:
+    cd frontend && npm run build
+
+# TypeScript type check
+frontend-check:
+    cd frontend && npx tsc --noEmit
+
+# ─── Dashboard API ────────────────────────────────────────────────────────────
+
+# Login to dashboard (returns JWT token)
+# Usage: just login admin changeme
+login username='admin' password='changeme':
+    curl -s -X POST http://localhost:8080/api/v1/auth/login \
+        -H 'Content-Type: application/json' \
+        -d '{"username":"{{username}}","password":"{{password}}"}' | jq .
+
+# Get dashboard summary
+# Usage: just dashboard <token>
+dashboard token:
+    curl -s http://localhost:8080/api/v1/dashboard/summary \
+        -H "Authorization: Bearer {{token}}" | jq .
+
+# List repos via REST API
+# Usage: just api-repos <token>
+api-repos token:
+    curl -s http://localhost:8080/api/v1/repos \
+        -H "Authorization: Bearer {{token}}" | jq .
+
+# List workers via REST API
+# Usage: just api-workers <token>
+api-workers token:
+    curl -s http://localhost:8080/api/v1/workers \
+        -H "Authorization: Bearer {{token}}" | jq .
+
+# List builds via REST API
+# Usage: just api-builds <token>
+api-builds token:
+    curl -s http://localhost:8080/api/v1/job-groups \
+        -H "Authorization: Bearer {{token}}" | jq .
+
+# List users via REST API (super_admin only)
+# Usage: just api-users <token>
+api-users token:
+    curl -s http://localhost:8080/api/v1/users \
+        -H "Authorization: Bearer {{token}}" | jq .
+
 # ─── Infrastructure ───────────────────────────────────────────────────────────
 
 # Start Vector log shipper (requires vector binary)

@@ -1,3 +1,4 @@
+use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tracing::info;
 
@@ -16,16 +17,25 @@ use ci_core::proto::orchestrator::{
 #[derive(Clone)]
 pub struct GrpcClient {
     client: OrchestratorClient<Channel>,
+    auth_token: Option<String>,
 }
 
 impl GrpcClient {
     pub async fn connect(addr: &str) -> anyhow::Result<Self> {
-        Self::connect_with_tls(addr, None).await
+        Self::connect_with_options(addr, None, None).await
     }
 
     pub async fn connect_with_tls(
         addr: &str,
         tls_config: Option<&ci_core::models::config::TlsClientConfig>,
+    ) -> anyhow::Result<Self> {
+        Self::connect_with_options(addr, tls_config, None).await
+    }
+
+    pub async fn connect_with_options(
+        addr: &str,
+        tls_config: Option<&ci_core::models::config::TlsClientConfig>,
+        auth_token: Option<String>,
     ) -> anyhow::Result<Self> {
         info!("Connecting to controller at {}", addr);
 
@@ -59,15 +69,22 @@ impl GrpcClient {
 
         let channel = endpoint.connect().await?;
         let client = OrchestratorClient::new(channel);
-        Ok(Self { client })
+        Ok(Self { client, auth_token })
+    }
+
+    /// Build a tonic Request with the auth token injected if configured.
+    fn make_request<T>(&self, inner: T) -> tonic::Request<T> {
+        let mut req = tonic::Request::new(inner);
+        if let Some(ref token) = self.auth_token {
+            if let Ok(val) = format!("Bearer {}", token).parse::<MetadataValue<_>>() {
+                req.metadata_mut().insert("authorization", val);
+            }
+        }
+        req
     }
 
     pub async fn register(&self, req: RegisterRequest) -> anyhow::Result<RegisterResponse> {
-        let resp = self
-            .client
-            .clone()
-            .register(tonic::Request::new(req))
-            .await?;
+        let resp = self.client.clone().register(self.make_request(req)).await?;
         Ok(resp.into_inner())
     }
 
@@ -79,7 +96,7 @@ impl GrpcClient {
         let resp = self
             .client
             .clone()
-            .heartbeat(tonic::Request::new(stream))
+            .heartbeat(self.make_request(stream))
             .await?;
         Ok(resp.into_inner())
     }
@@ -92,7 +109,7 @@ impl GrpcClient {
         let resp = self
             .client
             .clone()
-            .job_stream(tonic::Request::new(req))
+            .job_stream(self.make_request(req))
             .await?;
         Ok(resp.into_inner())
     }
@@ -101,7 +118,7 @@ impl GrpcClient {
         let resp = self
             .client
             .clone()
-            .report_job_status(tonic::Request::new(update))
+            .report_job_status(self.make_request(update))
             .await?;
         Ok(resp.into_inner())
     }
@@ -121,7 +138,7 @@ impl GrpcClient {
         let resp = self
             .client
             .clone()
-            .stream_logs(tonic::Request::new(stream))
+            .stream_logs(self.make_request(stream))
             .await?;
         Ok(resp.into_inner())
     }
@@ -134,7 +151,7 @@ impl GrpcClient {
         let resp = self
             .client
             .clone()
-            .reconnect(tonic::Request::new(req))
+            .reconnect(self.make_request(req))
             .await?;
         Ok(resp.into_inner())
     }

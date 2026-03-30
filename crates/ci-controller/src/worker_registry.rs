@@ -98,6 +98,12 @@ impl WorkerRegistry {
         }
     }
 
+    /// Insert a `WorkerState` directly (used during startup state recovery).
+    pub fn insert_worker_state(&mut self, state: WorkerState) {
+        info!("Worker state recovered: {}", state.info.worker_id);
+        self.workers.insert(state.info.worker_id.clone(), state);
+    }
+
     /// Returns `true` if the worker is currently in drain mode.
     pub fn is_draining(&self, worker_id: &str) -> bool {
         self.workers

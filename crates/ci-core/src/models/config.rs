@@ -33,13 +33,33 @@ pub struct AuthConfig {
     pub enabled: bool,
     #[serde(default)]
     pub token: Option<String>,
+    #[serde(default = "default_jwt_secret")]
+    pub jwt_secret: String,
+    #[serde(default = "default_jwt_expiry")]
+    pub jwt_expiry_secs: u64,
+    #[serde(default)]
+    pub default_admin_username: Option<String>,
+    #[serde(default)]
+    pub default_admin_password: Option<String>,
+}
+
+fn default_jwt_secret() -> String {
+    "change-me-in-production".to_string()
+}
+
+fn default_jwt_expiry() -> u64 {
+    86400
 }
 
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             token: None,
+            jwt_secret: default_jwt_secret(),
+            jwt_expiry_secs: default_jwt_expiry(),
+            default_admin_username: None,
+            default_admin_password: None,
         }
     }
 }
@@ -60,24 +80,126 @@ pub struct StorageConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostgresConfig {
-    pub url: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub database: String,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+    #[serde(default = "default_schema")]
+    pub schema: String,
+}
+
+impl PostgresConfig {
+    /// Build the connection URL. Env vars win over config file.
+    /// Returns (url, Vec<(field, source)>) for logging by the caller.
+    pub fn database_url(&self) -> (String, Vec<(&'static str, &'static str)>) {
+        let mut sources = Vec::new();
+        let host = env_or(&self.host, "CHOLA_DB_HOST", "host", &mut sources);
+        let port = env_or(
+            &self.port.to_string(),
+            "CHOLA_DB_PORT",
+            "port",
+            &mut sources,
+        );
+        let database = env_or(&self.database, "CHOLA_DB_NAME", "database", &mut sources);
+        let user = env_or(&self.user, "CHOLA_DB_USER", "user", &mut sources);
+        let password = env_or(
+            &self.password,
+            "CHOLA_DB_PASSWORD",
+            "password",
+            &mut sources,
+        );
+
+        let url = format!(
+            "postgres://{}:{}@{}:{}/{}",
+            user, password, host, port, database
+        );
+        (url, sources)
+    }
+}
+
+fn env_or(
+    config_val: &str,
+    env_key: &str,
+    label: &'static str,
+    sources: &mut Vec<(&'static str, &'static str)>,
+) -> String {
+    match std::env::var(env_key) {
+        Ok(val) if !val.is_empty() => {
+            sources.push((label, "env"));
+            val
+        }
+        _ => {
+            sources.push((label, "config"));
+            config_val.to_string()
+        }
+    }
+}
+
+fn default_port() -> u16 {
+    5432
 }
 
 fn default_max_connections() -> u32 {
     10
 }
 
+fn default_schema() -> String {
+    "chola".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
-    pub url: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_redis_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub password: String,
     #[serde(default = "default_key_prefix")]
     pub key_prefix: String,
 }
 
+impl RedisConfig {
+    /// Build the connection URL. Env vars win over config file.
+    pub fn redis_url(&self) -> (String, Vec<(&'static str, &'static str)>) {
+        let mut sources = Vec::new();
+        let host = env_or(&self.host, "CHOLA_REDIS_HOST", "host", &mut sources);
+        let port = env_or(
+            &self.port.to_string(),
+            "CHOLA_REDIS_PORT",
+            "port",
+            &mut sources,
+        );
+        let password = env_or(
+            &self.password,
+            "CHOLA_REDIS_PASSWORD",
+            "password",
+            &mut sources,
+        );
+
+        let url = if password.is_empty() {
+            format!("redis://{}:{}", host, port)
+        } else {
+            format!("redis://:{}@{}:{}", password, host, port)
+        };
+        (url, sources)
+    }
+}
+
+fn default_redis_port() -> u16 {
+    6379
+}
+
 fn default_key_prefix() -> String {
-    "ci:".to_string()
+    "chola:".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +224,8 @@ pub struct WorkersConfig {
     pub heartbeat_timeout_secs: u32,
     #[serde(default = "default_max_reconnect")]
     pub max_reconnect_attempts: u32,
+    #[serde(default = "default_reservation_timeout")]
+    pub reservation_timeout_secs: u64,
 }
 
 fn default_heartbeat_interval() -> u32 {
@@ -112,6 +236,9 @@ fn default_heartbeat_timeout() -> u32 {
 }
 fn default_max_reconnect() -> u32 {
     5
+}
+fn default_reservation_timeout() -> u64 {
+    14400 // 4 hours
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

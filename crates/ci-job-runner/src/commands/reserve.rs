@@ -1,9 +1,8 @@
-use ci_core::proto::orchestrator::{orchestrator_client::OrchestratorClient, ReserveWorkerRequest};
-use tonic::transport::Channel;
+use ci_core::proto::orchestrator::ReserveWorkerRequest;
 use tracing::info;
 
 pub async fn execute(
-    client: &mut OrchestratorClient<Channel>,
+    client: &mut super::Client,
     repo: String,
     repo_url: Option<String>,
     branch: Option<String>,

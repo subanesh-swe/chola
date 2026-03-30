@@ -12,6 +12,10 @@ struct Cli {
     #[arg(short = 'C', long, default_value = "http://localhost:50051")]
     controller: String,
 
+    /// Bearer token for gRPC auth
+    #[arg(long)]
+    auth_token: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -90,7 +94,7 @@ async fn run() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let mut client = commands::connect(&cli.controller).await?;
+    let mut client = commands::connect(&cli.controller, cli.auth_token.as_deref()).await?;
 
     match cli.command {
         Commands::Reserve {

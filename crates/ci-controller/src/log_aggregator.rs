@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
+const MAX_BUFFERED_BYTES_PER_JOB: usize = 50 * 1024 * 1024; // 50MB per job
+
 /// A log chunk with metadata for broadcasting
 #[derive(Clone, Debug)]
 pub struct LogChunkData {
@@ -24,6 +26,8 @@ struct JobLogState {
     /// Broadcast sender for live log subscribers
     /// Using broadcast channel allows multiple subscribers
     broadcast_tx: broadcast::Sender<LogChunkData>,
+    /// When the log stream was finalized (for TTL-based cleanup)
+    finalized_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Collects and stores logs from workers.
@@ -68,6 +72,7 @@ impl LogAggregator {
             complete: false,
             log_data: Vec::new(),
             broadcast_tx,
+            finalized_at: None,
         }
     }
 
@@ -96,6 +101,7 @@ impl LogAggregator {
                 complete: false,
                 log_data: Vec::new(),
                 broadcast_tx,
+                finalized_at: None,
             }
         });
 
@@ -110,6 +116,7 @@ impl LogAggregator {
             state.total_bytes = 0;
             state.complete = false;
             state.log_data.clear();
+            state.finalized_at = None;
             // Create a new broadcast channel for the fresh job
             let (new_tx, _) = broadcast::channel(self.broadcast_capacity);
             state.broadcast_tx = new_tx;
@@ -139,6 +146,36 @@ impl LogAggregator {
         let chunk_len = data.len() as u64;
         state.last_offset = offset + chunk_len;
         state.total_bytes += chunk_len;
+
+        // Enforce per-job memory bound
+        if state.log_data.len() + data.len() > MAX_BUFFERED_BYTES_PER_JOB {
+            if self.log_dir.is_some() {
+                // Data is on disk — drain oldest bytes to make room
+                let overflow = state.log_data.len() + data.len() - MAX_BUFFERED_BYTES_PER_JOB;
+                let drain = overflow.min(state.log_data.len());
+                state.log_data.drain(..drain);
+                warn!(
+                    "Log buffer overflow for job {}: drained {} bytes (disk-backed)",
+                    job_id, drain
+                );
+            } else {
+                // No disk — stop buffering; live broadcast still works
+                warn!(
+                    "Log buffer overflow for job {} (no disk): dropping {} bytes from buffer",
+                    job_id,
+                    data.len()
+                );
+                // Write to broadcast but skip in-memory append
+                let chunk_data = LogChunkData {
+                    worker_id: worker_id.to_string(),
+                    offset,
+                    data: data.to_vec(),
+                    timestamp_unix,
+                };
+                let _ = state.broadcast_tx.send(chunk_data);
+                return state.last_offset;
+            }
+        }
 
         // Store the log data
         state.log_data.extend_from_slice(data);
@@ -174,10 +211,6 @@ impl LogAggregator {
             job_id, offset, chunk_len, state.total_bytes
         );
 
-        // TODO: Persist to storage (S3/minio/local file)
-        // For now, data is tracked but not stored persistently on the controller.
-        // The worker's local log file serves as the durable copy.
-
         state.last_offset
     }
 
@@ -191,6 +224,7 @@ impl LogAggregator {
     pub fn finalize(&mut self, job_id: &str) {
         if let Some(state) = self.jobs.get_mut(job_id) {
             state.complete = true;
+            state.finalized_at = Some(chrono::Utc::now());
             info!(
                 "Log stream finalized for job {}: {} total bytes",
                 job_id, state.total_bytes
@@ -233,8 +267,20 @@ impl LogAggregator {
     ) -> (Vec<LogChunkData>, broadcast::Receiver<LogChunkData>, bool) {
         match self.jobs.get(job_id) {
             Some(state) => {
+                // Clamp from_offset to actual buffer size
+                let actual_offset = if from_offset as usize > state.log_data.len() {
+                    warn!(
+                        "Requested offset {} exceeds buffer size {}, clamping",
+                        from_offset,
+                        state.log_data.len()
+                    );
+                    state.log_data.len() as u64
+                } else {
+                    from_offset
+                };
+
                 // Get buffered data from the requested offset
-                let buffered = if from_offset == 0 {
+                let buffered = if actual_offset == 0 {
                     // Return all data as a single chunk
                     if !state.log_data.is_empty() {
                         vec![LogChunkData {
@@ -246,12 +292,12 @@ impl LogAggregator {
                     } else {
                         Vec::new()
                     }
-                } else if from_offset < state.log_data.len() as u64 {
+                } else if actual_offset < state.log_data.len() as u64 {
                     // Return data from the offset onwards
-                    let start = from_offset as usize;
+                    let start = actual_offset as usize;
                     vec![LogChunkData {
                         worker_id: String::new(),
-                        offset: from_offset,
+                        offset: actual_offset,
                         data: state.log_data[start..].to_vec(),
                         timestamp_unix: 0,
                     }]
@@ -272,10 +318,33 @@ impl LogAggregator {
                     complete: false,
                     log_data: Vec::new(),
                     broadcast_tx,
+                    finalized_at: None,
                 };
                 self.jobs.insert(job_id.to_string(), state);
                 (Vec::new(), receiver, false)
             }
+        }
+    }
+
+    /// Clean up log buffers for finalized jobs older than the given age.
+    pub fn cleanup_old_logs(&mut self, max_age_secs: i64) {
+        let now = chrono::Utc::now();
+        let to_remove: Vec<String> = self
+            .jobs
+            .iter()
+            .filter(|(_, state)| {
+                state.complete
+                    && state
+                        .finalized_at
+                        .map_or(false, |t| (now - t).num_seconds() > max_age_secs)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &to_remove {
+            self.jobs.remove(id);
+        }
+        if !to_remove.is_empty() {
+            info!("Cleaned up {} completed job log buffers", to_remove.len());
         }
     }
 }
