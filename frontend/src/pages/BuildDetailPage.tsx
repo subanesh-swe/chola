@@ -1,0 +1,127 @@
+import { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getBuild, cancelBuild } from '../api/builds';
+import { StatusBadge } from '../components/ui/StatusBadge';
+import { TimeAgo } from '../components/ui/TimeAgo';
+import { LogViewer } from '../components/log/LogViewer';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { useLiveLog } from '../hooks/useLiveLog';
+import { usePermission } from '../hooks/usePermission';
+import { toast } from 'sonner';
+import type { Job } from '../types';
+
+function duration(start: string | null, end: string | null): string {
+  if (!start) return '-';
+  const s = new Date(start).getTime();
+  const e = end ? new Date(end).getTime() : Date.now();
+  const secs = Math.round((e - s) / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function StageRow({ job }: { job: Job }) {
+  const [expanded, setExpanded] = useState(false);
+  const isRunning = job.state === 'running' || job.state === 'assigned';
+  const { chunks, text: _text } = useLiveLog(job.id, expanded && isRunning);
+
+  return (
+    <div className="border-b border-slate-800 last:border-0">
+      <div onClick={() => setExpanded(!expanded)}
+        className="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-slate-800/30 transition-colors">
+        <div className="flex items-center gap-3">
+          <span className="text-slate-500 w-6 text-right font-mono text-xs">{expanded ? 'v' : '>'}</span>
+          <StatusBadge status={job.state} />
+          <span className="text-sm text-slate-200">{job.stage_name}</span>
+        </div>
+        <div className="flex items-center gap-4 text-xs text-slate-400">
+          {job.exit_code !== null && <span>exit: {job.exit_code}</span>}
+          <span>{duration(job.started_at, job.completed_at)}</span>
+        </div>
+      </div>
+      {expanded && (
+        <div className="px-4 pb-4">
+          <div className="text-xs text-slate-500 mb-2 space-x-4">
+            <span>Command: <code className="text-slate-300">{job.command}</code></span>
+            {job.pre_exit_code !== null && <span>Pre: {job.pre_exit_code}</span>}
+            {job.post_exit_code !== null && <span>Post: {job.post_exit_code}</span>}
+          </div>
+          <LogViewer content={isRunning ? undefined : `Stage: ${job.stage_name}\nState: ${job.state}\n---\n`}
+            liveChunks={isRunning ? chunks : undefined}
+            className="h-64" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function BuildDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const { canCancelJobs } = usePermission();
+  const [showCancel, setShowCancel] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['build', id],
+    queryFn: () => getBuild(id!),
+    enabled: !!id,
+    refetchInterval: 3000,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelBuild(id!, 'Cancelled from dashboard'),
+    onSuccess: () => { toast.success('Build cancelled'); qc.invalidateQueries({ queryKey: ['build', id] }); setShowCancel(false); },
+    onError: () => toast.error('Failed to cancel build'),
+  });
+
+  if (isLoading) return <div className="text-slate-400">Loading...</div>;
+  if (!data) return <div className="text-slate-400">Build not found</div>;
+
+  const { job_group: group, jobs } = data;
+  const isTerminal = ['success', 'failed', 'cancelled'].includes(group.state);
+  const sorted = [...jobs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <button onClick={() => nav('/builds')} className="text-slate-400 hover:text-white transition-colors text-sm">&lt; Builds</button>
+        <h2 className="text-2xl font-bold text-white">Build {group.job_group_id.slice(0, 8)}</h2>
+        <StatusBadge status={group.state} size="md" />
+        {canCancelJobs && !isTerminal && (
+          <button onClick={() => setShowCancel(true)} className="ml-auto px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors">Cancel</button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+          <p className="text-xs text-slate-500">Branch</p>
+          <p className="text-sm text-slate-200">{group.branch || '-'}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+          <p className="text-xs text-slate-500">Commit</p>
+          <p className="text-sm text-slate-200 font-mono">{group.commit_sha?.slice(0, 7) || '-'}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+          <p className="text-xs text-slate-500">Worker</p>
+          <p className="text-sm text-slate-200">{group.reserved_worker_id || '-'}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+          <p className="text-xs text-slate-500">Created</p>
+          <p className="text-sm text-slate-200"><TimeAgo date={group.created_at} /></p>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 border border-slate-700 rounded-xl">
+        <div className="px-4 py-3 border-b border-slate-700">
+          <h3 className="text-sm font-semibold text-slate-300">Stages ({sorted.length})</h3>
+        </div>
+        {sorted.map(job => <StageRow key={job.id} job={job} />)}
+        {!sorted.length && <div className="px-4 py-8 text-center text-slate-500">No stages submitted yet</div>}
+      </div>
+
+      <ConfirmDialog open={showCancel} title="Cancel Build" message="Are you sure you want to cancel this build? Running stages will be terminated."
+        confirmLabel="Cancel Build" variant="danger" onConfirm={() => cancelMutation.mutate()} onCancel={() => setShowCancel(false)} />
+    </div>
+  );
+}

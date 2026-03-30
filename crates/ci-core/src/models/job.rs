@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 /// Job state machine states
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "lowercase")]
 pub enum JobState {
     Queued,
     Assigned,
@@ -23,13 +23,27 @@ impl JobState {
 impl std::fmt::Display for JobState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            JobState::Queued => write!(f, "QUEUED"),
-            JobState::Assigned => write!(f, "ASSIGNED"),
-            JobState::Running => write!(f, "RUNNING"),
-            JobState::Success => write!(f, "SUCCESS"),
-            JobState::Failed => write!(f, "FAILED"),
-            JobState::Cancelled => write!(f, "CANCELLED"),
-            JobState::Unknown => write!(f, "UNKNOWN"),
+            JobState::Queued => write!(f, "queued"),
+            JobState::Assigned => write!(f, "assigned"),
+            JobState::Running => write!(f, "running"),
+            JobState::Success => write!(f, "success"),
+            JobState::Failed => write!(f, "failed"),
+            JobState::Cancelled => write!(f, "cancelled"),
+            JobState::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+impl JobState {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "queued" => Self::Queued,
+            "assigned" => Self::Assigned,
+            "running" => Self::Running,
+            "success" => Self::Success,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            _ => Self::Unknown,
         }
     }
 }

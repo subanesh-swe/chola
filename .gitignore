@@ -34,3 +34,7 @@ logs/
 
 # Local dev files (has its own git repo)
 local/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/

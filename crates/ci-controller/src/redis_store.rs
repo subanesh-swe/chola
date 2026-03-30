@@ -125,6 +125,23 @@ impl RedisStore {
         Ok(released)
     }
 
+    /// Refresh the TTL on an existing worker reservation without changing its value.
+    /// Call on every stage submission to prevent expiry during long pipelines.
+    pub async fn refresh_reservation_ttl(
+        &self,
+        worker_id: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<()> {
+        let key = self.key(&["worker", "reservation", worker_id]);
+        let mut conn = self.pool.get().await?;
+        let _: () = redis::cmd("EXPIRE")
+            .arg(&key)
+            .arg(ttl_secs as i64)
+            .query_async(&mut conn)
+            .await?;
+        Ok(())
+    }
+
     /// Unconditionally delete a worker reservation.
     /// Use only when the worker is dead and we must reclaim regardless of owner
     /// (e.g., heartbeat timeout cleanup).

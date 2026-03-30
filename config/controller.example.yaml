@@ -3,12 +3,18 @@ http_port: 8080
 
 storage:
   postgres:
-    url: "postgres://ci:ci@localhost:5432/ci_orchestrator"
+    host: localhost
+    port: 5432
+    database: choladb
+    user: chola_app
+    password: chola_app_secret
     max_connections: 10
+    schema: chola
 
 redis:
-  url: "redis://localhost:6379"
-  key_prefix: "ci:"
+  host: localhost
+  port: 6379
+  key_prefix: "chola:"
 
 scheduling:
   strategy: "best-fit"
@@ -19,6 +25,13 @@ workers:
   heartbeat_interval_secs: 3
   heartbeat_timeout_secs: 10
   max_reconnect_attempts: 5
+
+auth:
+  enabled: true
+  jwt_secret: "change-me-in-production-use-a-long-random-string"
+  jwt_expiry_secs: 86400
+  default_admin_username: "admin"
+  default_admin_password: "changeme"
 
 logging:
   level: "info"

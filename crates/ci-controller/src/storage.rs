@@ -1,11 +1,12 @@
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row};
+use sqlx::{Acquire, Executor, PgPool, Row};
 use tracing::info;
 use uuid::Uuid;
 
 use ci_core::models::job_group::{JobGroup, JobGroupState};
 use ci_core::models::stage::{Repo, StageConfig, StageScript, WorkerReservation};
+use ci_core::models::user::{User, UserRole};
 
 // ============================================================================
 // Column list constants (prevent drift between SELECT / INSERT / RETURNING)
@@ -37,6 +38,11 @@ const WORKER_COLUMNS: &str =
 
 const RESERVATION_COLUMNS: &str =
     "id, worker_id, job_group_id, reserved_at, expires_at, released_at, release_reason";
+
+const USER_COLUMNS: &str =
+    "id, username, password_hash, display_name, role, active, created_at, updated_at";
+
+const SESSION_COLUMNS: &str = "id, user_id, token_jti, expires_at, revoked, created_at";
 
 // ============================================================================
 // Row mapping helpers
@@ -114,6 +120,19 @@ fn map_job_group(r: sqlx::postgres::PgRow) -> JobGroup {
     }
 }
 
+fn map_user(r: &sqlx::postgres::PgRow) -> User {
+    User {
+        id: r.get("id"),
+        username: r.get("username"),
+        password_hash: r.get("password_hash"),
+        display_name: r.get("display_name"),
+        role: UserRole::from_db_str(r.get::<String, _>("role").as_str()),
+        active: r.get("active"),
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+    }
+}
+
 impl From<sqlx::postgres::PgRow> for DbJob {
     fn from(r: sqlx::postgres::PgRow) -> Self {
         Self {
@@ -163,6 +182,7 @@ impl From<sqlx::postgres::PgRow> for WorkerRow {
 /// PostgreSQL storage for persistent state
 pub struct Storage {
     pool: PgPool,
+    schema: String,
 }
 
 /// Worker row from the workers table
@@ -171,8 +191,8 @@ pub struct WorkerRow {
     pub worker_id: String,
     pub hostname: Option<String>,
     pub total_cpu: Option<i32>,
-    pub total_memory_mb: Option<i32>,
-    pub total_disk_mb: Option<i32>,
+    pub total_memory_mb: Option<i64>,
+    pub total_disk_mb: Option<i64>,
     pub disk_type: Option<String>,
     pub supported_job_types: Option<Vec<String>>,
     pub docker_enabled: bool,
@@ -204,21 +224,63 @@ pub struct DbJob {
 }
 
 impl Storage {
-    /// Create a new Storage with a connection pool
-    pub async fn new(database_url: &str, max_connections: u32) -> anyhow::Result<Self> {
+    /// Create a new Storage with a connection pool.
+    /// Sets `search_path` on every new connection via `after_connect`.
+    pub async fn new(
+        database_url: &str,
+        max_connections: u32,
+        schema: &str,
+    ) -> anyhow::Result<Self> {
+        // Validate schema name: only alphanumeric + underscore allowed
+        if !schema.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            anyhow::bail!(
+                "Invalid schema name '{}': only alphanumeric and underscore allowed",
+                schema
+            );
+        }
+        let schema_owned = schema.to_string();
+        let schema_for_hook = schema_owned.clone();
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
+            .after_connect(move |conn, _meta| {
+                let s = schema_for_hook.clone();
+                Box::pin(async move {
+                    conn.execute(format!("SET search_path TO {s}").as_str())
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect(database_url)
             .await?;
 
-        info!("Connected to PostgreSQL");
-        Ok(Self { pool })
+        info!("Connected to PostgreSQL (search_path={})", schema_owned);
+        Ok(Self {
+            pool,
+            schema: schema_owned,
+        })
     }
 
     /// Run SQL migration files from the migrations/ directory.
     /// Tracks applied migrations in a `schema_migrations` table to avoid
     /// re-running already-applied SQL on every startup.
     pub async fn migrate(&self) -> anyhow::Result<()> {
+        // Acquire a dedicated connection for the entire migration process
+        // so SET search_path and all subsequent queries run on the same session.
+        let mut conn = self.pool.acquire().await?;
+
+        // Advisory lock prevents concurrent controller startups from racing
+        sqlx::query("SELECT pg_advisory_lock(8015)")
+            .execute(&mut *conn)
+            .await?;
+
+        // Ensure schema exists and set search path on this connection
+        sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {}", self.schema))
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(&format!("SET search_path TO {}", self.schema))
+            .execute(&mut *conn)
+            .await?;
+
         // Create tracking table if not exists
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -227,44 +289,29 @@ impl Storage {
                 applied_at TIMESTAMPTZ DEFAULT now()
             )",
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         let migrations: &[(i32, &str, &str)] = &[
             (
                 1,
-                "create_repos",
-                include_str!("../../../migrations/001_create_repos.sql"),
+                "init_schema",
+                include_str!("../../../migrations/001_init_schema.sql"),
             ),
             (
                 2,
-                "create_stage_configs",
-                include_str!("../../../migrations/002_create_stage_configs.sql"),
+                "init_jobs",
+                include_str!("../../../migrations/002_init_jobs.sql"),
             ),
             (
                 3,
-                "create_stage_scripts",
-                include_str!("../../../migrations/003_create_stage_scripts.sql"),
+                "init_workers",
+                include_str!("../../../migrations/003_init_workers.sql"),
             ),
             (
                 4,
-                "create_job_groups",
-                include_str!("../../../migrations/004_create_job_groups.sql"),
-            ),
-            (
-                5,
-                "create_jobs",
-                include_str!("../../../migrations/005_create_jobs.sql"),
-            ),
-            (
-                6,
-                "create_worker_reservations",
-                include_str!("../../../migrations/006_create_worker_reservations.sql"),
-            ),
-            (
-                7,
-                "create_workers",
-                include_str!("../../../migrations/007_create_workers.sql"),
+                "users_and_auth",
+                include_str!("../../../migrations/004_users_and_auth.sql"),
             ),
         ];
 
@@ -273,13 +320,17 @@ impl Storage {
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)",
             )
             .bind(version)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *conn)
             .await?;
 
             if !already_applied {
                 info!("Running migration {}: {}", version, name);
-                let mut tx = self.pool.begin().await?;
-                sqlx::query(sql).execute(&mut *tx).await?;
+                // NOTE: SQL is split by ';' — migration files must not contain
+                // semicolons inside string literals, dollar-quoting, or PL/pgSQL bodies.
+                let mut tx = conn.begin().await?;
+                for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                    sqlx::query(stmt).execute(&mut *tx).await?;
+                }
                 sqlx::query("INSERT INTO schema_migrations (version, name) VALUES ($1, $2)")
                     .bind(version)
                     .bind(*name)
@@ -288,6 +339,11 @@ impl Storage {
                 tx.commit().await?;
             }
         }
+
+        // Release advisory lock
+        sqlx::query("SELECT pg_advisory_unlock(8015)")
+            .execute(&mut *conn)
+            .await?;
 
         info!("Migrations complete");
         Ok(())
@@ -470,6 +526,31 @@ impl Storage {
     pub async fn get_job_group(&self, id: Uuid) -> anyhow::Result<Option<JobGroup>> {
         let q = format!("SELECT {JOB_GROUP_COLUMNS} FROM job_groups WHERE id = $1");
         let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
+
+        Ok(row.map(map_job_group))
+    }
+
+    /// Find an active (pending/reserved/running) job group for a repo+branch+commit combo.
+    pub async fn find_active_job_group(
+        &self,
+        repo_id: Uuid,
+        branch: Option<&str>,
+        commit_sha: Option<&str>,
+    ) -> anyhow::Result<Option<JobGroup>> {
+        let q = format!(
+            "SELECT {JOB_GROUP_COLUMNS} FROM job_groups \
+             WHERE repo_id = $1 \
+             AND branch IS NOT DISTINCT FROM $2 \
+             AND commit_sha IS NOT DISTINCT FROM $3 \
+             AND state IN ('pending', 'reserved', 'running') \
+             ORDER BY created_at DESC LIMIT 1"
+        );
+        let row = sqlx::query(&q)
+            .bind(repo_id)
+            .bind(branch)
+            .bind(commit_sha)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(map_job_group))
     }
@@ -708,5 +789,415 @@ impl Storage {
         let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
 
         Ok(rows.into_iter().map(WorkerRow::from).collect())
+    }
+
+    // ========================================================================
+    // Users
+    // ========================================================================
+
+    pub async fn get_user_by_username(&self, username: &str) -> anyhow::Result<Option<User>> {
+        let q = format!("SELECT {USER_COLUMNS} FROM users WHERE username = $1");
+        let row = sqlx::query(&q)
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.as_ref().map(map_user))
+    }
+
+    pub async fn get_user(&self, id: Uuid) -> anyhow::Result<Option<User>> {
+        let q = format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1");
+        let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
+
+        Ok(row.as_ref().map(map_user))
+    }
+
+    pub async fn create_user(
+        &self,
+        username: &str,
+        password_hash: &str,
+        display_name: Option<&str>,
+        role: &str,
+    ) -> anyhow::Result<User> {
+        let q = format!(
+            "INSERT INTO users (username, password_hash, display_name, role) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING {USER_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(username)
+            .bind(password_hash)
+            .bind(display_name)
+            .bind(role)
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(map_user(&row))
+    }
+
+    pub async fn list_users(&self) -> anyhow::Result<Vec<User>> {
+        let q = format!("SELECT {USER_COLUMNS} FROM users ORDER BY username");
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+
+        Ok(rows.iter().map(map_user).collect())
+    }
+
+    pub async fn update_user(
+        &self,
+        id: Uuid,
+        display_name: Option<&str>,
+        role: Option<&str>,
+        active: Option<bool>,
+        password_hash: Option<&str>,
+    ) -> anyhow::Result<Option<User>> {
+        let q = format!(
+            "UPDATE users \
+             SET display_name = COALESCE($2, display_name), \
+                 role = COALESCE($3, role), \
+                 active = COALESCE($4, active), \
+                 password_hash = COALESCE($5, password_hash), \
+                 updated_at = now() \
+             WHERE id = $1 \
+             RETURNING {USER_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(id)
+            .bind(display_name)
+            .bind(role)
+            .bind(active)
+            .bind(password_hash)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.as_ref().map(map_user))
+    }
+
+    pub async fn delete_user(&self, id: Uuid) -> anyhow::Result<bool> {
+        let q = "DELETE FROM users WHERE id = $1";
+        let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ========================================================================
+    // Sessions
+    // ========================================================================
+
+    pub async fn create_session(
+        &self,
+        user_id: Uuid,
+        token_jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let q = format!(
+            "INSERT INTO sessions (user_id, token_jti, expires_at) \
+             VALUES ($1, $2, $3)"
+        );
+        sqlx::query(&q)
+            .bind(user_id)
+            .bind(token_jti)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn is_session_valid(&self, token_jti: &str) -> anyhow::Result<bool> {
+        let q = "SELECT EXISTS(\
+                     SELECT 1 FROM sessions \
+                     WHERE token_jti = $1 AND revoked = false AND expires_at > now()\
+                 )";
+        let valid: bool = sqlx::query_scalar(q)
+            .bind(token_jti)
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(valid)
+    }
+
+    pub async fn revoke_session(&self, token_jti: &str) -> anyhow::Result<bool> {
+        let q = "UPDATE sessions SET revoked = true WHERE token_jti = $1 AND revoked = false";
+        let result = sqlx::query(q).bind(token_jti).execute(&self.pool).await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn cleanup_expired_sessions(&self) -> anyhow::Result<u64> {
+        let q = "DELETE FROM sessions WHERE expires_at < now() OR revoked = true";
+        let result = sqlx::query(q).execute(&self.pool).await?;
+
+        Ok(result.rows_affected())
+    }
+
+    // ========================================================================
+    // Audit Log
+    // ========================================================================
+
+    pub async fn create_audit_log(
+        &self,
+        user_id: Option<Uuid>,
+        username: &str,
+        action: &str,
+        resource_type: Option<&str>,
+        resource_id: Option<&str>,
+        details: Option<serde_json::Value>,
+        ip_address: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let q = "INSERT INTO audit_log \
+                 (user_id, username, action, resource_type, resource_id, details, ip_address) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)";
+        sqlx::query(q)
+            .bind(user_id)
+            .bind(username)
+            .bind(action)
+            .bind(resource_type)
+            .bind(resource_id)
+            .bind(details)
+            .bind(ip_address)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // State Recovery (startup)
+    // ========================================================================
+
+    /// Load all non-terminal job groups for state recovery on startup.
+    pub async fn load_active_job_groups(&self) -> anyhow::Result<Vec<JobGroup>> {
+        let q = format!(
+            "SELECT {JOB_GROUP_COLUMNS} FROM job_groups \
+             WHERE state NOT IN ('success', 'failed', 'cancelled') \
+             ORDER BY created_at"
+        );
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(map_job_group).collect())
+    }
+
+    /// Load all non-terminal jobs for state recovery on startup.
+    pub async fn load_active_jobs(&self) -> anyhow::Result<Vec<DbJob>> {
+        let q = format!(
+            "SELECT {JOB_COLUMNS} FROM jobs \
+             WHERE state NOT IN ('success', 'failed', 'cancelled') \
+             ORDER BY created_at"
+        );
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(DbJob::from).collect())
+    }
+
+    /// Load all registered workers for state recovery on startup.
+    pub async fn load_workers(&self) -> anyhow::Result<Vec<WorkerRow>> {
+        let q = format!("SELECT {WORKER_COLUMNS} FROM workers ORDER BY worker_id");
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(WorkerRow::from).collect())
+    }
+
+    // ========================================================================
+    // Dashboard / Listing helpers
+    // ========================================================================
+
+    pub async fn list_job_groups_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+        state_filter: Option<&str>,
+        repo_id_filter: Option<Uuid>,
+    ) -> anyhow::Result<(Vec<JobGroup>, i64)> {
+        let (where_clause, bind_offset) = match (state_filter.is_some(), repo_id_filter.is_some()) {
+            (true, true) => ("WHERE state = $1 AND repo_id = $2".to_string(), 2),
+            (true, false) => ("WHERE state = $1".to_string(), 1),
+            (false, true) => ("WHERE repo_id = $1".to_string(), 1),
+            (false, false) => (String::new(), 0),
+        };
+
+        let count_q = format!("SELECT COUNT(*) FROM job_groups {where_clause}");
+        let data_q = format!(
+            "SELECT {JOB_GROUP_COLUMNS} FROM job_groups {where_clause} \
+             ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            bind_offset + 1,
+            bind_offset + 2
+        );
+
+        // Build count query
+        let mut count_query = sqlx::query_scalar::<_, i64>(&count_q);
+        if let Some(state) = state_filter {
+            count_query = count_query.bind(state.to_string());
+        }
+        if let Some(repo_id) = repo_id_filter {
+            count_query = count_query.bind(repo_id);
+        }
+        let total: i64 = count_query.fetch_one(&self.pool).await?;
+
+        // Build data query
+        let mut data_query = sqlx::query(&data_q);
+        if let Some(state) = state_filter {
+            data_query = data_query.bind(state.to_string());
+        }
+        if let Some(repo_id) = repo_id_filter {
+            data_query = data_query.bind(repo_id);
+        }
+        data_query = data_query.bind(limit).bind(offset);
+
+        let rows = data_query.fetch_all(&self.pool).await?;
+        let groups: Vec<JobGroup> = rows.into_iter().map(map_job_group).collect();
+
+        Ok((groups, total))
+    }
+
+    pub async fn get_job_group_with_jobs(
+        &self,
+        group_id: Uuid,
+    ) -> anyhow::Result<Option<(JobGroup, Vec<DbJob>)>> {
+        let group = self.get_job_group(group_id).await?;
+        match group {
+            Some(g) => {
+                let jobs = self.get_jobs_for_group(group_id).await?;
+                Ok(Some((g, jobs)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    // ========================================================================
+    // Repos (additional CRUD)
+    // ========================================================================
+
+    pub async fn get_repo(&self, id: Uuid) -> anyhow::Result<Option<Repo>> {
+        let q = format!("SELECT {REPO_COLUMNS} FROM repos WHERE id = $1");
+        let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.map(map_repo))
+    }
+
+    pub async fn update_repo(
+        &self,
+        id: Uuid,
+        repo_name: Option<&str>,
+        repo_url: Option<&str>,
+        default_branch: Option<&str>,
+        enabled: Option<bool>,
+    ) -> anyhow::Result<Option<Repo>> {
+        let q = format!(
+            "UPDATE repos \
+             SET repo_name = COALESCE($2, repo_name), \
+                 repo_url = COALESCE($3, repo_url), \
+                 default_branch = COALESCE($4, default_branch), \
+                 enabled = COALESCE($5, enabled), \
+                 updated_at = now() \
+             WHERE id = $1 \
+             RETURNING {REPO_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(id)
+            .bind(repo_name)
+            .bind(repo_url)
+            .bind(default_branch)
+            .bind(enabled)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(map_repo))
+    }
+
+    pub async fn delete_repo(&self, id: Uuid) -> anyhow::Result<bool> {
+        let q = "DELETE FROM repos WHERE id = $1";
+        let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ========================================================================
+    // Stage Configs (additional CRUD)
+    // ========================================================================
+
+    pub async fn create_stage_config(
+        &self,
+        repo_id: Uuid,
+        stage_name: &str,
+        command: &str,
+        required_cpu: i32,
+        required_memory_mb: i32,
+        required_disk_mb: i32,
+        max_duration_secs: i32,
+        execution_order: i32,
+        parallel_group: Option<&str>,
+        allow_worker_migration: bool,
+        job_type: &str,
+    ) -> anyhow::Result<StageConfig> {
+        let q = format!(
+            "INSERT INTO stage_configs \
+             (repo_id, stage_name, command, required_cpu, required_memory_mb, \
+              required_disk_mb, max_duration_secs, execution_order, parallel_group, \
+              allow_worker_migration, job_type) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             RETURNING {STAGE_CONFIG_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(repo_id)
+            .bind(stage_name)
+            .bind(command)
+            .bind(required_cpu)
+            .bind(required_memory_mb)
+            .bind(required_disk_mb)
+            .bind(max_duration_secs)
+            .bind(execution_order)
+            .bind(parallel_group)
+            .bind(allow_worker_migration)
+            .bind(job_type)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(map_stage_config(row))
+    }
+
+    pub async fn update_stage_config(
+        &self,
+        id: Uuid,
+        stage_name: Option<&str>,
+        command: Option<&str>,
+        required_cpu: Option<i32>,
+        required_memory_mb: Option<i32>,
+        required_disk_mb: Option<i32>,
+        max_duration_secs: Option<i32>,
+        execution_order: Option<i32>,
+        parallel_group: Option<&str>,
+        allow_worker_migration: Option<bool>,
+        job_type: Option<&str>,
+    ) -> anyhow::Result<Option<StageConfig>> {
+        let q = format!(
+            "UPDATE stage_configs \
+             SET stage_name = COALESCE($2, stage_name), \
+                 command = COALESCE($3, command), \
+                 required_cpu = COALESCE($4, required_cpu), \
+                 required_memory_mb = COALESCE($5, required_memory_mb), \
+                 required_disk_mb = COALESCE($6, required_disk_mb), \
+                 max_duration_secs = COALESCE($7, max_duration_secs), \
+                 execution_order = COALESCE($8, execution_order), \
+                 parallel_group = COALESCE($9, parallel_group), \
+                 allow_worker_migration = COALESCE($10, allow_worker_migration), \
+                 job_type = COALESCE($11, job_type), \
+                 updated_at = now() \
+             WHERE id = $1 \
+             RETURNING {STAGE_CONFIG_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(id)
+            .bind(stage_name)
+            .bind(command)
+            .bind(required_cpu)
+            .bind(required_memory_mb)
+            .bind(required_disk_mb)
+            .bind(max_duration_secs)
+            .bind(execution_order)
+            .bind(parallel_group)
+            .bind(allow_worker_migration)
+            .bind(job_type)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(map_stage_config))
+    }
+
+    pub async fn delete_stage_config(&self, id: Uuid) -> anyhow::Result<bool> {
+        let q = "DELETE FROM stage_configs WHERE id = $1";
+        let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
+        Ok(result.rows_affected() > 0)
     }
 }

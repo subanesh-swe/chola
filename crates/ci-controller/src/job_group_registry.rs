@@ -36,14 +36,36 @@ impl JobGroupRegistry {
         self.groups.get_mut(group_id)
     }
 
-    pub fn update_state(&mut self, group_id: &Uuid, state: JobGroupState) {
+    pub fn update_state(&mut self, group_id: &Uuid, new_state: JobGroupState) -> bool {
         if let Some(group) = self.groups.get_mut(group_id) {
-            info!("Job group {} state: {} -> {}", group_id, group.state, state);
-            group.state = state;
-            group.updated_at = chrono::Utc::now();
-            if state.is_terminal() {
-                group.completed_at = Some(chrono::Utc::now());
+            let valid = match (&group.state, &new_state) {
+                // Can always cancel
+                (_, JobGroupState::Cancelled) => true,
+                (JobGroupState::Pending, JobGroupState::Reserved) => true,
+                (JobGroupState::Reserved, JobGroupState::Running) => true,
+                (JobGroupState::Running, JobGroupState::Success | JobGroupState::Failed) => true,
+                _ => false,
+            };
+            if valid {
+                info!(
+                    "Job group {} state: {} -> {}",
+                    group_id, group.state, new_state
+                );
+                group.state = new_state;
+                group.updated_at = chrono::Utc::now();
+                if new_state.is_terminal() {
+                    group.completed_at = Some(chrono::Utc::now());
+                }
+                true
+            } else {
+                warn!(
+                    "Invalid group state transition: {:?} -> {:?} for {}",
+                    group.state, new_state, group_id
+                );
+                false
             }
+        } else {
+            false
         }
     }
 
@@ -104,7 +126,7 @@ impl JobGroupRegistry {
         let all_terminal = jobs.iter().all(|j| {
             matches!(
                 j.state,
-                JobState::Success | JobState::Failed | JobState::Cancelled
+                JobState::Success | JobState::Failed | JobState::Cancelled | JobState::Unknown
             )
         });
         if !all_terminal {
@@ -218,7 +240,7 @@ impl JobGroupRegistry {
             for job in jobs.iter_mut() {
                 if !matches!(
                     job.state,
-                    JobState::Success | JobState::Failed | JobState::Cancelled
+                    JobState::Success | JobState::Failed | JobState::Cancelled | JobState::Unknown
                 ) {
                     info!(
                         "Failing job {} in group {} due to worker death: {}",

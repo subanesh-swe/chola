@@ -234,6 +234,30 @@ impl Executor {
         })
     }
 
+    /// Mask common secret patterns in a string for safe logging.
+    fn mask_secrets(s: &str) -> String {
+        let patterns = [
+            "password=",
+            "token=",
+            "secret=",
+            "api_key=",
+            "Bearer ",
+            "Authorization:",
+        ];
+        let mut masked = s.to_string();
+        for pat in &patterns {
+            if let Some(idx) = masked.find(pat) {
+                let start = idx + pat.len();
+                let end = masked[start..]
+                    .find(|c: char| c.is_whitespace() || c == '\'' || c == '"')
+                    .map(|i| start + i)
+                    .unwrap_or(masked.len());
+                masked.replace_range(start..end, "***");
+            }
+        }
+        masked
+    }
+
     /// Streaming execution — reads stdout/stderr line-by-line and sends through channel.
     ///
     /// Each line is sent as a `LogLine` through `log_tx` for real-time streaming.
@@ -252,7 +276,10 @@ impl Executor {
         log_tx: mpsc::Sender<LogLine>,
         mut cancel_rx: mpsc::Receiver<i32>,
     ) -> anyhow::Result<ExecutionResult> {
-        info!("Executing command (streaming): {}", command);
+        info!(
+            "Executing command (streaming): {}",
+            Self::mask_secrets(command)
+        );
         info!("Working directory: {}", work_dir);
         info!("Log path: {}", log_path);
 

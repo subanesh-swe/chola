@@ -1,13 +1,7 @@
-use ci_core::proto::orchestrator::{
-    orchestrator_client::OrchestratorClient, GetJobGroupStatusRequest,
-};
-use tonic::transport::Channel;
+use ci_core::proto::orchestrator::GetJobGroupStatusRequest;
 use tracing::info;
 
-pub async fn execute(
-    client: &mut OrchestratorClient<Channel>,
-    job_group_id: String,
-) -> anyhow::Result<()> {
+pub async fn execute(client: &mut super::Client, job_group_id: String) -> anyhow::Result<()> {
     info!("Querying status for job_group_id={}", job_group_id);
 
     let request = tonic::Request::new(GetJobGroupStatusRequest {

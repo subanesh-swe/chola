@@ -1,11 +1,10 @@
 use std::io::Write;
 
-use ci_core::proto::orchestrator::{orchestrator_client::OrchestratorClient, WatchJobLogsRequest};
-use tonic::transport::Channel;
+use ci_core::proto::orchestrator::WatchJobLogsRequest;
 use tracing::info;
 
 pub async fn execute(
-    client: &mut OrchestratorClient<Channel>,
+    client: &mut super::Client,
     job_group_id: Option<String>,
     job_id: Option<String>,
     stage: Option<String>,

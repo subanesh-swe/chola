@@ -1,14 +1,13 @@
 use std::io::Write;
 
 use ci_core::proto::orchestrator::{
-    orchestrator_client::OrchestratorClient, CancelJobRequest, GetJobStatusRequest,
-    GetJobStatusResponse, JobState, SubmitJobRequest, WatchJobLogsRequest,
+    CancelJobRequest, GetJobStatusRequest, GetJobStatusResponse, JobState, SubmitJobRequest,
+    WatchJobLogsRequest,
 };
-use tonic::transport::Channel;
 use tracing::{info, warn};
 
 pub async fn execute(
-    client: &mut OrchestratorClient<Channel>,
+    client: &mut super::Client,
     job_id: String,
     job_type: String,
     command_parts: Vec<String>,
@@ -96,10 +95,7 @@ pub async fn stream_logs(
 /// Query the controller for the final job status and exit with its exit code.
 /// If the job is not yet terminal, polls until it reaches a terminal state
 /// (with a 5-minute timeout).
-pub async fn exit_with_job_status(
-    client: &mut OrchestratorClient<Channel>,
-    job_id: &str,
-) -> anyhow::Result<()> {
+pub async fn exit_with_job_status(client: &mut super::Client, job_id: &str) -> anyhow::Result<()> {
     let request = tonic::Request::new(GetJobStatusRequest {
         job_id: job_id.to_string(),
     });
@@ -180,10 +176,7 @@ pub async fn exit_with_job_status(
 }
 
 /// Handle Ctrl+C: cancel the job on the controller and wait for termination.
-async fn handle_cancel(
-    client: &mut OrchestratorClient<Channel>,
-    job_id: &str,
-) -> anyhow::Result<()> {
+async fn handle_cancel(client: &mut super::Client, job_id: &str) -> anyhow::Result<()> {
     info!("Received Ctrl+C, cancelling job {}...", job_id);
 
     let cancel = tonic::Request::new(CancelJobRequest {
@@ -218,7 +211,7 @@ async fn handle_cancel(
 /// Wait for job to reach terminal state. Returns the full status response.
 /// Uses a default 30-minute timeout.
 pub async fn wait_for_job_termination(
-    client: &mut OrchestratorClient<Channel>,
+    client: &mut super::Client,
     job_id: &str,
 ) -> anyhow::Result<GetJobStatusResponse> {
     wait_for_job_termination_with_timeout(client, job_id, 1800).await
@@ -227,7 +220,7 @@ pub async fn wait_for_job_termination(
 /// Wait for job to reach terminal state with an explicit timeout in seconds.
 /// Returns the full `GetJobStatusResponse` on success.
 pub async fn wait_for_job_termination_with_timeout(
-    client: &mut OrchestratorClient<Channel>,
+    client: &mut super::Client,
     job_id: &str,
     timeout_secs: u64,
 ) -> anyhow::Result<GetJobStatusResponse> {
@@ -275,10 +268,7 @@ pub async fn wait_for_job_termination_with_timeout(
 
 /// Fallback to polling for job status if WatchJobLogs fails.
 /// Times out after 30 minutes.
-pub async fn fallback_poll_status(
-    client: &mut OrchestratorClient<Channel>,
-    job_id: &str,
-) -> anyhow::Result<()> {
+pub async fn fallback_poll_status(client: &mut super::Client, job_id: &str) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(1800);
 
     loop {

@@ -102,30 +102,59 @@ impl JobRegistry {
         count
     }
 
-    /// Cancel a job. Returns the worker_id if the job was assigned to a worker.
-    /// Note: This does NOT immediately set the state to CANCELLED - it just stores
-    /// the cancel reason. The state will be set to CANCELLED when the worker reports
-    /// the final status after terminating the process.
+    /// Cancel a job. Returns the worker_id if the job is running and needs a cancel signal.
+    ///
+    /// - Terminal jobs (Success/Failed/Cancelled): no-op, returns None.
+    /// - Queued jobs: immediately set to Cancelled, returns None (no worker to notify).
+    /// - Assigned/Running jobs: store cancel reason and return worker_id so the caller
+    ///   can send a cancel directive; state set to Cancelled when worker reports back.
     pub fn cancel_job(&mut self, job_id: &str, reason: &str) -> Option<String> {
         if let Some(job) = self.jobs.get_mut(job_id) {
             match job.state {
                 JobState::Success | JobState::Failed | JobState::Cancelled => {
                     info!(
-                        "Job {} already in terminal state: {}",
+                        "Job {} already in terminal state: {}, skipping cancel",
                         job.job_id, job.state
                     );
                     return None;
                 }
-                _ => {
+                JobState::Running | JobState::Assigned => {
                     info!("Requesting cancellation for job {}: {}", job.job_id, reason);
                     // Don't set state to CANCELLED yet - wait for worker to report termination
                     job.cancel_reason = Some(reason.to_string());
                     job.updated_at = chrono::Utc::now();
                     return job.assigned_worker.clone();
                 }
+                _ => {
+                    // Queued (or Unknown) — no worker assigned, cancel immediately
+                    info!("Cancelling queued job {}: {}", job.job_id, reason);
+                    job.state = JobState::Cancelled;
+                    job.cancel_reason = Some(reason.to_string());
+                    job.updated_at = chrono::Utc::now();
+                    return None;
+                }
             }
         }
         None
+    }
+
+    /// Mark running/assigned jobs as Unknown (used during startup recovery).
+    /// Returns the IDs of jobs that were transitioned.
+    pub fn mark_stale_jobs_unknown(&mut self) -> Vec<String> {
+        let stale: Vec<String> = self
+            .jobs
+            .values()
+            .filter(|j| matches!(j.state, JobState::Running | JobState::Assigned))
+            .map(|j| j.job_id.clone())
+            .collect();
+        let now = chrono::Utc::now();
+        for id in &stale {
+            if let Some(job) = self.jobs.get_mut(id) {
+                job.state = JobState::Unknown;
+                job.updated_at = now;
+            }
+        }
+        stale
     }
 
     /// Cancel orphaned jobs older than timeout_secs that have no job group

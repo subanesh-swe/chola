@@ -32,14 +32,22 @@ impl StageRunner {
         }
     }
 
+    /// Sanitize a path component to prevent directory traversal.
+    fn sanitize_path_component(s: &str) -> String {
+        s.replace("..", "").replace('/', "_").replace('\\', "_")
+    }
+
     /// Determine the log path for a stage
     pub fn log_path(log_dir: &str, job_group_id: &str, stage_name: &str, job_id: &str) -> PathBuf {
         if !job_group_id.is_empty() && !stage_name.is_empty() {
+            let safe_group = Self::sanitize_path_component(job_group_id);
+            let safe_stage = Self::sanitize_path_component(stage_name);
             PathBuf::from(log_dir)
-                .join(job_group_id)
-                .join(format!("{}.log", stage_name))
+                .join(safe_group)
+                .join(format!("{}.log", safe_stage))
         } else {
-            PathBuf::from(log_dir).join(format!("{}.log", job_id))
+            let safe_job = Self::sanitize_path_component(job_id);
+            PathBuf::from(log_dir).join(format!("{}.log", safe_job))
         }
     }
 
