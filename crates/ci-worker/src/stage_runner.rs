@@ -134,29 +134,44 @@ impl StageRunner {
         // -- Phase 2: Main command --
         info!("Running main command");
 
-        let command_future =
-            self.executor
-                .execute_streaming(command, work_dir, log_path, log_tx.clone(), cancel_rx);
-
+        // If there is a timeout, we merge the external cancel signal and a
+        // timeout-generated signal into a single channel so that the executor's
+        // existing cancellation logic (process tree kill) handles both cases.
         let result = if max_duration_secs > 0 {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(max_duration_secs as u64),
-                command_future,
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => {
-                    warn!("Stage timeout after {} seconds", max_duration_secs);
-                    was_cancelled = true;
-                    Ok(ExecutionResult {
-                        exit_code: -15,
-                        output: String::new(),
-                    }) // SIGTERM-like
+            let (merged_tx, merged_rx) = mpsc::channel::<i32>(1);
+
+            // Spawn timeout task: sends SIGTERM through the channel when deadline
+            // is exceeded.  The executor will receive this exactly like an external
+            // cancel and kill the process tree properly.
+            let timeout_tx = merged_tx.clone();
+            let timeout_secs = max_duration_secs as u64;
+            let timeout_handle = tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(timeout_secs)).await;
+                let _ = timeout_tx.send(15).await; // SIGTERM
+            });
+
+            // Spawn forwarder: relays external cancel signal to merged channel
+            let forwarder_tx = merged_tx;
+            let mut cancel_rx = cancel_rx;
+            tokio::spawn(async move {
+                if let Some(sig) = cancel_rx.recv().await {
+                    let _ = forwarder_tx.send(sig).await;
                 }
-            }
+            });
+
+            let r = self
+                .executor
+                .execute_streaming(command, work_dir, log_path, log_tx.clone(), merged_rx)
+                .await;
+
+            // If command finished before timeout, cancel the timeout task
+            timeout_handle.abort();
+
+            r
         } else {
-            command_future.await
+            self.executor
+                .execute_streaming(command, work_dir, log_path, log_tx.clone(), cancel_rx)
+                .await
         };
 
         match result {

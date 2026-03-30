@@ -65,6 +65,20 @@ impl JobRegistry {
         self.jobs.get(&job_id).cloned()
     }
 
+    /// Assign a specific queued job to a worker. Returns the job if successful.
+    pub fn assign_job(&mut self, job_id: &str, worker_id: &str) -> Option<Job> {
+        if let Some(job) = self.jobs.get_mut(job_id) {
+            if job.state == JobState::Queued {
+                job.state = JobState::Assigned;
+                job.assigned_worker = Some(worker_id.to_string());
+                job.updated_at = chrono::Utc::now();
+                info!("Job {} assigned to worker {}", job_id, worker_id);
+                return Some(job.clone());
+            }
+        }
+        None
+    }
+
     pub fn queued_jobs(&self) -> Vec<&Job> {
         self.jobs
             .values()
@@ -72,7 +86,8 @@ impl JobRegistry {
             .collect()
     }
 
-    pub fn mark_unknown_for_worker(&mut self, worker_id: &str) {
+    pub fn mark_unknown_for_worker(&mut self, worker_id: &str) -> usize {
+        let mut count = 0;
         for job in self.jobs.values_mut() {
             if job.assigned_worker.as_deref() == Some(worker_id) && job.state == JobState::Running {
                 info!(
@@ -81,8 +96,10 @@ impl JobRegistry {
                 );
                 job.state = JobState::Unknown;
                 job.updated_at = chrono::Utc::now();
+                count += 1;
             }
         }
+        count
     }
 
     /// Cancel a job. Returns the worker_id if the job was assigned to a worker.
@@ -109,6 +126,24 @@ impl JobRegistry {
             }
         }
         None
+    }
+
+    /// Cancel orphaned jobs older than timeout_secs that have no job group
+    pub fn cancel_orphaned_jobs(&mut self, timeout_secs: u64) -> usize {
+        let now = chrono::Utc::now();
+        let mut cancelled = 0;
+        for job in self.jobs.values_mut() {
+            if matches!(job.state, JobState::Queued | JobState::Assigned)
+                && job.job_group_id.is_none()
+                && (now - job.created_at).num_seconds() as u64 > timeout_secs
+            {
+                job.state = JobState::Cancelled;
+                job.cancel_reason = Some("Orphaned (submitter disconnected)".to_string());
+                job.updated_at = now;
+                cancelled += 1;
+            }
+        }
+        cancelled
     }
 
     /// Get jobs that should be orphaned (submitter disconnected and timeout passed)

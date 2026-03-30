@@ -1,13 +1,13 @@
-use std::io::Write;
-
 use ci_core::proto::orchestrator::{
-    orchestrator_client::OrchestratorClient, CancelJobRequest, SubmitStageRequest,
+    orchestrator_client::OrchestratorClient, CancelJobRequest, JobState, SubmitStageRequest,
     WatchJobLogsRequest,
 };
 use tonic::transport::Channel;
 use tracing::{info, warn};
 
-use super::submit::{fallback_poll_status, wait_for_job_termination};
+use super::submit::{
+    exit_with_job_status, fallback_poll_status, stream_logs, wait_for_job_termination,
+};
 
 pub async fn execute(
     client: &mut OrchestratorClient<Channel>,
@@ -58,23 +58,15 @@ pub async fn execute(
             let jid = job_id.clone();
 
             tokio::select! {
-                result = async {
-                    while let Some(chunk) = stream.message().await? {
-                        if !chunk.data.is_empty() {
-                            let text = String::from_utf8_lossy(&chunk.data);
-                            print!("{}", text);
-                            std::io::stdout().flush().ok();
-                        }
-                    }
-                    Ok::<(), anyhow::Error>(())
-                } => {
+                result = stream_logs(&mut stream) => {
+                    println!("{}", "-".repeat(60));
                     match result {
-                        Ok(()) => {
-                            println!("{}", "-".repeat(60));
-                            info!("Stage '{}' completed (job_id={})", stage, jid);
-                            Ok(())
+                        Ok(()) => exit_with_job_status(client, &jid).await,
+                        Err(e) => {
+                            warn!("Log stream broke: {}", e);
+                            info!("Checking final job status...");
+                            exit_with_job_status(client, &jid).await
                         }
-                        Err(e) => Err(e),
                     }
                 }
 
@@ -93,9 +85,12 @@ pub async fn execute(
                             let cr = cr.into_inner();
                             if cr.accepted {
                                 info!("Cancellation accepted: {}", cr.message);
-                                let state = wait_for_job_termination(client, &jid).await;
-                                match state {
-                                    Ok(s) => info!("Job {} terminated with state: {}", jid, s),
+                                match wait_for_job_termination(client, &jid).await {
+                                    Ok(s) => info!(
+                                        "Job {} terminated with state: {:?}",
+                                        jid,
+                                        JobState::try_from(s.state).unwrap_or(JobState::Unknown)
+                                    ),
                                     Err(e) => warn!("Error waiting for termination: {}", e),
                                 }
                             } else {

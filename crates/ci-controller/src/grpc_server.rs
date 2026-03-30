@@ -106,6 +106,9 @@ fn job_state_to_proto(state: ci_core::models::job::JobState) -> i32 {
 ///
 /// Returns `true` if the channel is still open (caller should continue looping),
 /// `false` if the channel closed (caller should break).
+///
+/// Lock ordering: worker_registry(R) -> job_registry(W) to match the heartbeat
+/// timeout task and avoid ABBA deadlock.
 async fn dispatch_job_for_worker(
     state: &Arc<ControllerState>,
     worker_id: &str,
@@ -116,77 +119,89 @@ async fn dispatch_job_for_worker(
         branch_affinity: true,
     };
 
-    // Check if any queued job is a fit for this worker.
-    let job_id_to_assign: Option<String> = {
-        let job_registry = state.job_registry.read().await;
-        let worker_registry = state.worker_registry.read().await;
+    // Acquire in consistent order: worker_registry(R) first, then job_registry(W)
+    let worker_registry = state.worker_registry.read().await;
 
-        match worker_registry.get(worker_id) {
-            Some(worker_state) => {
-                let workers = vec![worker_state];
-                let queued = job_registry.queued_jobs();
-
-                queued.iter().find_map(|queued_job| {
-                    // Only dispatch jobs that are either unassigned (general queue)
-                    // or explicitly targeted at this worker (stage jobs).
-                    let targeted_elsewhere = queued_job
-                        .assigned_worker
-                        .as_deref()
-                        .map(|w| w != worker_id)
-                        .unwrap_or(false);
-                    if targeted_elsewhere {
-                        return None;
-                    }
-
-                    // For jobs with an explicit worker assignment (submit_stage path),
-                    // bypass the scheduler and dispatch directly.
-                    let explicitly_targeted = queued_job
-                        .assigned_worker
-                        .as_deref()
-                        .map(|w| w == worker_id)
-                        .unwrap_or(false);
-
-                    if explicitly_targeted
-                        || scheduler.select_worker(queued_job, &workers).is_some()
-                    {
-                        Some(queued_job.job_id.clone())
-                    } else {
-                        None
-                    }
-                })
-            }
-            None => None,
-        }
+    let worker_state = match worker_registry.get(worker_id) {
+        Some(ws) => ws,
+        None => return true,
     };
 
-    if let Some(_job_id) = job_id_to_assign {
-        let mut job_registry_w = state.job_registry.write().await;
-        if let Some(job) = job_registry_w.next_job_for(worker_id) {
+    let mut job_registry = state.job_registry.write().await;
+
+    // Find a suitable job under the write lock
+    let job_id_to_assign: Option<String> = {
+        let queued = job_registry.queued_jobs();
+        queued.iter().find_map(|queued_job| {
+            let targeted_elsewhere = queued_job
+                .assigned_worker
+                .as_deref()
+                .map(|w| w != worker_id)
+                .unwrap_or(false);
+            if targeted_elsewhere {
+                return None;
+            }
+
+            let explicitly_targeted = queued_job
+                .assigned_worker
+                .as_deref()
+                .map(|w| w == worker_id)
+                .unwrap_or(false);
+
+            if explicitly_targeted
+                || scheduler
+                    .select_worker(queued_job, &[worker_state])
+                    .is_some()
+            {
+                Some(queued_job.job_id.clone())
+            } else {
+                None
+            }
+        })
+    };
+
+    // Drop worker_registry before async send
+    drop(worker_registry);
+
+    // Assign the specific job the scheduler selected (not an arbitrary queued job)
+    if let Some(job_id) = job_id_to_assign {
+        if let Some(job) = job_registry.assign_job(&job_id, worker_id) {
             let assignment = build_job_assignment(job);
+            drop(job_registry); // Release before async send
             if job_tx.send(Ok(assignment)).await.is_err() {
                 return false;
             }
+            return true;
         }
     }
+    drop(job_registry);
 
     true
 }
 
 /// Core logic for the `reserve_worker` RPC.
+///
+/// Loops through connected workers and acquires the Redis lock BEFORE creating
+/// any in-memory state, preventing the double-booking window (P1-4).
+///
+/// NOTE: BestFitScheduler::select_worker requires a &Job which doesn't exist
+/// yet at reservation time (no per-stage resource requirements are known).
+/// Workers are iterated in connected_workers() order for now. A future
+/// improvement could create a synthetic Job from request-level resource hints
+/// and use the scheduler to rank candidates (P1-10).
 async fn do_reserve_worker(
     state: &Arc<ControllerState>,
     req: &ReserveWorkerRequest,
 ) -> Result<ReserveWorkerResponse, Status> {
-    // Pick the first connected worker
-    let worker_id = {
+    // Generate group_id upfront so Redis lock references it
+    let group_id = uuid::Uuid::new_v4();
+
+    // Snapshot worker IDs under the lock, then drop before async Redis calls.
+    let candidate_ids: Vec<String> = {
         let registry = state.worker_registry.read().await;
         let connected = registry.connected_workers();
-        connected.first().map(|w| w.info.worker_id.clone())
-    };
 
-    let worker_id = match worker_id {
-        Some(id) => id,
-        None => {
+        if connected.is_empty() {
             return Ok(ReserveWorkerResponse {
                 job_group_id: String::new(),
                 worker_id: String::new(),
@@ -195,19 +210,58 @@ async fn do_reserve_worker(
                 message: "No connected workers available".to_string(),
             });
         }
+
+        connected.iter().map(|w| w.info.worker_id.clone()).collect()
+    };
+    // worker_registry lock dropped here
+
+    // Loop through candidates and try to acquire a Redis lock on each (P1-4).
+    // The Redis reservation MUST succeed before any in-memory group creation.
+    let mut selected = None;
+    for wid in &candidate_ids {
+        if let Some(redis) = &state.redis_store {
+            match redis.reserve_worker(wid, &group_id.to_string(), 7200).await {
+                Ok(true) => {
+                    let _ = redis.remove_available_worker(wid).await;
+                    selected = Some(wid.clone());
+                    break;
+                }
+                Ok(false) => continue, // Already reserved, try next worker
+                Err(e) => {
+                    warn!("Redis error for worker {}: {}", wid, e);
+                    continue; // Skip this worker, try next
+                }
+            }
+        } else {
+            // No Redis configured, just pick first available
+            selected = Some(wid.clone());
+            break;
+        }
+    }
+
+    let worker_id = match selected {
+        Some(id) => id,
+        None => {
+            return Ok(ReserveWorkerResponse {
+                job_group_id: String::new(),
+                worker_id: String::new(),
+                stages: Vec::new(),
+                success: false,
+                message: "All workers are reserved".to_string(),
+            });
+        }
     };
 
-    // Create a job group in-memory
+    // Redis lock acquired (or no Redis) -- now create the in-memory group
     let mut group = ci_core::models::job_group::JobGroup::new(
         uuid::Uuid::new_v4(), // repo_id placeholder
         Some(req.branch.clone()).filter(|s| !s.is_empty()),
         Some(req.commit_sha.clone()).filter(|s| !s.is_empty()),
     );
+    group.id = group_id;
     group.reserved_worker_id = Some(worker_id.clone());
     group.state = ci_core::models::job_group::JobGroupState::Reserved;
     group.updated_at = chrono::Utc::now();
-
-    let group_id = group.id;
 
     // Build stage info from request stages
     let stage_infos: Vec<ci_core::proto::orchestrator::StageInfo> = req
@@ -225,14 +279,22 @@ async fn do_reserve_worker(
         })
         .collect();
 
-    // Add to job group registry
+    // Persist job group to PostgreSQL (clone before add_group takes ownership)
+    if let Some(storage) = &state.storage {
+        if let Err(e) = storage.create_job_group(&group).await {
+            warn!("Failed to persist job group {}: {}", group_id, e);
+        }
+    }
+
+    // Add to job group registry (takes ownership of group)
     {
         let mut jg_registry = state.job_group_registry.write().await;
         jg_registry.add_group(group);
     }
 
-    // TODO: Persist job group to PostgreSQL via storage.rs
-    // TODO: Reserve worker in Redis via ReservationManager for distributed locking
+    // Metrics
+    state.metrics.inc_worker_reservations();
+    state.metrics.inc_active_builds();
 
     info!(
         "Worker {} reserved for group {} (repo: {}, branch: {})",
@@ -318,6 +380,37 @@ async fn do_submit_stage(
         job_registry.add_job(job);
     }
 
+    // Metrics
+    state.metrics.inc_stages_submitted();
+    state.metrics.inc_active_stages();
+
+    // Persist job to PostgreSQL
+    if let Some(storage) = &state.storage {
+        let now = chrono::Utc::now();
+        let db_job = crate::storage::DbJob {
+            id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, job_id.as_bytes()),
+            job_group_id: group_id,
+            stage_config_id: uuid::Uuid::nil(), // no stage_config mapping yet
+            stage_name: req.stage_name.clone(),
+            command: command.clone(),
+            pre_script: None,
+            post_script: None,
+            worker_id: Some(worker_id.clone()),
+            state: "queued".to_string(),
+            exit_code: None,
+            pre_exit_code: None,
+            post_exit_code: None,
+            log_path: None,
+            started_at: None,
+            completed_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        if let Err(e) = storage.create_job(&db_job).await {
+            warn!("Failed to persist job {}: {}", job_id, e);
+        }
+    }
+
     // Wake all waiting job_stream tasks to check for new work
     state.scheduler_notify.notify_waiters();
 
@@ -358,8 +451,6 @@ async fn do_submit_stage(
         }
     }
 
-    // TODO: Persist job to PostgreSQL via storage.rs
-
     Ok(SubmitStageResponse {
         job_id,
         stage_name: req.stage_name,
@@ -389,6 +480,10 @@ pub struct ControllerState {
     pub scheduler_notify: Notify,
     /// Prometheus-compatible metrics — shared with the HTTP sidecar via `Clone`.
     pub metrics: Metrics,
+    /// PostgreSQL storage (None if unavailable)
+    pub storage: Option<Arc<crate::storage::Storage>>,
+    /// Redis store (None if unavailable)
+    pub redis_store: Option<Arc<crate::redis_store::RedisStore>>,
 }
 
 /// gRPC service implementation
@@ -411,6 +506,12 @@ impl Orchestrator for OrchestratorService {
 
         let mut registry = self.state.worker_registry.write().await;
         registry.register(&req);
+        drop(registry);
+
+        // Add worker to Redis available set
+        if let Some(redis) = &self.state.redis_store {
+            let _ = redis.add_available_worker(&req.worker_id).await;
+        }
 
         Ok(Response::new(RegisterResponse {
             accepted: true,
@@ -514,6 +615,78 @@ impl Orchestrator for OrchestratorService {
 
         let mut registry = self.state.job_registry.write().await;
         registry.update_status(&req);
+        drop(registry);
+
+        // Metrics based on reported state
+        let reported_state = req.state;
+        if reported_state == ci_core::proto::orchestrator::JobState::Success as i32 {
+            self.state.metrics.inc_jobs_completed();
+            self.state.metrics.dec_active_stages();
+        } else if reported_state == ci_core::proto::orchestrator::JobState::Failed as i32 {
+            self.state.metrics.inc_jobs_failed();
+            self.state.metrics.inc_stage_failures();
+            self.state.metrics.dec_active_stages();
+        } else if reported_state == ci_core::proto::orchestrator::JobState::Cancelled as i32 {
+            self.state.metrics.inc_jobs_cancelled();
+            self.state.metrics.dec_active_stages();
+        }
+
+        // Check group completion
+        if !req.job_group_id.is_empty() {
+            if let Ok(group_id) = uuid::Uuid::parse_str(&req.job_group_id) {
+                // Phase 1: update state under lock, collect results (no .await)
+                let completion_info = {
+                    let mut jg = self.state.job_group_registry.write().await;
+
+                    // Update job state in group_jobs so check_group_completion sees current state
+                    let model_state = match reported_state {
+                        x if x == ci_core::proto::orchestrator::JobState::Success as i32 => {
+                            ci_core::models::job::JobState::Success
+                        }
+                        x if x == ci_core::proto::orchestrator::JobState::Failed as i32 => {
+                            ci_core::models::job::JobState::Failed
+                        }
+                        x if x == ci_core::proto::orchestrator::JobState::Cancelled as i32 => {
+                            ci_core::models::job::JobState::Cancelled
+                        }
+                        x if x == ci_core::proto::orchestrator::JobState::Running as i32 => {
+                            ci_core::models::job::JobState::Running
+                        }
+                        _ => ci_core::models::job::JobState::Unknown,
+                    };
+                    jg.update_job_in_group(
+                        &group_id,
+                        &req.job_id,
+                        model_state,
+                        Some(req.exit_code),
+                    );
+
+                    jg.check_group_completion(&group_id).map(|new_state| {
+                        let worker_id = jg.on_group_completed(&group_id);
+                        (new_state, worker_id)
+                    })
+                }; // jg write lock dropped here
+
+                // Phase 2: async I/O without holding the lock
+                if let Some((new_state, worker_id)) = completion_info {
+                    info!("Job group {} completed: {}", group_id, new_state);
+                    self.state.metrics.dec_active_builds();
+
+                    if let Some(worker_id) = worker_id {
+                        if let Some(redis) = &self.state.redis_store {
+                            let _ = redis
+                                .release_worker_if_owner(&worker_id, &group_id.to_string())
+                                .await;
+                            let _ = redis.add_available_worker(&worker_id).await;
+                        }
+                    }
+
+                    if let Some(storage) = &self.state.storage {
+                        let _ = storage.update_job_group_state(group_id, new_state).await;
+                    }
+                }
+            }
+        }
 
         Ok(Response::new(JobStatusAck {
             ok: true,
@@ -716,6 +889,9 @@ impl Orchestrator for OrchestratorService {
         let mut registry = self.state.job_registry.write().await;
         registry.add_job(job);
         drop(registry);
+
+        self.state.metrics.inc_jobs_submitted();
+        self.state.metrics.inc_active_stages();
 
         // Wake all waiting job_stream tasks to check for new work
         self.state.scheduler_notify.notify_waiters();
@@ -929,36 +1105,51 @@ impl Orchestrator for OrchestratorService {
             .map_err(|e| Status::invalid_argument(format!("Invalid job_group_id: {}", e)))?;
 
         let jg_registry = self.state.job_group_registry.read().await;
-        let group = jg_registry.get(&group_id).ok_or_else(|| {
-            Status::not_found(format!("Job group {} not found", req.job_group_id))
-        })?;
 
-        let jobs = jg_registry.get_jobs_for_group(&group_id);
+        if let Some(group) = jg_registry.get(&group_id) {
+            let jobs = jg_registry.get_jobs_for_group(&group_id);
 
-        let stage_statuses: Vec<ci_core::proto::orchestrator::StageStatus> = jobs
-            .iter()
-            .map(|job| {
-                let state_str = job.state.to_string();
-                ci_core::proto::orchestrator::StageStatus {
-                    job_id: job.job_id.clone(),
-                    stage_name: job.stage_name.clone().unwrap_or_default(),
-                    state: state_str,
-                    exit_code: job.exit_code.unwrap_or(0),
-                    worker_id: job.assigned_worker.clone().unwrap_or_default(),
-                    started_at: job.started_at.map(|t| t.timestamp()).unwrap_or(0),
-                    completed_at: job.completed_at.map(|t| t.timestamp()).unwrap_or(0),
-                }
-            })
-            .collect();
+            let stage_statuses: Vec<ci_core::proto::orchestrator::StageStatus> = jobs
+                .iter()
+                .map(|job| {
+                    let state_str = job.state.to_string();
+                    ci_core::proto::orchestrator::StageStatus {
+                        job_id: job.job_id.clone(),
+                        stage_name: job.stage_name.clone().unwrap_or_default(),
+                        state: state_str,
+                        exit_code: job.exit_code.unwrap_or(0),
+                        worker_id: job.assigned_worker.clone().unwrap_or_default(),
+                        started_at: job.started_at.map(|t| t.timestamp()).unwrap_or(0),
+                        completed_at: job.completed_at.map(|t| t.timestamp()).unwrap_or(0),
+                    }
+                })
+                .collect();
 
-        // TODO: Also check PostgreSQL for persisted state if not found in-memory
+            return Ok(Response::new(GetJobGroupStatusResponse {
+                job_group_id: group_id.to_string(),
+                state: group.state.to_string(),
+                worker_id: group.reserved_worker_id.clone().unwrap_or_default(),
+                stages: stage_statuses,
+            }));
+        }
+        drop(jg_registry);
 
-        Ok(Response::new(GetJobGroupStatusResponse {
-            job_group_id: group_id.to_string(),
-            state: group.state.to_string(),
-            worker_id: group.reserved_worker_id.clone().unwrap_or_default(),
-            stages: stage_statuses,
-        }))
+        // Fallback: check PostgreSQL for persisted state
+        if let Some(storage) = &self.state.storage {
+            if let Ok(Some(group)) = storage.get_job_group(group_id).await {
+                return Ok(Response::new(GetJobGroupStatusResponse {
+                    job_group_id: group_id.to_string(),
+                    state: group.state.to_string(),
+                    worker_id: group.reserved_worker_id.unwrap_or_default(),
+                    stages: Vec::new(), // DB jobs not mapped to StageStatus here
+                }));
+            }
+        }
+
+        Err(Status::not_found(format!(
+            "Job group {} not found",
+            req.job_group_id
+        )))
     }
 }
 
@@ -971,18 +1162,27 @@ pub async fn run(
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     job_group_registry: Arc<RwLock<JobGroupRegistry>>,
     metrics: Metrics,
+    storage: Option<Arc<crate::storage::Storage>>,
+    redis_store: Option<Arc<crate::redis_store::RedisStore>>,
 ) -> anyhow::Result<()> {
     let addr = config.bind_address.parse()?;
+
+    let log_agg = match &config.logging.log_dir {
+        Some(dir) => LogAggregator::with_log_dir(dir.clone()),
+        None => LogAggregator::new(),
+    };
 
     let state = Arc::new(ControllerState {
         config: config.clone(),
         worker_registry,
         job_registry: RwLock::new(JobRegistry::new()),
-        log_aggregator: RwLock::new(LogAggregator::new()),
+        log_aggregator: RwLock::new(log_agg),
         job_group_registry,
         job_stream_senders: RwLock::new(std::collections::HashMap::new()),
         scheduler_notify: Notify::new(),
         metrics,
+        storage,
+        redis_store,
     });
 
     // ── Heartbeat timeout detection background task ───────────────────────────
@@ -1005,11 +1205,73 @@ pub async fn run(
                     };
                     state_for_hb.metrics.set_connected_workers(connected);
 
-                    // Mark jobs as unknown for every dead worker
-                    let mut job_registry = state_for_hb.job_registry.write().await;
-                    for worker_id in &timed_out {
-                        job_registry.mark_unknown_for_worker(worker_id);
+                    // Mark jobs as unknown for every dead worker and decrement active_stages
+                    {
+                        let mut job_registry = state_for_hb.job_registry.write().await;
+                        for worker_id in &timed_out {
+                            let marked = job_registry.mark_unknown_for_worker(worker_id);
+                            for _ in 0..marked {
+                                state_for_hb.metrics.dec_active_stages();
+                            }
+                        }
                     }
+
+                    // Handle group failure for dead workers
+                    for worker_id in &timed_out {
+                        let mut db_updates: Vec<uuid::Uuid> = Vec::new();
+
+                        {
+                            let mut jg = state_for_hb.job_group_registry.write().await;
+                            let (to_migrate, to_fail) = jg.handle_worker_death(worker_id);
+
+                            for gid in &to_fail {
+                                jg.fail_group_jobs(gid, &format!("Worker {} died", worker_id));
+                                state_for_hb.metrics.dec_active_builds();
+                                db_updates.push(*gid);
+                            }
+
+                            if !to_migrate.is_empty() {
+                                warn!(
+                                    "{} groups need migration from dead worker {} (not yet implemented)",
+                                    to_migrate.len(),
+                                    worker_id
+                                );
+                            }
+                        }
+                        // Lock released -- now do async DB/Redis calls
+
+                        for gid in db_updates {
+                            if let Some(storage) = &state_for_hb.storage {
+                                let _ = storage
+                                    .update_job_group_state(
+                                        gid,
+                                        ci_core::models::job_group::JobGroupState::Failed,
+                                    )
+                                    .await;
+                            }
+                        }
+
+                        if let Some(redis) = &state_for_hb.redis_store {
+                            let _ = redis.release_worker_force(worker_id).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Orphan job cleanup background task ────────────────────────────────────
+    {
+        let state_for_orphan = state.clone();
+        let orphan_timeout = config.jobs.orphan_timeout_secs;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mut registry = state_for_orphan.job_registry.write().await;
+                let count = registry.cancel_orphaned_jobs(orphan_timeout);
+                if count > 0 {
+                    warn!("Cancelled {} orphaned jobs", count);
                 }
             }
         });

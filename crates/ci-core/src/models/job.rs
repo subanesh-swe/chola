@@ -14,6 +14,12 @@ pub enum JobState {
     Unknown,
 }
 
+impl JobState {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Success | Self::Failed | Self::Cancelled)
+    }
+}
+
 impl std::fmt::Display for JobState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

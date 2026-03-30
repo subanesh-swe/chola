@@ -62,6 +62,26 @@ impl JobGroupRegistry {
             .unwrap_or(&[])
     }
 
+    /// Update a job's state within a group
+    pub fn update_job_in_group(
+        &mut self,
+        group_id: &Uuid,
+        job_id: &str,
+        state: JobState,
+        exit_code: Option<i32>,
+    ) {
+        if let Some(jobs) = self.group_jobs.get_mut(group_id) {
+            if let Some(job) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+                job.state = state;
+                job.exit_code = exit_code;
+                job.updated_at = chrono::Utc::now();
+                if state.is_terminal() {
+                    job.completed_at = Some(chrono::Utc::now());
+                }
+            }
+        }
+    }
+
     pub fn get_job_mut_in_group(&mut self, group_id: &Uuid, job_id: &str) -> Option<&mut Job> {
         self.group_jobs
             .get_mut(group_id)?
@@ -71,6 +91,11 @@ impl JobGroupRegistry {
 
     /// Check if all jobs in a group have reached terminal state
     pub fn check_group_completion(&mut self, group_id: &Uuid) -> Option<JobGroupState> {
+        let group = self.groups.get(group_id)?;
+        if group.state.is_terminal() {
+            return None;
+        }
+
         let jobs = self.group_jobs.get(group_id)?;
         if jobs.is_empty() {
             return None;

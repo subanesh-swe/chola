@@ -215,23 +215,81 @@ impl Storage {
         Ok(Self { pool })
     }
 
-    /// Run SQL migration files from the migrations/ directory
+    /// Run SQL migration files from the migrations/ directory.
+    /// Tracks applied migrations in a `schema_migrations` table to avoid
+    /// re-running already-applied SQL on every startup.
     pub async fn migrate(&self) -> anyhow::Result<()> {
-        let migration_files = [
-            include_str!("../../../migrations/001_create_repos.sql"),
-            include_str!("../../../migrations/002_create_stage_configs.sql"),
-            include_str!("../../../migrations/003_create_stage_scripts.sql"),
-            include_str!("../../../migrations/004_create_job_groups.sql"),
-            include_str!("../../../migrations/005_create_jobs.sql"),
-            include_str!("../../../migrations/006_create_worker_reservations.sql"),
-            include_str!("../../../migrations/007_create_workers.sql"),
+        // Create tracking table if not exists
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INT PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                applied_at TIMESTAMPTZ DEFAULT now()
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        let migrations: &[(i32, &str, &str)] = &[
+            (
+                1,
+                "create_repos",
+                include_str!("../../../migrations/001_create_repos.sql"),
+            ),
+            (
+                2,
+                "create_stage_configs",
+                include_str!("../../../migrations/002_create_stage_configs.sql"),
+            ),
+            (
+                3,
+                "create_stage_scripts",
+                include_str!("../../../migrations/003_create_stage_scripts.sql"),
+            ),
+            (
+                4,
+                "create_job_groups",
+                include_str!("../../../migrations/004_create_job_groups.sql"),
+            ),
+            (
+                5,
+                "create_jobs",
+                include_str!("../../../migrations/005_create_jobs.sql"),
+            ),
+            (
+                6,
+                "create_worker_reservations",
+                include_str!("../../../migrations/006_create_worker_reservations.sql"),
+            ),
+            (
+                7,
+                "create_workers",
+                include_str!("../../../migrations/007_create_workers.sql"),
+            ),
         ];
 
-        for sql in &migration_files {
-            sqlx::query(sql).execute(&self.pool).await?;
+        for (version, name, sql) in migrations {
+            let already_applied: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)",
+            )
+            .bind(version)
+            .fetch_one(&self.pool)
+            .await?;
+
+            if !already_applied {
+                info!("Running migration {}: {}", version, name);
+                let mut tx = self.pool.begin().await?;
+                sqlx::query(sql).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO schema_migrations (version, name) VALUES ($1, $2)")
+                    .bind(version)
+                    .bind(*name)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+            }
         }
 
-        info!("Database migrations complete");
+        info!("Migrations complete");
         Ok(())
     }
 
@@ -425,6 +483,7 @@ impl Storage {
             "INSERT INTO jobs (id, job_group_id, stage_config_id, stage_name, command, \
              pre_script, post_script, worker_id, state, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at \
              RETURNING {JOB_COLUMNS}"
         );
         let row = sqlx::query(&q)

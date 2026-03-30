@@ -2,7 +2,7 @@ use deadpool_redis::{Config, Connection, Pool, Runtime};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Worker presence data stored in Redis
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,12 +81,58 @@ impl RedisStore {
         Ok(acquired)
     }
 
-    /// Release a worker reservation.
-    pub async fn release_worker(&self, worker_id: &str) -> anyhow::Result<()> {
+    /// Release a worker reservation only if owned by `expected_group_id`.
+    /// Uses a Lua script for atomic check-and-delete to prevent clobbering
+    /// a newer reservation acquired after TTL expiry.
+    /// Returns true if the reservation was actually deleted.
+    pub async fn release_worker_if_owner(
+        &self,
+        worker_id: &str,
+        expected_group_id: &str,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.get_conn().await?;
+        let key = self.key(&["worker", "reservation", worker_id]);
+
+        let script = redis::Script::new(
+            r#"
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('DEL', KEYS[1])
+                return 1
+            else
+                return 0
+            end
+            "#,
+        );
+
+        let result: i32 = script
+            .key(&key)
+            .arg(expected_group_id)
+            .invoke_async(&mut conn)
+            .await?;
+
+        let released = result == 1;
+        if released {
+            info!(
+                "Released worker {} reservation (group {})",
+                worker_id, expected_group_id
+            );
+        } else {
+            warn!(
+                "Worker {} reservation not owned by group {}, skipping release",
+                worker_id, expected_group_id
+            );
+        }
+        Ok(released)
+    }
+
+    /// Unconditionally delete a worker reservation.
+    /// Use only when the worker is dead and we must reclaim regardless of owner
+    /// (e.g., heartbeat timeout cleanup).
+    pub async fn release_worker_force(&self, worker_id: &str) -> anyhow::Result<()> {
         let mut conn = self.get_conn().await?;
         let key = self.key(&["worker", "reservation", worker_id]);
         let _: () = conn.del(&key).await?;
-        info!("Worker {} reservation released", worker_id);
+        info!("Worker {} reservation force-released", worker_id);
         Ok(())
     }
 
@@ -203,23 +249,61 @@ impl RedisStore {
 
     // ── Distributed Lock (generic) ──
 
-    /// Acquire a generic distributed lock. Returns true if acquired.
-    pub async fn acquire_lock(&self, lock_name: &str, ttl_secs: u64) -> anyhow::Result<bool> {
+    /// Acquire a generic distributed lock.
+    /// Stores a unique owner token so only the acquirer can release it.
+    /// Returns `Some(owner_token)` if acquired, `None` otherwise.
+    pub async fn acquire_lock(
+        &self,
+        lock_name: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<Option<String>> {
         let mut conn = self.get_conn().await?;
         let key = self.key(&["lock", lock_name]);
+        let owner = uuid::Uuid::new_v4().to_string();
         let result: Option<String> = redis::cmd("SET")
             .arg(&key)
-            .arg("1")
+            .arg(&owner)
             .arg("NX")
             .arg("EX")
             .arg(ttl_secs)
             .query_async(&mut conn)
             .await?;
-        Ok(result.is_some())
+        Ok(if result.is_some() { Some(owner) } else { None })
     }
 
-    /// Release a generic distributed lock.
-    pub async fn release_lock(&self, lock_name: &str) -> anyhow::Result<()> {
+    /// Release a generic distributed lock only if we own it.
+    /// Uses a Lua script for atomic check-and-delete.
+    /// Returns true if the lock was actually released.
+    pub async fn release_lock(&self, lock_name: &str, owner: &str) -> anyhow::Result<bool> {
+        let mut conn = self.get_conn().await?;
+        let key = self.key(&["lock", lock_name]);
+
+        let script = redis::Script::new(
+            r#"
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('DEL', KEYS[1])
+                return 1
+            else
+                return 0
+            end
+            "#,
+        );
+
+        let result: i32 = script.key(&key).arg(owner).invoke_async(&mut conn).await?;
+
+        let released = result == 1;
+        if !released {
+            warn!(
+                "Lock {} not owned by token {}, skipping release",
+                lock_name, owner
+            );
+        }
+        Ok(released)
+    }
+
+    /// Unconditionally delete a generic distributed lock.
+    /// Use only for administrative cleanup.
+    pub async fn release_lock_force(&self, lock_name: &str) -> anyhow::Result<()> {
         let mut conn = self.get_conn().await?;
         let key = self.key(&["lock", lock_name]);
         let _: () = conn.del(&key).await?;

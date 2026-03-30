@@ -73,6 +73,39 @@ async fn main() -> anyhow::Result<()> {
     info!("HTTP port: {}", config.http_port);
     info!("Scheduling strategy: {}", config.scheduling.strategy);
 
+    // Connect to PostgreSQL (non-fatal)
+    let storage = match storage::Storage::new(
+        &config.storage.postgres.url,
+        config.storage.postgres.max_connections,
+    )
+    .await
+    {
+        Ok(s) => {
+            info!("Connected to PostgreSQL");
+            if let Err(e) = s.migrate().await {
+                warn!("Migration failed: {}", e);
+            }
+            Some(Arc::new(s))
+        }
+        Err(e) => {
+            warn!("PostgreSQL unavailable: {}", e);
+            None
+        }
+    };
+
+    // Connect to Redis (non-fatal)
+    let redis_store =
+        match redis_store::RedisStore::new(&config.redis.url, &config.redis.key_prefix).await {
+            Ok(r) => {
+                info!("Connected to Redis");
+                Some(Arc::new(r))
+            }
+            Err(e) => {
+                warn!("Redis unavailable: {}", e);
+                None
+            }
+        };
+
     // Create shared registries
     let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
     let job_group_registry = Arc::new(RwLock::new(JobGroupRegistry::new()));
@@ -93,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Run gRPC server with graceful shutdown on SIGINT/SIGTERM
     tokio::select! {
-        result = grpc_server::run(config, worker_registry, job_group_registry, metrics) => {
+        result = grpc_server::run(config, worker_registry, job_group_registry, metrics, storage, redis_store) => {
             if let Err(e) = result {
                 error!("Controller failed: {}", e);
                 std::process::exit(1);

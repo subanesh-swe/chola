@@ -26,11 +26,37 @@ impl ReservationManager {
         Ok(acquired)
     }
 
-    /// Release a worker reservation
-    pub async fn release(redis: &RedisStore, worker_id: &str) -> anyhow::Result<()> {
-        redis.release_worker(worker_id).await?;
+    /// Release a worker reservation if owned by the given group.
+    /// Returns true if the reservation was actually released.
+    pub async fn release(
+        redis: &RedisStore,
+        worker_id: &str,
+        job_group_id: &Uuid,
+    ) -> anyhow::Result<bool> {
+        let released = redis
+            .release_worker_if_owner(worker_id, &job_group_id.to_string())
+            .await?;
+        if released {
+            redis.add_available_worker(worker_id).await?;
+            info!(
+                "Worker {} reservation released (group {})",
+                worker_id, job_group_id
+            );
+        } else {
+            warn!(
+                "Worker {} not owned by group {}, skipping release",
+                worker_id, job_group_id
+            );
+        }
+        Ok(released)
+    }
+
+    /// Force-release a worker reservation regardless of owner.
+    /// Use only for dead-worker cleanup.
+    pub async fn release_force(redis: &RedisStore, worker_id: &str) -> anyhow::Result<()> {
+        redis.release_worker_force(worker_id).await?;
         redis.add_available_worker(worker_id).await?;
-        info!("Worker {} reservation released", worker_id);
+        info!("Worker {} reservation force-released", worker_id);
         Ok(())
     }
 }
