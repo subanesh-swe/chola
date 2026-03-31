@@ -110,7 +110,7 @@ export default function DashboardPage() {
 
   const isLoading = sumLoading && buildsLoading && workersLoading;
 
-  const wc = workersData?.workers ?? [];
+  const wc = workersData?.data ?? [];
   const connected = summary?.workers.connected ?? wc.filter((w) => w.status === 'Connected').length;
   const draining = summary?.workers.draining ?? wc.filter((w) => w.status === 'Draining').length;
   const running = summary?.job_groups?.running ?? 0;
@@ -127,7 +127,7 @@ export default function DashboardPage() {
 
   if (isLoading) return <DashboardSkeleton />;
 
-  const recentBuilds = builds?.job_groups ?? summary?.recent_builds ?? [];
+  const recentBuilds = builds?.data ?? summary?.recent_builds ?? [];
 
   return (
     <div className="space-y-6">

@@ -1,8 +1,13 @@
 import apiClient from './client';
 import type { Repo, StageConfig, CreateRepoRequest, CreateStageConfigRequest } from '../types';
 
-export const listRepos = () =>
-  apiClient.get<{ repos: Repo[]; count: number }>('/repos').then((r) => r.data);
+interface PaginatedResponse<T> {
+  data: T[];
+  pagination: { total: number; limit: number; offset: number };
+}
+
+export const listRepos = (params?: { limit?: number; offset?: number }) =>
+  apiClient.get<PaginatedResponse<Repo>>('/repos', { params }).then((r) => r.data);
 
 export const getRepo = (id: string) =>
   apiClient.get<Repo>(`/repos/${id}`).then((r) => r.data);

@@ -74,10 +74,8 @@ pub async fn list(
         .collect();
 
     Ok(Json(json!({
-        "job_groups": list,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
+        "data": list,
+        "pagination": { "total": total, "limit": limit, "offset": offset },
     })))
 }
 

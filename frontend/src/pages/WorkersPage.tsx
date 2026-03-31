@@ -20,7 +20,7 @@ export default function WorkersPage() {
     onSuccess: () => { toast.success('Worker undrained'); qc.invalidateQueries({ queryKey: ['workers'] }); },
   });
 
-  const workers = data?.workers ?? [];
+  const workers = data?.data ?? [];
 
   return (
     <div className="space-y-4">

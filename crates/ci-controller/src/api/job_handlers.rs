@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -12,19 +13,29 @@ use crate::state::ControllerState;
 
 use super::error::ApiError;
 
+#[derive(Deserialize, Default)]
+pub struct PaginationParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 /// GET /api/v1/job-groups/:id/jobs
 pub async fn list_by_group(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
     Path(group_id): Path<Uuid>,
+    Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
-    let jobs = storage
-        .get_jobs_for_group(group_id)
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    let (jobs, total) = storage
+        .get_jobs_for_group_paginated(group_id, limit, offset)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let list: Vec<Value> = jobs
+    let data: Vec<Value> = jobs
         .iter()
         .map(|j| {
             json!({
@@ -41,7 +52,10 @@ pub async fn list_by_group(
         })
         .collect();
 
-    Ok(Json(json!({ "jobs": list, "count": list.len() })))
+    Ok(Json(json!({
+        "data": data,
+        "pagination": { "total": total, "limit": limit, "offset": offset },
+    })))
 }
 
 /// GET /api/v1/jobs/:id
