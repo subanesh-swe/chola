@@ -10,6 +10,8 @@ import WorkersPage from '../pages/WorkersPage';
 import ReposPage from '../pages/ReposPage';
 import RepoDetailPage from '../pages/RepoDetailPage';
 import UsersPage from '../pages/UsersPage';
+import NotFoundPage from '../pages/NotFoundPage';
+
 export function AppRouter() {
   return (
     <Routes>
@@ -27,6 +29,7 @@ export function AppRouter() {
           </Route>
         </Route>
       </Route>
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
