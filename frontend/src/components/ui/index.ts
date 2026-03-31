@@ -7,3 +7,6 @@ export { TimeAgo } from './TimeAgo';
 export { ConfirmDialog } from './ConfirmDialog';
 export { Pagination } from './Pagination';
 export { StatCard } from './StatCard';
+export { Sparkline } from './Sparkline';
+export { StageTimeline } from './StageTimeline';
+export { TableSkeleton, DashboardSkeleton } from './PageSkeleton';

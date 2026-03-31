@@ -4,6 +4,7 @@ pub mod error;
 pub mod job_group_handlers;
 pub mod job_handlers;
 pub mod log_handlers;
+pub mod notification_handlers;
 pub mod repo_handlers;
 pub mod user_handlers;
 pub mod worker_handlers;
@@ -11,7 +12,7 @@ pub mod worker_handlers;
 use std::sync::Arc;
 
 use axum::{
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 
@@ -69,6 +70,15 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
         .route("/workers/{id}", get(worker_handlers::get_one))
         .route("/workers/{id}/drain", post(worker_handlers::drain))
         .route("/workers/{id}/undrain", post(worker_handlers::undrain))
+        // Notifications
+        .route(
+            "/repos/{id}/notifications",
+            get(notification_handlers::list).post(notification_handlers::create),
+        )
+        .route(
+            "/repos/{repo_id}/notifications/{nid}",
+            put(notification_handlers::update).delete(notification_handlers::delete),
+        )
         // Dashboard
         .route("/dashboard/summary", get(dashboard_handlers::summary))
 }

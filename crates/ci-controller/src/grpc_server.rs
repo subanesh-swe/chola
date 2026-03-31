@@ -15,6 +15,7 @@ use ci_core::proto::orchestrator::{
     SubmitJobResponse, SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
 };
 
+use crate::dag;
 use crate::scheduler::{BestFitScheduler, Scheduler};
 use crate::state::ControllerState;
 
@@ -314,6 +315,41 @@ async fn do_reserve_worker(
         uuid::Uuid::new_v4() // no DB — in-memory only
     };
 
+    // Fetch stage dependency map for DAG validation and StageInfo enrichment
+    let stage_deps: std::collections::HashMap<String, Vec<String>> =
+        if let Some(storage) = &state.storage {
+            storage
+                .get_stage_dependencies(repo_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+    // Validate DAG — reject reservation if stages form a cycle
+    if let Err(cycle_node) = dag::validate_dag(&stage_deps) {
+        return Err(Status::invalid_argument(format!(
+            "Stage dependency cycle detected involving '{}'",
+            cycle_node
+        )));
+    }
+
+    // Helper: build StageInfo with depends_on from the DB map
+    let build_stage_info = |name: &str| -> ci_core::proto::orchestrator::StageInfo {
+        let deps = stage_deps.get(name).cloned().unwrap_or_default();
+        ci_core::proto::orchestrator::StageInfo {
+            stage_name: name.to_string(),
+            command: String::new(),
+            required_cpu: 0,
+            required_memory_mb: 0,
+            required_disk_mb: 0,
+            max_duration_secs: 0,
+            parallel_group: String::new(),
+            job_type: "common".to_string(),
+            depends_on: deps,
+        }
+    };
+
     // Dedup: return existing active group for same repo+branch+commit
     if let Some(storage) = &state.storage {
         let branch = Some(req.branch.as_str()).filter(|s| !s.is_empty());
@@ -323,20 +359,7 @@ async fn do_reserve_worker(
                 "Returning existing active group {} for {}@{:?}",
                 existing.id, req.repo_name, branch
             );
-            let stages = req
-                .stages
-                .iter()
-                .map(|name| ci_core::proto::orchestrator::StageInfo {
-                    stage_name: name.clone(),
-                    command: String::new(),
-                    required_cpu: 0,
-                    required_memory_mb: 0,
-                    required_disk_mb: 0,
-                    max_duration_secs: 0,
-                    parallel_group: String::new(),
-                    job_type: "common".to_string(),
-                })
-                .collect();
+            let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
             return Ok(ReserveWorkerResponse {
                 job_group_id: existing.id.to_string(),
                 worker_id: existing.reserved_worker_id.unwrap_or_default(),
@@ -359,20 +382,8 @@ async fn do_reserve_worker(
     group.updated_at = chrono::Utc::now();
 
     // Build stage info from request stages
-    let stage_infos: Vec<ci_core::proto::orchestrator::StageInfo> = req
-        .stages
-        .iter()
-        .map(|name| ci_core::proto::orchestrator::StageInfo {
-            stage_name: name.clone(),
-            command: String::new(),
-            required_cpu: 0,
-            required_memory_mb: 0,
-            required_disk_mb: 0,
-            max_duration_secs: 0,
-            parallel_group: String::new(),
-            job_type: "common".to_string(),
-        })
-        .collect();
+    let stage_infos: Vec<ci_core::proto::orchestrator::StageInfo> =
+        req.stages.iter().map(|n| build_stage_info(n)).collect();
 
     // Persist job group to PostgreSQL (clone before add_group takes ownership)
     if let Some(storage) = &state.storage {
@@ -414,18 +425,43 @@ async fn do_submit_stage(
         .map_err(|e| Status::invalid_argument(format!("Invalid job_group_id: {}", e)))?;
 
     // Verify the group exists and get the reserved worker
-    let worker_id = {
+    let (worker_id, repo_id) = {
         let jg_registry = state.job_group_registry.read().await;
         let group = jg_registry.get(&group_id).ok_or_else(|| {
             Status::not_found(format!("Job group {} not found", req.job_group_id))
         })?;
-        group.reserved_worker_id.clone().ok_or_else(|| {
+        let wid = group.reserved_worker_id.clone().ok_or_else(|| {
             Status::failed_precondition(format!(
                 "Job group {} has no reserved worker",
                 req.job_group_id
             ))
-        })?
+        })?;
+        (wid, group.repo_id)
     };
+
+    // Check DAG dependencies: all depends_on stages must be in Success state
+    {
+        let depends_on: Vec<String> = if let Some(storage) = &state.storage {
+            storage
+                .get_stage_dependencies(repo_id)
+                .await
+                .unwrap_or_default()
+                .remove(&req.stage_name)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        if !depends_on.is_empty() {
+            let jg_registry = state.job_group_registry.read().await;
+            if !jg_registry.can_submit_stage(&group_id, &req.stage_name, &depends_on) {
+                return Err(Status::failed_precondition(format!(
+                    "Stage '{}' dependencies not yet satisfied: {:?}",
+                    req.stage_name, depends_on
+                )));
+            }
+        }
+    }
 
     // Determine the job ID (use provided or generate)
     let job_id = if req.job_id.is_empty() {

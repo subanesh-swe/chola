@@ -6,6 +6,7 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { LogViewer } from '../components/log/LogViewer';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { StageTimeline } from '../components/ui/StageTimeline';
 import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { toast } from 'sonner';
@@ -20,37 +21,35 @@ function duration(start: string | null, end: string | null): string {
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-function StageRow({ job }: { job: Job }) {
-  const [expanded, setExpanded] = useState(false);
+function JobLogPanel({ job }: { job: Job }) {
   const isRunning = job.state === 'running' || job.state === 'assigned';
-  const { chunks, text: _text } = useLiveLog(job.id, expanded && isRunning);
+  const { chunks } = useLiveLog(job.id, isRunning);
 
   return (
-    <div className="border-b border-slate-800 last:border-0">
-      <div onClick={() => setExpanded(!expanded)}
-        className="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-slate-800/30 transition-colors">
+    <div className="bg-slate-900 border border-slate-700 rounded-xl">
+      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-slate-500 w-6 text-right font-mono text-xs">{expanded ? 'v' : '>'}</span>
           <StatusBadge status={job.state} />
-          <span className="text-sm text-slate-200">{job.stage_name}</span>
+          <h3 className="text-sm font-semibold text-slate-300">{job.stage_name}</h3>
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-400">
           {job.exit_code !== null && <span>exit: {job.exit_code}</span>}
           <span>{duration(job.started_at, job.completed_at)}</span>
         </div>
       </div>
-      {expanded && (
-        <div className="px-4 pb-4">
-          <div className="text-xs text-slate-500 mb-2 space-x-4">
-            <span>Command: <code className="text-slate-300">{job.command}</code></span>
-            {job.pre_exit_code !== null && <span>Pre: {job.pre_exit_code}</span>}
-            {job.post_exit_code !== null && <span>Post: {job.post_exit_code}</span>}
-          </div>
-          <LogViewer content={isRunning ? undefined : `Stage: ${job.stage_name}\nState: ${job.state}\n---\n`}
-            liveChunks={isRunning ? chunks : undefined}
-            className="h-64" />
-        </div>
-      )}
+      <div className="px-4 pb-2 pt-2 text-xs text-slate-500 space-x-4">
+        <span>Command: <code className="text-slate-300">{job.command}</code></span>
+        {job.pre_exit_code !== null && <span>Pre: {job.pre_exit_code}</span>}
+        {job.post_exit_code !== null && <span>Post: {job.post_exit_code}</span>}
+        {job.worker_id && <span>Worker: <span className="text-slate-400">{job.worker_id}</span></span>}
+      </div>
+      <div className="px-4 pb-4">
+        <LogViewer
+          content={isRunning ? undefined : `Stage: ${job.stage_name}\nState: ${job.state}\n---\n`}
+          liveChunks={isRunning ? chunks : undefined}
+          className="h-80"
+        />
+      </div>
     </div>
   );
 }
@@ -61,6 +60,7 @@ export default function BuildDetailPage() {
   const qc = useQueryClient();
   const { canCancelJobs } = usePermission();
   const [showCancel, setShowCancel] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['build', id],
@@ -71,7 +71,11 @@ export default function BuildDetailPage() {
 
   const cancelMutation = useMutation({
     mutationFn: () => cancelBuild(id!, 'Cancelled from dashboard'),
-    onSuccess: () => { toast.success('Build cancelled'); qc.invalidateQueries({ queryKey: ['build', id] }); setShowCancel(false); },
+    onSuccess: () => {
+      toast.success('Build cancelled');
+      qc.invalidateQueries({ queryKey: ['build', id] });
+      setShowCancel(false);
+    },
     onError: () => toast.error('Failed to cancel build'),
   });
 
@@ -80,19 +84,37 @@ export default function BuildDetailPage() {
 
   const { job_group: group, jobs } = data;
   const isTerminal = ['success', 'failed', 'cancelled'].includes(group.state);
-  const sorted = [...jobs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  // Auto-select first running or failed job if nothing selected
+  const activeSelectedJob =
+    selectedJob ?? jobs.find((j) => j.state === 'running') ?? jobs.find((j) => j.state === 'failed') ?? null;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <button onClick={() => nav('/builds')} className="text-slate-400 hover:text-white transition-colors text-sm">&lt; Builds</button>
-        <h2 className="text-2xl font-bold text-white">Build {group.job_group_id.slice(0, 8)}</h2>
+      {/* Header */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <button
+          onClick={() => nav('/builds')}
+          className="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Builds
+        </button>
+        <h2 className="text-2xl font-bold text-white font-mono">{group.job_group_id.slice(0, 8)}</h2>
         <StatusBadge status={group.state} size="md" />
         {canCancelJobs && !isTerminal && (
-          <button onClick={() => setShowCancel(true)} className="ml-auto px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors">Cancel</button>
+          <button
+            onClick={() => setShowCancel(true)}
+            className="ml-auto px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors"
+          >
+            Cancel Build
+          </button>
         )}
       </div>
 
+      {/* Meta grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
           <p className="text-xs text-slate-500">Branch</p>
@@ -104,24 +126,48 @@ export default function BuildDetailPage() {
         </div>
         <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
           <p className="text-xs text-slate-500">Worker</p>
-          <p className="text-sm text-slate-200">{group.reserved_worker_id || '-'}</p>
+          <p className="text-sm text-slate-200 truncate">{group.reserved_worker_id || '-'}</p>
         </div>
         <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
           <p className="text-xs text-slate-500">Created</p>
-          <p className="text-sm text-slate-200"><TimeAgo date={group.created_at} /></p>
+          <p className="text-sm text-slate-200">
+            <TimeAgo date={group.created_at} />
+          </p>
         </div>
       </div>
 
+      {/* Stage pipeline timeline */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl">
         <div className="px-4 py-3 border-b border-slate-700">
-          <h3 className="text-sm font-semibold text-slate-300">Stages ({sorted.length})</h3>
+          <h3 className="text-sm font-semibold text-slate-300">
+            Pipeline ({jobs.length} stage{jobs.length !== 1 ? 's' : ''})
+          </h3>
         </div>
-        {sorted.map(job => <StageRow key={job.id} job={job} />)}
-        {!sorted.length && <div className="px-4 py-8 text-center text-slate-500">No stages submitted yet</div>}
+        {jobs.length > 0 ? (
+          <div className="p-2">
+            <StageTimeline
+              jobs={jobs}
+              onSelectJob={(job) => setSelectedJob((prev) => (prev?.id === job.id ? null : job))}
+              selectedJobId={activeSelectedJob?.id}
+            />
+          </div>
+        ) : (
+          <div className="px-4 py-8 text-center text-slate-500">No stages submitted yet</div>
+        )}
       </div>
 
-      <ConfirmDialog open={showCancel} title="Cancel Build" message="Are you sure you want to cancel this build? Running stages will be terminated."
-        confirmLabel="Cancel Build" variant="danger" onConfirm={() => cancelMutation.mutate()} onCancel={() => setShowCancel(false)} />
+      {/* Log panel for selected job */}
+      {activeSelectedJob && <JobLogPanel key={activeSelectedJob.id} job={activeSelectedJob} />}
+
+      <ConfirmDialog
+        open={showCancel}
+        title="Cancel Build"
+        message="Are you sure you want to cancel this build? Running stages will be terminated."
+        confirmLabel="Cancel Build"
+        variant="danger"
+        onConfirm={() => cancelMutation.mutate()}
+        onCancel={() => setShowCancel(false)}
+      />
     </div>
   );
 }

@@ -29,6 +29,7 @@ pub struct StageConfig {
     pub parallel_group: Option<String>,
     pub allow_worker_migration: bool,
     pub job_type: String,
+    pub depends_on: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -42,6 +43,19 @@ pub struct StageScript {
     pub script_type: String,  // "pre" or "post"
     pub script_scope: String, // "worker" or "master"
     pub script: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Webhook configuration for a repo
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Webhook {
+    pub id: Uuid,
+    pub repo_id: Uuid,
+    pub provider: String,
+    pub secret: String,
+    pub events: Vec<String>,
+    pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

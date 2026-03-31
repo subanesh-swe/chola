@@ -284,6 +284,7 @@ message StageInfo {
     int32 max_duration_secs = 6;
     string parallel_group = 7;
     string job_type = 8;
+    repeated string depends_on = 9;
 }
 
 message ReserveWorkerResponse {
