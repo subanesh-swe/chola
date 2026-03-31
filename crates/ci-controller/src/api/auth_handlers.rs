@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::{info, warn};
 
 use ci_core::models::user::User;
 
@@ -81,7 +81,16 @@ pub async fn login(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_expiry as i64);
-    let _ = storage.create_session(user.id, &jti, expires_at).await;
+    storage
+        .create_session(user.id, &jti, expires_at)
+        .await
+        .map_err(|e| {
+            warn!(
+                "Failed to create session for user '{}': {}",
+                user.username, e
+            );
+            ApiError::Internal("Failed to create session".to_string())
+        })?;
 
     info!("User '{}' logged in", user.username);
 

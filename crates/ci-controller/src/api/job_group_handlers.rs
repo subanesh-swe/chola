@@ -6,11 +6,14 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 use uuid::Uuid;
 
 use ci_core::models::job_group::JobGroupState;
+use ci_core::proto::orchestrator::ReserveWorkerRequest;
 
 use crate::auth::middleware::AuthUser;
+use crate::grpc_server::do_reserve_worker;
 use crate::state::ControllerState;
 
 use super::error::ApiError;
@@ -23,6 +26,16 @@ pub struct ListParams {
     pub offset: Option<i64>,
     pub state: Option<String>,
     pub repo_id: Option<Uuid>,
+}
+
+// ── Request bodies ───────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct TriggerRequest {
+    pub repo_name: String,
+    pub branch: Option<String>,
+    pub commit_sha: Option<String>,
+    pub stages: Option<Vec<String>>,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -145,4 +158,104 @@ pub async fn cancel(
     }
 
     Ok(Json(json!({"id": id.to_string(), "state": "cancelled"})))
+}
+
+/// POST /api/v1/job-groups  — trigger a new build from REST
+pub async fn trigger(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Json(body): Json<TriggerRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_trigger_builds() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+
+    let req = ReserveWorkerRequest {
+        repo_name: body.repo_name.clone(),
+        repo_url: String::new(),
+        branch: body.branch.unwrap_or_default(),
+        commit_sha: body.commit_sha.unwrap_or_default(),
+        stages: body.stages.unwrap_or_default(),
+    };
+
+    let resp = do_reserve_worker(&state, &req)
+        .await
+        .map_err(|e| ApiError::Internal(e.message().to_string()))?;
+
+    if !resp.success {
+        return Err(ApiError::Conflict(resp.message));
+    }
+
+    let stages: Vec<Value> = resp
+        .stages
+        .iter()
+        .map(|s| json!({"stage_name": s.stage_name}))
+        .collect();
+
+    Ok(Json(json!({
+        "job_group_id": resp.job_group_id,
+        "worker_id": resp.worker_id,
+        "stages": stages,
+        "message": resp.message,
+    })))
+}
+
+/// POST /api/v1/job-groups/:id/retry  — re-run a failed/cancelled build
+pub async fn retry(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_trigger_builds() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    // Look up original group
+    let (original, original_jobs) = storage
+        .get_job_group_with_jobs(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Job group not found".into()))?;
+
+    if !original.state.is_terminal() {
+        return Err(ApiError::Conflict(
+            "Can only retry terminal (failed/cancelled/success) builds".into(),
+        ));
+    }
+
+    // Look up repo name from repo_id
+    let repo = storage
+        .get_repo(original.repo_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Repo no longer exists".into()))?;
+
+    // Collect stage names from original jobs
+    let stages: Vec<String> = original_jobs.iter().map(|j| j.stage_name.clone()).collect();
+
+    let req = ReserveWorkerRequest {
+        repo_name: repo.repo_name,
+        repo_url: repo.repo_url,
+        branch: original.branch.unwrap_or_default(),
+        commit_sha: original.commit_sha.unwrap_or_default(),
+        stages,
+    };
+
+    let resp = do_reserve_worker(&state, &req)
+        .await
+        .map_err(|e| ApiError::Internal(e.message().to_string()))?;
+
+    if !resp.success {
+        warn!("Retry of group {} failed: {}", id, resp.message);
+        return Err(ApiError::Conflict(resp.message));
+    }
+
+    Ok(Json(json!({
+        "job_group_id": resp.job_group_id,
+        "worker_id": resp.worker_id,
+        "original_group_id": id.to_string(),
+        "message": "Build re-triggered successfully",
+    })))
 }

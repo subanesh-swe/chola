@@ -1,10 +1,11 @@
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
-import { useInactivityTimeout } from '../../hooks/useInactivityTimeout';
+import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 
 export function Layout() {
-  useInactivityTimeout();
+  useKeyboardShortcuts();
+
   return (
     <div className="flex min-h-screen bg-slate-950">
       <Sidebar />

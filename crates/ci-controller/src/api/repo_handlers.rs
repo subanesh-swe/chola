@@ -51,6 +51,8 @@ pub struct CreateStageRequest {
     pub allow_worker_migration: bool,
     #[serde(default = "default_job_type")]
     pub job_type: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 fn default_max_duration() -> i32 {
@@ -72,6 +74,7 @@ pub struct UpdateStageRequest {
     pub parallel_group: Option<String>,
     pub allow_worker_migration: Option<bool>,
     pub job_type: Option<String>,
+    pub depends_on: Option<Vec<String>>,
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
@@ -117,6 +120,7 @@ fn stage_to_json(s: &StageConfig) -> Value {
         "parallel_group": s.parallel_group,
         "allow_worker_migration": s.allow_worker_migration,
         "job_type": s.job_type,
+        "depends_on": s.depends_on,
         "created_at": s.created_at.to_rfc3339(),
         "updated_at": s.updated_at.to_rfc3339(),
     })
@@ -267,6 +271,7 @@ pub async fn create_stage(
             body.parallel_group.as_deref(),
             body.allow_worker_migration,
             &body.job_type,
+            &body.depends_on,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -300,6 +305,7 @@ pub async fn update_stage(
             body.parallel_group.as_deref(),
             body.allow_worker_migration,
             body.job_type.as_deref(),
+            body.depends_on.as_deref(),
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?

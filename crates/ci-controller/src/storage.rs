@@ -18,7 +18,7 @@ const REPO_COLUMNS: &str =
 const STAGE_CONFIG_COLUMNS: &str =
     "id, repo_id, stage_name, command, required_cpu, required_memory_mb, \
      required_disk_mb, max_duration_secs, execution_order, parallel_group, \
-     allow_worker_migration, job_type, created_at, updated_at";
+     allow_worker_migration, job_type, depends_on, created_at, updated_at";
 
 const STAGE_SCRIPT_COLUMNS: &str =
     "id, stage_config_id, worker_id, script_type, script_scope, script, \
@@ -61,6 +61,7 @@ fn map_repo(r: sqlx::postgres::PgRow) -> Repo {
 }
 
 fn map_stage_config(r: sqlx::postgres::PgRow) -> StageConfig {
+    let depends_on: Option<Vec<String>> = r.get("depends_on");
     StageConfig {
         id: r.get("id"),
         repo_id: r.get("repo_id"),
@@ -74,6 +75,7 @@ fn map_stage_config(r: sqlx::postgres::PgRow) -> StageConfig {
         parallel_group: r.get("parallel_group"),
         allow_worker_migration: r.get("allow_worker_migration"),
         job_type: r.get("job_type"),
+        depends_on: depends_on.unwrap_or_default(),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -313,6 +315,11 @@ impl Storage {
                 "users_and_auth",
                 include_str!("../../../migrations/004_users_and_auth.sql"),
             ),
+            (
+                5,
+                "stage_depends_on",
+                include_str!("../../../migrations/005_stage_depends_on.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
@@ -418,6 +425,18 @@ impl Storage {
         let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
 
         Ok(row.map(map_stage_config))
+    }
+
+    /// Returns a map of stage_name -> depends_on list for all stages in a repo.
+    pub async fn get_stage_dependencies(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<std::collections::HashMap<String, Vec<String>>> {
+        let configs = self.get_stage_configs_for_repo(repo_id).await?;
+        Ok(configs
+            .into_iter()
+            .map(|c| (c.stage_name, c.depends_on))
+            .collect())
     }
 
     // ========================================================================
@@ -1122,13 +1141,14 @@ impl Storage {
         parallel_group: Option<&str>,
         allow_worker_migration: bool,
         job_type: &str,
+        depends_on: &[String],
     ) -> anyhow::Result<StageConfig> {
         let q = format!(
             "INSERT INTO stage_configs \
              (repo_id, stage_name, command, required_cpu, required_memory_mb, \
               required_disk_mb, max_duration_secs, execution_order, parallel_group, \
-              allow_worker_migration, job_type) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+              allow_worker_migration, job_type, depends_on) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              RETURNING {STAGE_CONFIG_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1143,6 +1163,7 @@ impl Storage {
             .bind(parallel_group)
             .bind(allow_worker_migration)
             .bind(job_type)
+            .bind(depends_on)
             .fetch_one(&self.pool)
             .await?;
         Ok(map_stage_config(row))
@@ -1161,6 +1182,7 @@ impl Storage {
         parallel_group: Option<&str>,
         allow_worker_migration: Option<bool>,
         job_type: Option<&str>,
+        depends_on: Option<&[String]>,
     ) -> anyhow::Result<Option<StageConfig>> {
         let q = format!(
             "UPDATE stage_configs \
@@ -1174,6 +1196,7 @@ impl Storage {
                  parallel_group = COALESCE($9, parallel_group), \
                  allow_worker_migration = COALESCE($10, allow_worker_migration), \
                  job_type = COALESCE($11, job_type), \
+                 depends_on = COALESCE($12, depends_on), \
                  updated_at = now() \
              WHERE id = $1 \
              RETURNING {STAGE_CONFIG_COLUMNS}"
@@ -1190,6 +1213,7 @@ impl Storage {
             .bind(parallel_group)
             .bind(allow_worker_migration)
             .bind(job_type)
+            .bind(depends_on)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_stage_config))

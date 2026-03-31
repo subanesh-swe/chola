@@ -269,6 +269,29 @@ impl JobGroupRegistry {
         group.reserved_worker_id.clone()
     }
 
+    // ── DAG dependency check ──
+
+    /// Returns true if all stages listed in `depends_on` for `stage_name` have
+    /// reached `JobState::Success` within the given group.
+    pub fn can_submit_stage(
+        &self,
+        group_id: &Uuid,
+        stage_name: &str,
+        depends_on: &[String],
+    ) -> bool {
+        if depends_on.is_empty() {
+            return true;
+        }
+        let jobs = match self.group_jobs.get(group_id) {
+            Some(j) => j,
+            None => return false,
+        };
+        depends_on.iter().all(|dep| {
+            jobs.iter()
+                .any(|j| j.stage_name.as_deref() == Some(dep) && j.state == JobState::Success)
+        })
+    }
+
     // ── Parallel stage execution (5E) ──
 
     /// Identify groups of stages that can execute in parallel.
