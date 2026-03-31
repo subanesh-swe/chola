@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::Deserialize;
@@ -126,20 +126,35 @@ fn stage_to_json(s: &StageConfig) -> Value {
     })
 }
 
+// ── Query params ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+pub struct PaginationParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 // ── Repo handlers ────────────────────────────────────────────────────────────
 
 /// GET /api/v1/repos
 pub async fn list(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
+    Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
-    let repos = storage
-        .list_repos()
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    let (repos, total) = storage
+        .list_repos_paginated(limit, offset)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let list: Vec<Value> = repos.iter().map(repo_to_json).collect();
-    Ok(Json(json!({ "repos": list, "count": list.len() })))
+    let data: Vec<Value> = repos.iter().map(repo_to_json).collect();
+    Ok(Json(json!({
+        "data": data,
+        "pagination": { "total": total, "limit": limit, "offset": offset },
+    })))
 }
 
 /// POST /api/v1/repos

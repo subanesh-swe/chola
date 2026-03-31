@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -12,15 +13,28 @@ use crate::state::ControllerState;
 
 use super::error::ApiError;
 
+#[derive(Deserialize, Default)]
+pub struct PaginationParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 /// GET /api/v1/workers
 pub async fn list(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
+    Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
     let registry = state.worker_registry.read().await;
-    let workers: Vec<Value> = registry
-        .all_workers()
+    let all = registry.all_workers();
+    let total = all.len() as i64;
+
+    let data: Vec<Value> = all
         .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
         .map(|w| {
             let last_hb = w.last_heartbeat.as_ref().map(|hb| {
                 json!({
@@ -48,7 +62,10 @@ pub async fn list(
         })
         .collect();
 
-    Ok(Json(json!({ "workers": workers, "count": workers.len() })))
+    Ok(Json(json!({
+        "data": data,
+        "pagination": { "total": total, "limit": limit, "offset": offset },
+    })))
 }
 
 /// GET /api/v1/workers/:id

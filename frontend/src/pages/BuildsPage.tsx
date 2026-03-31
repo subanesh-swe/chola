@@ -19,8 +19,8 @@ export default function BuildsPage() {
     refetchInterval: 5000,
   });
 
-  const builds = data?.job_groups ?? [];
-  const total = data?.total ?? 0;
+  const builds = data?.data ?? [];
+  const total = data?.pagination?.total ?? 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (

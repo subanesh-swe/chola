@@ -36,7 +36,7 @@ export default function UsersPage() {
     onSuccess: () => { toast.success('User updated'); qc.invalidateQueries({ queryKey: ['users'] }); },
   });
 
-  const users = data?.users ?? [];
+  const users = data?.data ?? [];
 
   return (
     <div className="space-y-4">

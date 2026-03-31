@@ -30,7 +30,7 @@ export default function ReposPage() {
     onSuccess: () => { toast.success('Repo deleted'); qc.invalidateQueries({ queryKey: ['repos'] }); setDelId(null); },
   });
 
-  const repos = data?.repos ?? [];
+  const repos = data?.data ?? [];
 
   return (
     <div className="space-y-4">

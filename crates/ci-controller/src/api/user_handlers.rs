@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::Deserialize;
@@ -79,23 +79,38 @@ fn user_to_json(u: &ci_core::models::user::User) -> Value {
     })
 }
 
+// ── Query params ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+pub struct PaginationParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// GET /api/v1/users
 pub async fn list(
     State(state): State<Arc<ControllerState>>,
     auth_user: AuthUser,
+    Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
     if !auth_user.role.can_manage_users() {
         return Err(ApiError::Forbidden("Insufficient permissions".into()));
     }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
-    let users = storage
-        .list_users()
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    let (users, total) = storage
+        .list_users_paginated(limit, offset)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let list: Vec<Value> = users.iter().map(user_to_json).collect();
-    Ok(Json(json!({ "users": list, "count": list.len() })))
+    let data: Vec<Value> = users.iter().map(user_to_json).collect();
+    Ok(Json(json!({
+        "data": data,
+        "pagination": { "total": total, "limit": limit, "offset": offset },
+    })))
 }
 
 /// POST /api/v1/users
