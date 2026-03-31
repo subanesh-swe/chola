@@ -1,8 +1,10 @@
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { useInactivityTimeout } from '../../hooks/useInactivityTimeout';
 
 export function Layout() {
+  useInactivityTimeout();
   return (
     <div className="flex min-h-screen bg-slate-950">
       <Sidebar />

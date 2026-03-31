@@ -11,7 +11,7 @@ export default function LoginPage() {
   const nav = useNavigate();
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault(); setLoading(true);
-    try { const res = await login({ username, password }); authLogin(res.token, res.user); nav('/'); }
+    try { const res = await login({ username, password }); authLogin(res.token, res.expires_at, res.user); nav('/'); }
     catch { toast.error('Login failed. Check your credentials.'); }
     finally { setLoading(false); }
   };
