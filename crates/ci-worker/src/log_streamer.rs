@@ -1,10 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use ci_core::proto::orchestrator::LogChunk;
 
-use crate::executor::LogLine;
+use crate::executor::{mask_secret_values, LogLine};
 use crate::grpc_client::GrpcClient;
 
 /// Configuration for log batching behavior
@@ -39,6 +40,7 @@ impl LogStreamer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_config(config: LogStreamerConfig) -> Self {
         Self { config }
     }
@@ -58,6 +60,7 @@ impl LogStreamer {
         job_id: String,
         mut log_rx: mpsc::Receiver<LogLine>,
         client: GrpcClient,
+        secret_values: Arc<Vec<String>>,
     ) -> anyhow::Result<u64> {
         info!("Starting log stream for job {}", job_id);
 
@@ -95,8 +98,9 @@ impl LogStreamer {
                 maybe_line = log_rx.recv() => {
                     match maybe_line {
                         Some(log_line) => {
-                            // Append line + newline to batch buffer
-                            batch_buffer.extend_from_slice(log_line.line.as_bytes());
+                            // Mask secrets before batching (defense-in-depth)
+                            let masked = mask_secret_values(&log_line.line, &secret_values);
+                            batch_buffer.extend_from_slice(masked.as_bytes());
                             batch_buffer.push(b'\n');
 
                             // Flush if batch is large enough

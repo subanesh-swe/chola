@@ -63,19 +63,6 @@ impl LogAggregator {
         }
     }
 
-    /// Create a new job log state with a broadcast channel
-    fn new_job_state(&self) -> JobLogState {
-        let (broadcast_tx, _) = broadcast::channel(self.broadcast_capacity);
-        JobLogState {
-            last_offset: 0,
-            total_bytes: 0,
-            complete: false,
-            log_data: Vec::new(),
-            broadcast_tx,
-            finalized_at: None,
-        }
-    }
-
     /// Append a log chunk for a job. Returns the new last_offset.
     ///
     /// Handles:

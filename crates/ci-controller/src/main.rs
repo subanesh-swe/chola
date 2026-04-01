@@ -10,6 +10,7 @@ use ci_core::models::worker::{DiskType, WorkerInfo, WorkerState, WorkerStatus};
 
 mod api;
 mod auth;
+mod csrf;
 mod dag;
 mod grpc_server;
 mod http_server;
@@ -18,6 +19,7 @@ mod job_registry;
 mod log_aggregator;
 mod monitoring;
 mod notifier;
+mod rate_limit;
 mod redis_store;
 mod reservation;
 mod scheduler;

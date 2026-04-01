@@ -1,9 +1,6 @@
 use std::time::Duration;
 
-use ci_core::proto::orchestrator::{
-    JobState, LogResumeDirective, ReconnectRequest, ReconnectResponse, RunningJobInfo,
-};
-// Note: LogResumeDirective is used in tests
+use ci_core::proto::orchestrator::{JobState, ReconnectRequest, ReconnectResponse, RunningJobInfo};
 use rand::Rng;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -70,6 +67,7 @@ impl ReconnectHandler {
     }
 
     /// Get a clone of the job state for tracking
+    #[allow(dead_code)]
     pub fn job_state(&self) -> std::sync::Arc<tokio::sync::RwLock<WorkerJobState>> {
         self.job_state.clone()
     }
@@ -88,6 +86,7 @@ impl ReconnectHandler {
     }
 
     /// Mark a job as completed (remove from active)
+    #[allow(dead_code)]
     pub async fn complete_job(&self, job_id: &str) {
         let mut state = self.job_state.write().await;
         let initial_len = state.running_jobs.len();
@@ -98,6 +97,7 @@ impl ReconnectHandler {
     }
 
     /// Update the log offset for an active job
+    #[allow(dead_code)]
     pub async fn update_job_offset(&self, job_id: &str, log_offset: u64) {
         let mut state = self.job_state.write().await;
         if let Some(job) = state.running_jobs.iter_mut().find(|j| j.job_id == job_id) {
@@ -221,6 +221,7 @@ impl ReconnectHandler {
 /// Returns true if the stage config allows worker migration and the stage has not yet completed.
 /// The actual migration logic lives in the controller; the worker uses this to decide
 /// whether to release/requeue a stage rather than marking it permanently failed.
+#[allow(dead_code)]
 pub fn should_migrate_stage(allow_worker_migration: bool, stage_completed: bool) -> bool {
     allow_worker_migration && !stage_completed
 }

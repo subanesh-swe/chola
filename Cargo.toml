@@ -13,7 +13,7 @@ edition = "2021"
 
 [workspace.dependencies]
 ci-core = { path = "crates/ci-core" }
-tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+tonic = { version = "0.12", features = ["tls", "tls-roots", "gzip"] }
 tonic-build = "0.12"
 prost = "0.13"
 prost-types = "0.13"

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 /// Topological sort on a stage dependency graph.
 ///
@@ -58,15 +58,4 @@ pub fn topo_sort(deps: &HashMap<String, Vec<String>>) -> Result<Vec<String>, Str
 /// Returns `Err(stage_name)` if a cycle is detected.
 pub fn validate_dag(deps: &HashMap<String, Vec<String>>) -> Result<(), String> {
     topo_sort(deps).map(|_| ())
-}
-
-/// Check if a stage's dependencies are all satisfied (in the provided terminal set).
-pub fn deps_satisfied(
-    stage: &str,
-    deps: &HashMap<String, Vec<String>>,
-    terminal_success: &HashSet<String>,
-) -> bool {
-    deps.get(stage)
-        .map(|parents| parents.iter().all(|p| terminal_success.contains(p)))
-        .unwrap_or(true)
 }

@@ -1,3 +1,4 @@
+use std::time::Duration;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tracing::info;
@@ -21,10 +22,12 @@ pub struct GrpcClient {
 }
 
 impl GrpcClient {
+    #[allow(dead_code)]
     pub async fn connect(addr: &str) -> anyhow::Result<Self> {
         Self::connect_with_options(addr, None, None).await
     }
 
+    #[allow(dead_code)]
     pub async fn connect_with_tls(
         addr: &str,
         tls_config: Option<&ci_core::models::config::TlsClientConfig>,
@@ -39,7 +42,10 @@ impl GrpcClient {
     ) -> anyhow::Result<Self> {
         info!("Connecting to controller at {}", addr);
 
-        let mut endpoint = tonic::transport::Channel::from_shared(addr.to_string())?;
+        let mut endpoint = tonic::transport::Channel::from_shared(addr.to_string())?
+            .http2_keep_alive_interval(Duration::from_secs(10))
+            .keep_alive_timeout(Duration::from_secs(20))
+            .keep_alive_while_idle(true);
 
         if let Some(tls) = tls_config {
             if tls.enabled {

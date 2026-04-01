@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use ci_core::models::job::Job;
 use ci_core::models::worker::WorkerState;
 
@@ -116,32 +114,5 @@ impl Scheduler for BestFitScheduler {
         }
 
         candidates.first().map(|w| **w)
-    }
-}
-
-/// Round-robin scheduler: distributes jobs evenly across all eligible workers.
-pub struct RoundRobinScheduler {
-    counter: AtomicUsize,
-}
-
-impl RoundRobinScheduler {
-    pub fn new() -> Self {
-        Self {
-            counter: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl Scheduler for RoundRobinScheduler {
-    fn select_worker<'a>(
-        &self,
-        _job: &Job,
-        workers: &'a [&'a WorkerState],
-    ) -> Option<&'a WorkerState> {
-        if workers.is_empty() {
-            return None;
-        }
-        let idx = self.counter.fetch_add(1, Ordering::Relaxed) % workers.len();
-        Some(workers[idx])
     }
 }

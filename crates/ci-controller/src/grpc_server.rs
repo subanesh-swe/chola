@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tonic::service::interceptor::InterceptedService;
 use tonic::{Request, Response, Status};
@@ -16,6 +17,7 @@ use ci_core::proto::orchestrator::{
 };
 
 use crate::dag;
+use crate::reservation::ReservationManager;
 use crate::scheduler::{BestFitScheduler, Scheduler};
 use crate::state::ControllerState;
 
@@ -78,6 +80,7 @@ fn build_job_assignment(job: Job) -> JobAssignment {
         pre_script: job.pre_script.unwrap_or_default(),
         post_script: job.post_script.unwrap_or_default(),
         max_duration_secs: job.max_duration_secs.unwrap_or(0),
+        secret_env_keys: Vec::new(),
     }
 }
 
@@ -103,6 +106,7 @@ fn build_cancel_assignment(job_id: &str, reason: &str) -> JobAssignment {
         pre_script: String::new(),
         post_script: String::new(),
         max_duration_secs: 0,
+        secret_env_keys: Vec::new(),
     }
 }
 
@@ -251,16 +255,15 @@ pub async fn do_reserve_worker(
     let mut selected = None;
     for wid in &candidate_ids {
         if let Some(redis) = &state.redis_store {
-            match redis
-                .reserve_worker(
-                    wid,
-                    &group_id.to_string(),
-                    state.config.workers.reservation_timeout_secs,
-                )
-                .await
+            match ReservationManager::reserve(
+                redis,
+                wid,
+                &group_id,
+                state.config.workers.reservation_timeout_secs,
+            )
+            .await
             {
                 Ok(true) => {
-                    let _ = redis.remove_available_worker(wid).await;
                     selected = Some(wid.clone());
                     break;
                 }
@@ -477,6 +480,20 @@ async fn do_submit_stage(
         req.command_override.clone()
     };
 
+    // Load pipeline variables and inject into environment; track secret keys
+    let mut environment = req.environment.clone();
+    let mut secret_env_keys: Vec<String> = Vec::new();
+    if let Some(storage) = &state.storage {
+        if let Ok(vars) = storage.list_variables_for_repo(repo_id).await {
+            for var in vars {
+                environment.entry(var.name.clone()).or_insert(var.value);
+                if var.is_secret {
+                    secret_env_keys.push(var.name);
+                }
+            }
+        }
+    }
+
     // Create the job
     let mut job = Job::new(
         job_id.clone(),
@@ -489,7 +506,7 @@ async fn do_submit_stage(
     job.job_group_id = Some(group_id);
     job.stage_name = Some(req.stage_name.clone());
     job.assigned_worker = Some(worker_id.clone());
-    job.environment = req.environment.clone();
+    job.environment = environment.clone();
     job.state = ci_core::models::job::JobState::Queued;
 
     // Add to both registries
@@ -558,13 +575,14 @@ async fn do_submit_stage(
                 required_disk_mb: 0,
                 isolation_required: false,
                 branch_id: String::new(),
-                environment: req.environment,
+                environment,
                 cancel: None,
                 job_group_id: group_id.to_string(),
                 stage_name: req.stage_name.clone(),
                 pre_script: String::new(),
                 post_script: String::new(),
                 max_duration_secs: 0,
+                secret_env_keys,
             };
             if sender.send(Ok(assignment)).await.is_err() {
                 warn!(
@@ -777,26 +795,52 @@ impl Orchestrator for OrchestratorService {
 
                     jg.check_group_completion(&group_id).map(|new_state| {
                         let worker_id = jg.on_group_completed(&group_id);
-                        (new_state, worker_id)
+                        let repo_id = jg.get(&group_id).map(|g| g.repo_id);
+                        let branch = jg.get(&group_id).and_then(|g| g.branch.clone());
+                        let commit_sha = jg.get(&group_id).and_then(|g| g.commit_sha.clone());
+                        (new_state, worker_id, repo_id, branch, commit_sha)
                     })
                 }; // jg write lock dropped here
 
                 // Phase 2: async I/O without holding the lock
-                if let Some((new_state, worker_id)) = completion_info {
+                if let Some((new_state, worker_id, repo_id, branch, commit_sha)) = completion_info {
                     info!("Job group {} completed: {}", group_id, new_state);
                     self.state.metrics.dec_active_builds();
 
                     if let Some(worker_id) = worker_id {
                         if let Some(redis) = &self.state.redis_store {
-                            let _ = redis
-                                .release_worker_if_owner(&worker_id, &group_id.to_string())
-                                .await;
-                            let _ = redis.add_available_worker(&worker_id).await;
+                            let _ = ReservationManager::release(redis, &worker_id, &group_id).await;
                         }
                     }
 
                     if let Some(storage) = &self.state.storage {
                         let _ = storage.update_job_group_state(group_id, new_state).await;
+
+                        // Dispatch notifications for completed group
+                        if let Some(repo_id) = repo_id {
+                            let event_type = if new_state
+                                == ci_core::models::job_group::JobGroupState::Success
+                            {
+                                "on_success"
+                            } else {
+                                "on_failure"
+                            };
+                            let payload = serde_json::json!({
+                                "group_id": group_id.to_string(),
+                                "repo": repo_id.to_string(),
+                                "branch": branch,
+                                "commit_sha": commit_sha,
+                                "state": new_state.to_string(),
+                            });
+                            let storage = storage.clone();
+                            let event = event_type.to_string();
+                            tokio::spawn(async move {
+                                crate::notifier::dispatch_notifications(
+                                    &storage, repo_id, &event, payload,
+                                )
+                                .await;
+                            });
+                        }
                     }
                 }
             }
@@ -1343,7 +1387,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                         }
 
                         if let Some(redis) = &state_for_hb.redis_store {
-                            let _ = redis.release_worker_force(worker_id).await;
+                            let _ = ReservationManager::release_force(redis, worker_id).await;
                         }
                     }
                 }
@@ -1483,11 +1527,17 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
     let auth_config = state.config.auth.clone();
     let service = OrchestratorService { state };
     let interceptor = auth_interceptor(auth_config);
-    let server = InterceptedService::new(OrchestratorServer::new(service), interceptor);
+    let grpc_service = OrchestratorServer::new(service)
+        .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
+        .send_compressed(tonic::codec::CompressionEncoding::Gzip);
+    let server = InterceptedService::new(grpc_service, interceptor);
 
     info!("Controller gRPC server listening on {}", addr);
 
-    let mut server_builder = tonic::transport::Server::builder();
+    let mut server_builder = tonic::transport::Server::builder()
+        .http2_keepalive_interval(Some(Duration::from_secs(10)))
+        .http2_keepalive_timeout(Some(Duration::from_secs(20)))
+        .tcp_keepalive(Some(Duration::from_secs(60)));
 
     // Configure TLS if enabled
     if let Some(ref tls) = tls_config {

@@ -334,9 +334,11 @@ impl RedisStore {
 }
 
 // ── Keyspace notification helpers (outside RedisStore, use raw client) ──
+// TODO: Wire into reconnect handler.
 
 /// Create a raw Redis client for pub/sub (outside connection pool).
 /// Pub/sub requires a dedicated connection that cannot be shared via a pool.
+#[allow(dead_code)]
 pub fn create_pubsub_client(redis_url: &str) -> anyhow::Result<redis::Client> {
     Ok(redis::Client::open(redis_url)?)
 }
@@ -344,6 +346,7 @@ pub fn create_pubsub_client(redis_url: &str) -> anyhow::Result<redis::Client> {
 /// Parse an expired key event to extract a worker_id.
 /// Key format: `{prefix}worker:alive:{worker_id}`
 /// Returns `Some(worker_id)` if the key matches, `None` otherwise.
+#[allow(dead_code)]
 pub fn parse_worker_death_key(key: &str, prefix: &str) -> Option<String> {
     let pattern = format!("{}worker:alive:", prefix);
     key.strip_prefix(&pattern).map(|s| s.to_string())
@@ -358,6 +361,7 @@ pub fn parse_worker_death_key(key: &str, prefix: &str) -> Option<String> {
 /// This function spawns a background task that listens on a dedicated
 /// pub/sub connection (not from the pool) and forwards parsed worker_ids
 /// to the returned channel.
+#[allow(dead_code)]
 pub async fn subscribe_worker_deaths(
     redis_url: &str,
     prefix: String,

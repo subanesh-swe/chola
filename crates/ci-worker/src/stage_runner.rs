@@ -1,8 +1,9 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::executor::{ExecutionResult, Executor, LogLine};
+use crate::executor::{Executor, LogLine};
 
 /// Result of a stage execution
 #[derive(Debug)]
@@ -62,9 +63,12 @@ impl StageRunner {
         log_tx: mpsc::Sender<LogLine>,
         cancel_rx: mpsc::Receiver<i32>,
         max_duration_secs: i32,
+        secret_values: Arc<Vec<String>>,
     ) -> anyhow::Result<StageResult> {
         let mut pre_exit_code: Option<i32> = None;
+        #[allow(unused_assignments)]
         let mut command_exit_code: i32 = -1;
+        #[allow(unused_assignments)]
         let mut post_exit_code: Option<i32> = None;
         let mut was_cancelled = false;
 
@@ -88,6 +92,7 @@ impl StageRunner {
                     log_path,
                     log_tx.clone(),
                     dummy_cancel_rx,
+                    secret_values.clone(),
                 )
                 .await
             {
@@ -107,7 +112,13 @@ impl StageRunner {
                         // Skip command, but still run post_script
                         command_exit_code = -1;
                         post_exit_code = self
-                            .run_post_script(post_script, work_dir, log_path, &log_tx)
+                            .run_post_script(
+                                post_script,
+                                work_dir,
+                                log_path,
+                                &log_tx,
+                                &secret_values,
+                            )
                             .await;
                         return Ok(StageResult {
                             pre_exit_code,
@@ -127,7 +138,7 @@ impl StageRunner {
                     error!("Pre-script execution error: {}", e);
                     pre_exit_code = Some(-1);
                     post_exit_code = self
-                        .run_post_script(post_script, work_dir, log_path, &log_tx)
+                        .run_post_script(post_script, work_dir, log_path, &log_tx, &secret_values)
                         .await;
                     return Ok(StageResult {
                         pre_exit_code,
@@ -169,7 +180,14 @@ impl StageRunner {
 
             let r = self
                 .executor
-                .execute_streaming(command, work_dir, log_path, log_tx.clone(), merged_rx)
+                .execute_streaming(
+                    command,
+                    work_dir,
+                    log_path,
+                    log_tx.clone(),
+                    merged_rx,
+                    secret_values.clone(),
+                )
                 .await;
 
             // If command finished before timeout, cancel the timeout task
@@ -178,7 +196,14 @@ impl StageRunner {
             r
         } else {
             self.executor
-                .execute_streaming(command, work_dir, log_path, log_tx.clone(), cancel_rx)
+                .execute_streaming(
+                    command,
+                    work_dir,
+                    log_path,
+                    log_tx.clone(),
+                    cancel_rx,
+                    secret_values.clone(),
+                )
                 .await
         };
 
@@ -197,7 +222,7 @@ impl StageRunner {
 
         // -- Phase 3: Post-script (ALWAYS runs) --
         post_exit_code = self
-            .run_post_script(post_script, work_dir, log_path, &log_tx)
+            .run_post_script(post_script, work_dir, log_path, &log_tx, &secret_values)
             .await;
 
         let final_state = if was_cancelled {
@@ -223,6 +248,7 @@ impl StageRunner {
         work_dir: &str,
         log_path: &str,
         log_tx: &mpsc::Sender<LogLine>,
+        secret_values: &Arc<Vec<String>>,
     ) -> Option<i32> {
         if post_script.is_empty() {
             return None;
@@ -245,6 +271,7 @@ impl StageRunner {
                 log_path,
                 log_tx.clone(),
                 dummy_cancel_rx,
+                secret_values.clone(),
             )
             .await
         {

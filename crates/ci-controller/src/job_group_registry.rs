@@ -276,7 +276,7 @@ impl JobGroupRegistry {
     pub fn can_submit_stage(
         &self,
         group_id: &Uuid,
-        stage_name: &str,
+        _stage_name: &str,
         depends_on: &[String],
     ) -> bool {
         if depends_on.is_empty() {
