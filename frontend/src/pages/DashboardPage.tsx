@@ -104,7 +104,7 @@ export default function DashboardPage() {
   });
   const { data: workersData, isLoading: workersLoading } = useQuery({
     queryKey: ['workers'],
-    queryFn: listWorkers,
+    queryFn: () => listWorkers(),
     refetchInterval: 5000,
   });
 

@@ -18,7 +18,7 @@ export default function UsersPage() {
   const [role, setRole] = useState<UserRole>('viewer');
   const [delId, setDelId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: listUsers });
+  const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: () => listUsers() });
 
   const addMut = useMutation({
     mutationFn: () => createUser({ username, password, display_name: displayName || undefined, role }),

@@ -42,9 +42,10 @@ export function StatusBadge({ status, size = 'sm' }: Props) {
         style,
         size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm',
       )}
+      aria-label={`Status: ${status}`}
     >
       {pulse && (
-        <span className="relative flex h-2 w-2">
+        <span className="relative flex h-2 w-2" aria-hidden="true">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
           <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
         </span>

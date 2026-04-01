@@ -4,16 +4,15 @@ pub mod error;
 pub mod job_group_handlers;
 pub mod job_handlers;
 pub mod log_handlers;
-pub mod notification_handlers;
 pub mod repo_handlers;
-pub mod settings_handlers;
+pub mod script_handlers;
 pub mod user_handlers;
 pub mod worker_handlers;
 
 use std::sync::Arc;
 
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
     Router,
 };
 
@@ -56,6 +55,15 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
             "/repos/{repo_id}/stages/{stage_id}",
             put(repo_handlers::update_stage).delete(repo_handlers::delete_stage),
         )
+        // Stage scripts
+        .route(
+            "/repos/{repo_id}/stages/{stage_id}/scripts",
+            get(script_handlers::list).post(script_handlers::create),
+        )
+        .route(
+            "/repos/{repo_id}/stages/{stage_id}/scripts/{script_id}",
+            put(script_handlers::update).delete(script_handlers::delete_one),
+        )
         // Job groups
         .route("/job-groups", get(job_group_handlers::list))
         .route("/job-groups/{id}", get(job_group_handlers::get_one))
@@ -71,17 +79,6 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
         .route("/workers/{id}", get(worker_handlers::get_one))
         .route("/workers/{id}/drain", post(worker_handlers::drain))
         .route("/workers/{id}/undrain", post(worker_handlers::undrain))
-        // Notifications
-        .route(
-            "/repos/{id}/notifications",
-            get(notification_handlers::list).post(notification_handlers::create),
-        )
-        .route(
-            "/repos/{repo_id}/notifications/{nid}",
-            put(notification_handlers::update).delete(notification_handlers::delete),
-        )
         // Dashboard
         .route("/dashboard/summary", get(dashboard_handlers::summary))
-        // Settings (read-only config view)
-        .route("/settings", get(settings_handlers::get_settings))
 }

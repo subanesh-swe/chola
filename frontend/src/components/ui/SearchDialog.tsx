@@ -41,13 +41,13 @@ export function SearchDialog({ open, onClose }: Props) {
   const [buildsQ, workersQ, reposQ] = useQueries({
     queries: [
       { queryKey: ['builds-all'], queryFn: () => listBuilds({ limit: 200 }), staleTime: 30000 },
-      { queryKey: ['workers'], queryFn: listWorkers, staleTime: 10000 },
-      { queryKey: ['repos'], queryFn: listRepos, staleTime: 60000 },
+      { queryKey: ['workers'], queryFn: () => listWorkers(), staleTime: 10000 },
+      { queryKey: ['repos'], queryFn: () => listRepos(), staleTime: 60000 },
     ],
   });
 
   const results: SearchResultItem[] = q.length < 2 ? [] : [
-    ...(buildsQ.data?.job_groups ?? [])
+    ...(buildsQ.data?.data ?? [])
       .filter(b => b.job_group_id.includes(q) || b.branch?.toLowerCase().includes(q) || b.commit_sha?.toLowerCase().startsWith(q))
       .slice(0, 5)
       .map(b => ({
@@ -57,7 +57,7 @@ export function SearchDialog({ open, onClose }: Props) {
         subtitle: `${b.branch ?? 'no branch'} · ${b.state}`,
         href: `/builds/${b.job_group_id}`,
       })),
-    ...(reposQ.data?.repos ?? [])
+    ...(reposQ.data?.data ?? [])
       .filter(r => r.repo_name.toLowerCase().includes(q) || r.id.includes(q))
       .slice(0, 5)
       .map(r => ({
@@ -67,7 +67,7 @@ export function SearchDialog({ open, onClose }: Props) {
         subtitle: r.repo_url,
         href: `/repos/${r.id}`,
       })),
-    ...(workersQ.data?.workers ?? [])
+    ...(workersQ.data?.data ?? [])
       .filter(w => w.worker_id.toLowerCase().includes(q) || w.hostname.toLowerCase().includes(q))
       .slice(0, 5)
       .map(w => ({

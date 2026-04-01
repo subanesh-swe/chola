@@ -286,7 +286,7 @@ pub async fn create_stage(
             body.parallel_group.as_deref(),
             body.allow_worker_migration,
             &body.job_type,
-            &body.depends_on,
+            Some(&body.depends_on[..]),
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -320,7 +320,7 @@ pub async fn update_stage(
             body.parallel_group.as_deref(),
             body.allow_worker_migration,
             body.job_type.as_deref(),
-            body.depends_on.as_deref(),
+            body.depends_on.as_ref().map(|v| v.as_slice()),
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?

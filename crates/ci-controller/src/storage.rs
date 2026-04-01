@@ -5,6 +5,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use ci_core::models::job_group::{JobGroup, JobGroupState};
+use ci_core::models::schedule::CronSchedule;
 use ci_core::models::stage::{Repo, StageConfig, StageScript, WorkerReservation};
 use ci_core::models::user::{User, UserRole};
 
@@ -74,6 +75,7 @@ fn map_stage_config(r: sqlx::postgres::PgRow) -> StageConfig {
         parallel_group: r.get("parallel_group"),
         allow_worker_migration: r.get("allow_worker_migration"),
         job_type: r.get("job_type"),
+        depends_on: r.get("depends_on"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -223,6 +225,13 @@ pub struct DbJob {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct NotificationConfig {
+    pub id: Uuid,
+    pub channel_type: String,
+    pub config: serde_json::Value,
+}
+
 impl Storage {
     /// Create a new Storage with a connection pool.
     /// Sets `search_path` on every new connection via `after_connect`.
@@ -312,11 +321,6 @@ impl Storage {
                 4,
                 "users_and_auth",
                 include_str!("../../../migrations/004_users_and_auth.sql"),
-            ),
-            (
-                5,
-                "indexes_and_cascades",
-                include_str!("../../../migrations/005_indexes_and_cascades.sql"),
             ),
         ];
 
@@ -1065,93 +1069,6 @@ impl Storage {
         }
     }
 
-    pub async fn list_users_paginated(
-        &self,
-        limit: i64,
-        offset: i64,
-    ) -> anyhow::Result<(Vec<User>, i64)> {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(&self.pool)
-            .await?;
-
-        let q = format!("SELECT {USER_COLUMNS} FROM users ORDER BY username LIMIT $1 OFFSET $2");
-        let rows = sqlx::query(&q)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-        let users: Vec<User> = rows.iter().map(map_user).collect();
-
-        Ok((users, total))
-    }
-
-    pub async fn list_repos_paginated(
-        &self,
-        limit: i64,
-        offset: i64,
-    ) -> anyhow::Result<(Vec<Repo>, i64)> {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repos")
-            .fetch_one(&self.pool)
-            .await?;
-
-        let q = format!("SELECT {REPO_COLUMNS} FROM repos ORDER BY repo_name LIMIT $1 OFFSET $2");
-        let rows = sqlx::query(&q)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-        let repos: Vec<Repo> = rows.into_iter().map(map_repo).collect();
-
-        Ok((repos, total))
-    }
-
-    pub async fn list_workers_paginated(
-        &self,
-        limit: i64,
-        offset: i64,
-    ) -> anyhow::Result<(Vec<WorkerRow>, i64)> {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workers")
-            .fetch_one(&self.pool)
-            .await?;
-
-        let q =
-            format!("SELECT {WORKER_COLUMNS} FROM workers ORDER BY worker_id LIMIT $1 OFFSET $2");
-        let rows = sqlx::query(&q)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-        let workers: Vec<WorkerRow> = rows.into_iter().map(WorkerRow::from).collect();
-
-        Ok((workers, total))
-    }
-
-    pub async fn get_jobs_for_group_paginated(
-        &self,
-        job_group_id: Uuid,
-        limit: i64,
-        offset: i64,
-    ) -> anyhow::Result<(Vec<DbJob>, i64)> {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE job_group_id = $1")
-            .bind(job_group_id)
-            .fetch_one(&self.pool)
-            .await?;
-
-        let q = format!(
-            "SELECT {JOB_COLUMNS} FROM jobs \
-             WHERE job_group_id = $1 ORDER BY created_at LIMIT $2 OFFSET $3"
-        );
-        let rows = sqlx::query(&q)
-            .bind(job_group_id)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-        let jobs: Vec<DbJob> = rows.into_iter().map(DbJob::from).collect();
-
-        Ok((jobs, total))
-    }
-
     // ========================================================================
     // Repos (additional CRUD)
     // ========================================================================
@@ -1214,13 +1131,14 @@ impl Storage {
         parallel_group: Option<&str>,
         allow_worker_migration: bool,
         job_type: &str,
+        depends_on: Option<&[String]>,
     ) -> anyhow::Result<StageConfig> {
         let q = format!(
             "INSERT INTO stage_configs \
              (repo_id, stage_name, command, required_cpu, required_memory_mb, \
               required_disk_mb, max_duration_secs, execution_order, parallel_group, \
               allow_worker_migration, job_type) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              RETURNING {STAGE_CONFIG_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1235,6 +1153,7 @@ impl Storage {
             .bind(parallel_group)
             .bind(allow_worker_migration)
             .bind(job_type)
+            .bind(depends_on)
             .fetch_one(&self.pool)
             .await?;
         Ok(map_stage_config(row))
@@ -1253,6 +1172,7 @@ impl Storage {
         parallel_group: Option<&str>,
         allow_worker_migration: Option<bool>,
         job_type: Option<&str>,
+        depends_on: Option<&[String]>,
     ) -> anyhow::Result<Option<StageConfig>> {
         let q = format!(
             "UPDATE stage_configs \
@@ -1270,6 +1190,7 @@ impl Storage {
              WHERE id = $1 \
              RETURNING {STAGE_CONFIG_COLUMNS}"
         );
+        let new_depends = depends_on;
         let row = sqlx::query(&q)
             .bind(id)
             .bind(stage_name)
@@ -1282,6 +1203,7 @@ impl Storage {
             .bind(parallel_group)
             .bind(allow_worker_migration)
             .bind(job_type)
+            .bind(new_depends.map(|s| s.to_vec()))
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_stage_config))
@@ -1291,5 +1213,211 @@ impl Storage {
         let q = "DELETE FROM stage_configs WHERE id = $1";
         let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // ========================================================================
+    // Stage Scripts (CRUD)
+    // ========================================================================
+
+    pub async fn list_stage_scripts(
+        &self,
+        stage_config_id: Uuid,
+    ) -> anyhow::Result<Vec<StageScript>> {
+        let q = format!(
+            "SELECT {STAGE_SCRIPT_COLUMNS} FROM stage_scripts \
+             WHERE stage_config_id = $1 ORDER BY script_type, script_scope"
+        );
+        let rows = sqlx::query(&q)
+            .bind(stage_config_id)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(map_stage_script).collect())
+    }
+
+    pub async fn get_stage_script(&self, id: Uuid) -> anyhow::Result<Option<StageScript>> {
+        let q = format!("SELECT {STAGE_SCRIPT_COLUMNS} FROM stage_scripts WHERE id = $1");
+        let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.map(map_stage_script))
+    }
+
+    pub async fn create_stage_script(
+        &self,
+        stage_config_id: Uuid,
+        script_type: &str,
+        script_scope: &str,
+        script: &str,
+        worker_id: Option<&str>,
+    ) -> anyhow::Result<StageScript> {
+        let q = format!(
+            "INSERT INTO stage_scripts \
+             (id, stage_config_id, worker_id, script_type, script_scope, script, \
+              created_at, updated_at) \
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, now(), now()) \
+             RETURNING {STAGE_SCRIPT_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(stage_config_id)
+            .bind(worker_id)
+            .bind(script_type)
+            .bind(script_scope)
+            .bind(script)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(map_stage_script(row))
+    }
+
+    pub async fn update_stage_script(
+        &self,
+        id: Uuid,
+        script_type: Option<&str>,
+        script_scope: Option<&str>,
+        script: Option<&str>,
+        worker_id: Option<Option<&str>>,
+    ) -> anyhow::Result<Option<StageScript>> {
+        let q = format!(
+            "UPDATE stage_scripts SET \
+             script_type  = COALESCE($2, script_type), \
+             script_scope = COALESCE($3, script_scope), \
+             script       = COALESCE($4, script), \
+             worker_id    = CASE WHEN $5 THEN $6 ELSE worker_id END, \
+             updated_at   = now() \
+             WHERE id = $1 \
+             RETURNING {STAGE_SCRIPT_COLUMNS}"
+        );
+        let (update_worker, new_worker): (bool, Option<&str>) = match worker_id {
+            Some(w) => (true, w),
+            None => (false, None),
+        };
+        let row = sqlx::query(&q)
+            .bind(id)
+            .bind(script_type)
+            .bind(script_scope)
+            .bind(script)
+            .bind(update_worker)
+            .bind(new_worker)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(map_stage_script))
+    }
+
+    pub async fn delete_stage_script(&self, id: Uuid) -> anyhow::Result<bool> {
+        let q = "DELETE FROM stage_scripts WHERE id = $1";
+        let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn list_users_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> anyhow::Result<(Vec<User>, i64)> {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&self.pool)
+            .await?;
+        let q = format!(
+            "SELECT {} FROM users ORDER BY username LIMIT {} OFFSET {}",
+            USER_COLUMNS, limit, offset
+        );
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok((rows.into_iter().map(|r| map_user(&r)).collect(), total))
+    }
+
+    pub async fn list_repos_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> anyhow::Result<(Vec<Repo>, i64)> {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repos")
+            .fetch_one(&self.pool)
+            .await?;
+        let q = format!(
+            "SELECT {} FROM repos ORDER BY repo_name LIMIT {} OFFSET {}",
+            REPO_COLUMNS, limit, offset
+        );
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok((rows.into_iter().map(map_repo).collect(), total))
+    }
+
+    pub async fn get_jobs_for_group_paginated(
+        &self,
+        group_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> anyhow::Result<(Vec<DbJob>, i64)> {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE job_group_id = $1")
+            .bind(group_id)
+            .fetch_one(&self.pool)
+            .await?;
+        let q = format!(
+            "SELECT {} FROM jobs WHERE job_group_id = $1 ORDER BY created_at LIMIT {} OFFSET {}",
+            JOB_COLUMNS, limit, offset
+        );
+        let rows = sqlx::query(&q).bind(group_id).fetch_all(&self.pool).await?;
+        Ok((rows.into_iter().map(DbJob::from).collect(), total))
+    }
+
+    pub async fn get_notification_configs_for_trigger(
+        &self,
+        repo_id: Uuid,
+        event_type: &str,
+    ) -> anyhow::Result<Vec<NotificationConfig>> {
+        let rows = sqlx::query(
+            "SELECT id, channel_type, config FROM notification_configs WHERE repo_id = $1 AND trigger = $2"
+        )
+        .bind(repo_id)
+        .bind(event_type)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| NotificationConfig {
+                id: r.get("id"),
+                channel_type: r.get("channel_type"),
+                config: r.get("config"),
+            })
+            .collect())
+    }
+
+    pub async fn get_stage_dependencies(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<std::collections::HashMap<String, Vec<String>>> {
+        let rows = sqlx::query_as::<_, (String, Vec<String>)>(
+            "SELECT stage_name, depends_on FROM stage_configs WHERE repo_id = $1 ORDER BY execution_order"
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
+    pub async fn list_due_schedules(&self) -> anyhow::Result<Vec<CronSchedule>> {
+        let q = format!(
+            "SELECT id, repo_id, interval_secs, next_run_at, stages, branch, enabled,              last_triggered_at, created_at, updated_at              FROM cron_schedules WHERE enabled = true AND next_run_at <= now()"
+        );
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CronSchedule {
+                id: r.get("id"),
+                repo_id: r.get("repo_id"),
+                interval_secs: r.get("interval_secs"),
+                next_run_at: r.get("next_run_at"),
+                stages: r.get("stages"),
+                branch: r.get("branch"),
+                enabled: r.get("enabled"),
+                last_triggered_at: r.get("last_triggered_at"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            })
+            .collect())
+    }
+
+    pub async fn mark_schedule_triggered(&self, schedule_id: Uuid) -> anyhow::Result<()> {
+        sqlx::query("UPDATE cron_schedules SET last_triggered_at = now() WHERE id = $1")
+            .bind(schedule_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }

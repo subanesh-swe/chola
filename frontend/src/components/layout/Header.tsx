@@ -21,39 +21,23 @@ function Breadcrumbs() {
   );
 }
 
-interface HeaderProps {
-  onSearch?: () => void;
-}
-
-export function Header({ onSearch }: HeaderProps) {
+export function Header() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const nav = useNavigate();
 
   return (
-    <header className="h-14 bg-slate-900 border-b border-slate-700 flex items-center justify-between px-6">
+    <header className="h-14 bg-slate-900 border-b border-slate-700 flex items-center justify-between px-6 pl-16 md:pl-6">
       <Breadcrumbs />
       <div className="flex items-center gap-4">
-        {onSearch && (
-          <button
-            onClick={onSearch}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 bg-slate-800 border border-slate-700 rounded-lg hover:text-white hover:border-slate-600 transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            Search
-            <kbd className="text-[10px] text-slate-600 border border-slate-700 rounded px-1">⌘K</kbd>
-          </button>
-        )}
-        <span className="text-sm text-slate-300">{user?.display_name || user?.username}</span>
+        <span className="hidden sm:inline text-sm text-slate-300">{user?.display_name || user?.username}</span>
         <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300">{user?.role}</span>
         <button
           onClick={() => {
             logout();
             nav('/login');
           }}
-          className="text-sm text-slate-400 hover:text-white transition-colors"
+          className="text-sm text-slate-400 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
         >
           Logout
         </button>

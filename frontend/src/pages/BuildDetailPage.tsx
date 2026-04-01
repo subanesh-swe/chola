@@ -95,7 +95,8 @@ export default function BuildDetailPage() {
       <div className="flex items-center gap-4 flex-wrap">
         <button
           onClick={() => nav('/builds')}
-          className="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1"
+          aria-label="Back to builds list"
+          className="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -107,7 +108,7 @@ export default function BuildDetailPage() {
         {canCancelJobs && !isTerminal && (
           <button
             onClick={() => setShowCancel(true)}
-            className="ml-auto px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors"
+            className="ml-auto px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             Cancel Build
           </button>
