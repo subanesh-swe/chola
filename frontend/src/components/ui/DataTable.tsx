@@ -16,10 +16,6 @@ interface Props<T> {
   onRowClick?: (row: T) => void;
   emptyMessage?: string;
   loading?: boolean;
-  /** Controlled sort — provide all three or none */
-  onSort?: (key: string) => void;
-  sortKey?: string;
-  sortDir?: 'asc' | 'desc';
 }
 
 export function DataTable<T>({
@@ -29,23 +25,16 @@ export function DataTable<T>({
   onRowClick,
   emptyMessage = 'No data',
   loading = false,
-  onSort,
-  sortKey: controlledKey,
-  sortDir: controlledDir,
 }: Props<T>) {
-  const [internalKey, setInternalKey] = useState<string | null>(null);
-  const [internalDir, setInternalDir] = useState<'asc' | 'desc'>('asc');
-
-  const isControlled = onSort !== undefined;
-  const activeSortKey = isControlled ? (controlledKey ?? null) : internalKey;
-  const activeSortDir = isControlled ? (controlledDir ?? 'asc') : internalDir;
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const handleSort = (key: string) => {
-    if (isControlled) {
-      onSort(key);
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
-      if (internalKey === key) setInternalDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-      else { setInternalKey(key); setInternalDir('asc'); }
+      setSortKey(key);
+      setSortDir('asc');
     }
   };
 
@@ -66,16 +55,32 @@ export function DataTable<T>({
               {columns.map((col) => (
                 <th
                   key={col.key}
+                  scope="col"
+                  aria-sort={
+                    col.sortable
+                      ? sortKey === col.key
+                        ? sortDir === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                      : undefined
+                  }
                   className={clsx(
                     'px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider',
                     col.sortable && 'cursor-pointer hover:text-slate-200',
                     col.className,
                   )}
                   onClick={col.sortable ? () => handleSort(col.key) : undefined}
+                  onKeyDown={
+                    col.sortable
+                      ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort(col.key); } }
+                      : undefined
+                  }
+                  tabIndex={col.sortable ? 0 : undefined}
                 >
                   {col.header}
-                  {activeSortKey === col.key && (
-                    <span className="ml-1">{activeSortDir === 'asc' ? '\u2191' : '\u2193'}</span>
+                  {sortKey === col.key && (
+                    <span className="ml-1" aria-hidden="true">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>
                   )}
                 </th>
               ))}
@@ -93,9 +98,15 @@ export function DataTable<T>({
                 <tr
                   key={keyExtractor(row)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row); } }
+                      : undefined
+                  }
+                  tabIndex={onRowClick ? 0 : undefined}
                   className={clsx(
                     'transition-colors',
-                    onRowClick && 'cursor-pointer hover:bg-slate-800/50',
+                    onRowClick && 'cursor-pointer hover:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
                   )}
                 >
                   {columns.map((col) => (

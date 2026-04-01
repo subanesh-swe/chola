@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 export default function WorkersPage() {
   const qc = useQueryClient();
   const { canManageWorkers } = usePermission();
-  const { data, isLoading } = useQuery({ queryKey: ['workers'], queryFn: listWorkers, refetchInterval: 5000 });
+  const { data, isLoading } = useQuery({ queryKey: ['workers'], queryFn: () => listWorkers(), refetchInterval: 5000 });
 
   const drainMut = useMutation({
     mutationFn: (id: string) => drainWorker(id),
@@ -30,23 +30,33 @@ export default function WorkersPage() {
         <div className="grid gap-4">
           {workers.map(w => (
             <div key={w.worker_id} className="bg-slate-900 border border-slate-700 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <div className="flex items-center gap-3 min-w-0">
                   <StatusBadge status={w.status} size="md" />
-                  <div>
-                    <p className="text-lg font-semibold text-white">{w.worker_id}</p>
+                  <div className="min-w-0">
+                    <p className="text-lg font-semibold text-white truncate">{w.worker_id}</p>
                     <p className="text-sm text-slate-400">{w.hostname} &middot; {w.disk_type} &middot; Docker: {w.docker_enabled ? 'Yes' : 'No'}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   {w.last_heartbeat && <span className="text-xs text-slate-500">Jobs: {w.last_heartbeat.running_jobs}</span>}
                   {canManageWorkers && w.status === 'Connected' && (
-                    <button onClick={() => drainMut.mutate(w.worker_id)}
-                      className="px-3 py-1 text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/30">Drain</button>
+                    <button
+                      onClick={() => drainMut.mutate(w.worker_id)}
+                      aria-label={`Drain worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/30 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    >
+                      Drain
+                    </button>
                   )}
                   {canManageWorkers && w.status === 'Draining' && (
-                    <button onClick={() => undrainMut.mutate(w.worker_id)}
-                      className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30">Undrain</button>
+                    <button
+                      onClick={() => undrainMut.mutate(w.worker_id)}
+                      aria-label={`Undrain worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      Undrain
+                    </button>
                   )}
                 </div>
               </div>
@@ -55,7 +65,7 @@ export default function WorkersPage() {
                 <ResourceBar label="Memory" used={w.last_heartbeat?.used_memory_mb ?? 0} total={w.total_memory_mb} unit=" MB" />
                 <ResourceBar label="Disk" used={w.last_heartbeat?.used_disk_mb ?? 0} total={w.total_disk_mb} unit=" MB" />
               </div>
-              <div className="mt-3 flex gap-4 text-xs text-slate-500">
+              <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
                 <span>Types: {w.supported_job_types.join(', ')}</span>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>
                 {w.last_heartbeat && <span>Last beat: <TimeAgo date={w.last_heartbeat.timestamp} /></span>}

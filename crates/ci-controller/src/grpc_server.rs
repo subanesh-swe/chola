@@ -220,7 +220,7 @@ async fn dispatch_job_for_worker(
 /// Workers are iterated in connected_workers() order for now. A future
 /// improvement could create a synthetic Job from request-level resource hints
 /// and use the scheduler to rank candidates (P1-10).
-async fn do_reserve_worker(
+pub async fn do_reserve_worker(
     state: &Arc<ControllerState>,
     req: &ReserveWorkerRequest,
 ) -> Result<ReserveWorkerResponse, Status> {
@@ -1403,6 +1403,78 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                 interval.tick().await;
                 let mut la = state_for_log_cleanup.log_aggregator.write().await;
                 la.cleanup_old_logs(3600); // clean buffers finalized >1h ago
+            }
+        });
+    }
+
+    // ── Cron/scheduled builds — every 60 seconds ──────────────────────────────
+    {
+        let state_cron = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let storage = match &state_cron.storage {
+                    Some(s) => s.clone(),
+                    None => continue,
+                };
+                let due = match storage.list_due_schedules().await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        warn!("Cron: failed to list due schedules: {}", e);
+                        continue;
+                    }
+                };
+                for schedule in due {
+                    info!(
+                        "Cron: triggering schedule {} for repo {}",
+                        schedule.id, schedule.repo_id
+                    );
+                    // Look up repo name for the reserve request
+                    let repo = match storage.get_repo(schedule.repo_id).await {
+                        Ok(Some(r)) => r,
+                        Ok(None) => {
+                            warn!("Cron: repo {} not found, skipping", schedule.repo_id);
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!("Cron: repo lookup failed: {}", e);
+                            continue;
+                        }
+                    };
+                    // Build a ReserveWorkerRequest and reuse do_reserve_worker
+                    let req = ReserveWorkerRequest {
+                        repo_name: repo.repo_name.clone(),
+                        repo_url: repo.repo_url.clone(),
+                        branch: schedule.branch.clone(),
+                        commit_sha: String::new(), // cron builds use latest
+                        stages: schedule.stages.clone(),
+                    };
+                    match do_reserve_worker(&state_cron, &req).await {
+                        Ok(resp) if resp.success => {
+                            info!(
+                                "Cron: reserved worker {} for group {} (schedule {})",
+                                resp.worker_id, resp.job_group_id, schedule.id
+                            );
+                        }
+                        Ok(resp) => {
+                            warn!(
+                                "Cron: reserve failed for schedule {}: {}",
+                                schedule.id, resp.message
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Cron: reserve error for schedule {}: {}", schedule.id, e);
+                        }
+                    }
+                    // Mark triggered regardless so we don't retry immediately
+                    if let Err(e) = storage.mark_schedule_triggered(schedule.id).await {
+                        error!(
+                            "Cron: failed to mark schedule {} triggered: {}",
+                            schedule.id, e
+                        );
+                    }
+                }
             }
         });
     }

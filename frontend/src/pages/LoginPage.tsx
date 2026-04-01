@@ -22,8 +22,8 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-white mb-1">Chola CI</h1>
           <p className="text-sm text-slate-400 mb-6">Sign in to your account</p>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div><label className="block text-sm text-slate-300 mb-1">Username</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" placeholder="admin" required /></div>
-            <div><label className="block text-sm text-slate-300 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" required /></div>
+            <div><label className="block text-sm text-slate-300 mb-1">Username</label><input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="admin" required /></div>
+            <div><label className="block text-sm text-slate-300 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" required /></div>
             <button type="submit" disabled={loading} className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">{loading ? 'Signing in...' : 'Sign In'}</button>
           </form>
         </div>
