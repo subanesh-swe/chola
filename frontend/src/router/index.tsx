@@ -10,6 +10,7 @@ import WorkersPage from '../pages/WorkersPage';
 import ReposPage from '../pages/ReposPage';
 import RepoDetailPage from '../pages/RepoDetailPage';
 import UsersPage from '../pages/UsersPage';
+import SettingsPage from '../pages/SettingsPage';
 import NotFoundPage from '../pages/NotFoundPage';
 
 export function AppRouter() {
@@ -26,6 +27,7 @@ export function AppRouter() {
           <Route path="repos/:id" element={<RepoDetailPage />} />
           <Route element={<RoleGuard minRole="super_admin" />}>
             <Route path="users" element={<UsersPage />} />
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Route>
       </Route>

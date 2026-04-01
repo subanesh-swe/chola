@@ -10,3 +10,6 @@ export { StatCard } from './StatCard';
 export { Sparkline } from './Sparkline';
 export { StageTimeline } from './StageTimeline';
 export { TableSkeleton, DashboardSkeleton } from './PageSkeleton';
+export { SearchDialog } from './SearchDialog';
+export { SearchResult } from './SearchResult';
+export type { SearchResultItem, ResultType } from './SearchResult';

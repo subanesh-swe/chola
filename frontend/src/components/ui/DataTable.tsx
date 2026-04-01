@@ -16,6 +16,10 @@ interface Props<T> {
   onRowClick?: (row: T) => void;
   emptyMessage?: string;
   loading?: boolean;
+  /** Controlled sort — provide all three or none */
+  onSort?: (key: string) => void;
+  sortKey?: string;
+  sortDir?: 'asc' | 'desc';
 }
 
 export function DataTable<T>({
@@ -25,16 +29,23 @@ export function DataTable<T>({
   onRowClick,
   emptyMessage = 'No data',
   loading = false,
+  onSort,
+  sortKey: controlledKey,
+  sortDir: controlledDir,
 }: Props<T>) {
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [internalKey, setInternalKey] = useState<string | null>(null);
+  const [internalDir, setInternalDir] = useState<'asc' | 'desc'>('asc');
+
+  const isControlled = onSort !== undefined;
+  const activeSortKey = isControlled ? (controlledKey ?? null) : internalKey;
+  const activeSortDir = isControlled ? (controlledDir ?? 'asc') : internalDir;
 
   const handleSort = (key: string) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    if (isControlled) {
+      onSort(key);
     } else {
-      setSortKey(key);
-      setSortDir('asc');
+      if (internalKey === key) setInternalDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      else { setInternalKey(key); setInternalDir('asc'); }
     }
   };
 
@@ -63,8 +74,8 @@ export function DataTable<T>({
                   onClick={col.sortable ? () => handleSort(col.key) : undefined}
                 >
                   {col.header}
-                  {sortKey === col.key && (
-                    <span className="ml-1">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>
+                  {activeSortKey === col.key && (
+                    <span className="ml-1">{activeSortDir === 'asc' ? '\u2191' : '\u2193'}</span>
                   )}
                 </th>
               ))}
