@@ -1,26 +1,25 @@
 import apiClient from './client';
 
-export interface SystemSettings {
-  auth: {
-    enabled: boolean;
-    jwt_expiry_secs: number;
-  };
-  scheduling: {
-    strategy: string;
-    nvme_preference: boolean;
-    branch_affinity: boolean;
-  };
-  workers: {
-    heartbeat_interval_secs: number;
-    heartbeat_timeout_secs: number;
-    max_reconnect_attempts: number;
-    reservation_timeout_secs: number;
-  };
-  logging: {
-    level: string;
-    log_dir: string | null;
-  };
+export interface SettingItem {
+  key: string;
+  value: string | number | boolean;
+  source: 'database' | 'config' | 'default';
+  editable: boolean;
+  type?: 'bool' | 'int';
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+export interface SettingsResponse {
+  settings: SettingItem[];
 }
 
 export const getSettings = () =>
-  apiClient.get<SystemSettings>('/settings').then((r) => r.data);
+  apiClient.get<SettingsResponse>('/settings').then((r) => r.data);
+
+export const updateSetting = (key: string, value: string) =>
+  apiClient.put('/settings', { key, value }).then((r) => r.data);
+
+export const revertSetting = (key: string) =>
+  apiClient.delete(`/settings/${encodeURIComponent(key)}`).then((r) => r.data);

@@ -74,7 +74,9 @@ impl GrpcClient {
         }
 
         let channel = endpoint.connect().await?;
-        let client = OrchestratorClient::new(channel);
+        let client = OrchestratorClient::new(channel)
+            .send_compressed(tonic::codec::CompressionEncoding::Gzip)
+            .accept_compressed(tonic::codec::CompressionEncoding::Gzip);
         Ok(Self { client, auth_token })
     }
 

@@ -11,6 +11,16 @@ use crate::state::ControllerState;
 use super::error::ApiError;
 
 /// GET /api/v1/dashboard/summary
+#[utoipa::path(
+    get,
+    path = "/api/v1/dashboard/summary",
+    tag = "Dashboard",
+    responses(
+        (status = 200, description = "Dashboard summary"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn summary(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,

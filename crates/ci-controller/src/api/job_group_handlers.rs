@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -30,17 +31,34 @@ pub struct ListParams {
 
 // ── Request bodies ───────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct TriggerRequest {
     pub repo_name: String,
     pub branch: Option<String>,
     pub commit_sha: Option<String>,
     pub stages: Option<Vec<String>>,
+    pub priority: Option<i32>,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// GET /api/v1/job-groups
+#[utoipa::path(
+    get,
+    path = "/api/v1/job-groups",
+    tag = "Builds",
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size"),
+        ("offset" = Option<i64>, Query, description = "Offset"),
+        ("state" = Option<String>, Query, description = "Filter by state"),
+        ("repo_id" = Option<uuid::Uuid>, Query, description = "Filter by repo"),
+    ),
+    responses(
+        (status = 200, description = "Paginated job group list"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn list(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
@@ -55,12 +73,27 @@ pub async fn list(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    // Build repo_id -> repo_name lookup
+    let repo_ids: Vec<Uuid> = groups
+        .iter()
+        .filter_map(|g| g.repo_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut repo_names: HashMap<Uuid, String> = HashMap::new();
+    for rid in &repo_ids {
+        if let Ok(Some(repo)) = storage.get_repo(*rid).await {
+            repo_names.insert(*rid, repo.repo_name);
+        }
+    }
+
     let list: Vec<Value> = groups
         .iter()
         .map(|g| {
             json!({
                 "id": g.id.to_string(),
-                "repo_id": g.repo_id.to_string(),
+                "repo_id": g.repo_id.map(|r| r.to_string()),
+                "repo_name": g.repo_id.and_then(|r| repo_names.get(&r).cloned()).unwrap_or_default(),
                 "branch": g.branch,
                 "commit_sha": g.commit_sha,
                 "trigger_source": g.trigger_source,
@@ -93,6 +126,76 @@ pub async fn get_one(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("Job group not found".into()))?;
 
+    // Look up repo name
+    let repo_name = if let Some(rid) = group.repo_id {
+        storage
+            .get_repo(rid)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.repo_name)
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Look up reserved stages from stage_configs for this repo
+    let reserved_stages: Vec<String> = if let Some(rid) = group.repo_id {
+        storage
+            .get_stage_configs_for_repo(rid)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|sc| sc.stage_name)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Look up allocated resources from in-memory registry
+    let alloc = {
+        let jg = state.job_group_registry.read().await;
+        jg.get(&id)
+            .map(|g| g.allocated_resources)
+            .unwrap_or_default()
+    };
+
+    // If no in-memory allocation, compute from stage_configs as fallback
+    let alloc_json = if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+        json!({
+            "cpu": alloc.cpu,
+            "memory_mb": alloc.memory_mb,
+            "disk_mb": alloc.disk_mb,
+        })
+    } else if let Some(rid) = group.repo_id {
+        let stages = storage
+            .get_stage_configs_for_repo(rid)
+            .await
+            .unwrap_or_default();
+        if stages.is_empty() {
+            json!({ "cpu": 0, "memory_mb": 0, "disk_mb": 0 })
+        } else {
+            let max_cpu = stages
+                .iter()
+                .map(|s| s.required_cpu.max(0))
+                .max()
+                .unwrap_or(0);
+            let max_mem = stages
+                .iter()
+                .map(|s| s.required_memory_mb.max(0))
+                .max()
+                .unwrap_or(0);
+            let max_disk = stages
+                .iter()
+                .map(|s| s.required_disk_mb.max(0))
+                .max()
+                .unwrap_or(0);
+            json!({ "cpu": max_cpu, "memory_mb": max_mem, "disk_mb": max_disk })
+        }
+    } else {
+        json!({ "cpu": 0, "memory_mb": 0, "disk_mb": 0 })
+    };
+
     let job_list: Vec<Value> = jobs
         .iter()
         .map(|j| {
@@ -103,6 +206,10 @@ pub async fn get_one(
                 "worker_id": j.worker_id,
                 "state": j.state,
                 "exit_code": j.exit_code,
+                "pre_exit_code": j.pre_exit_code,
+                "post_exit_code": j.post_exit_code,
+                "started_at": j.started_at.map(|t| t.to_rfc3339()),
+                "completed_at": j.completed_at.map(|t| t.to_rfc3339()),
                 "created_at": j.created_at.to_rfc3339(),
                 "updated_at": j.updated_at.to_rfc3339(),
             })
@@ -111,12 +218,15 @@ pub async fn get_one(
 
     Ok(Json(json!({
         "id": group.id.to_string(),
-        "repo_id": group.repo_id.to_string(),
+        "repo_id": group.repo_id.map(|r| r.to_string()),
+        "repo_name": repo_name,
         "branch": group.branch,
         "commit_sha": group.commit_sha,
         "trigger_source": group.trigger_source,
         "reserved_worker_id": group.reserved_worker_id,
         "state": group.state.to_string(),
+        "reserved_stages": reserved_stages,
+        "allocated_resources": alloc_json,
         "created_at": group.created_at.to_rfc3339(),
         "updated_at": group.updated_at.to_rfc3339(),
         "completed_at": group.completed_at.map(|t| t.to_rfc3339()),
@@ -134,8 +244,8 @@ pub async fn cancel(
         return Err(ApiError::Forbidden("Insufficient permissions".into()));
     }
 
-    // Update in-memory registry
-    {
+    // Update in-memory registry, extract worker/resources for release
+    let release_info = {
         let mut jg = state.job_group_registry.write().await;
         if let Some(group) = jg.get(&id) {
             if group.state.is_terminal() {
@@ -144,15 +254,32 @@ pub async fn cancel(
                 ));
             }
         }
+        let info = jg
+            .get(&id)
+            .map(|g| (g.reserved_worker_id.clone(), g.allocated_resources));
         jg.update_state(&id, JobGroupState::Cancelled);
         jg.fail_group_jobs(&id, "Cancelled via API");
+        info
+    };
+
+    // Release allocated resources on the worker
+    if let Some((Some(wid), alloc)) = &release_info {
+        if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+            let mut wr = state.worker_registry.write().await;
+            if let Some(w) = wr.get_mut(wid) {
+                w.release(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+            }
+        }
     }
 
     // Update in DB
     if let Some(storage) = &state.storage {
-        let _ = storage
+        if let Err(e) = storage
             .update_job_group_state(id, JobGroupState::Cancelled)
-            .await;
+            .await
+        {
+            warn!("Failed to persist cancel state for group {id}: {e}");
+        }
     }
 
     if let Some(storage) = &state.storage {
@@ -171,6 +298,19 @@ pub async fn cancel(
 }
 
 /// POST /api/v1/job-groups  — trigger a new build from REST
+#[utoipa::path(
+    post,
+    path = "/api/v1/job-groups",
+    tag = "Builds",
+    request_body = TriggerRequest,
+    responses(
+        (status = 200, description = "Build triggered"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Insufficient permissions"),
+        (status = 409, description = "Conflict"),
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn trigger(
     State(state): State<Arc<ControllerState>>,
     auth_user: AuthUser,
@@ -186,6 +326,7 @@ pub async fn trigger(
         branch: body.branch.unwrap_or_default(),
         commit_sha: body.commit_sha.unwrap_or_default(),
         stages: body.stages.unwrap_or_default(),
+        priority: body.priority.unwrap_or(0),
     };
 
     let resp = do_reserve_worker(&state, &req)
@@ -236,8 +377,11 @@ pub async fn retry(
     }
 
     // Look up repo name from repo_id
+    let rid = original
+        .repo_id
+        .ok_or_else(|| ApiError::BadRequest("Cannot retry ad-hoc builds without a repo".into()))?;
     let repo = storage
-        .get_repo(original.repo_id)
+        .get_repo(rid)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("Repo no longer exists".into()))?;
@@ -251,6 +395,7 @@ pub async fn retry(
         branch: original.branch.unwrap_or_default(),
         commit_sha: original.commit_sha.unwrap_or_default(),
         stages,
+        priority: 0,
     };
 
     let resp = do_reserve_worker(&state, &req)

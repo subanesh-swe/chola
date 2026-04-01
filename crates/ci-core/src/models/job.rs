@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
 /// Job state machine states
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
     Queued,
@@ -35,6 +36,7 @@ impl std::fmt::Display for JobState {
 }
 
 impl JobState {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "queued" => Self::Queued,
@@ -49,7 +51,7 @@ impl JobState {
 }
 
 /// Job type classification
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum JobType {
     Common,
@@ -70,7 +72,7 @@ impl std::fmt::Display for JobType {
 }
 
 /// Full job definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Job {
     pub job_id: String,
     pub command: String,
@@ -114,6 +116,10 @@ pub struct Job {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     /// When the job completed
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Scheduling priority inherited from the job group (higher = more urgent)
+    pub priority: i32,
+    /// Worker labels required to run this job
+    pub required_labels: Vec<String>,
 }
 
 impl Job {
@@ -156,6 +162,8 @@ impl Job {
             log_path: None,
             started_at: None,
             completed_at: None,
+            priority: 0,
+            required_labels: Vec::new(),
         }
     }
 }

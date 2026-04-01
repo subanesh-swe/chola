@@ -12,6 +12,7 @@
         just
         nixd # Nix language server
         bacon
+        cargo-watch
       ];
     };
   };

@@ -33,8 +33,14 @@ rand = { workspace = true }
 argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 tower-http = { workspace = true }
+axum-server = { workspace = true }
 axum-extra = { workspace = true }
 reqwest = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+aes-gcm = { workspace = true }
+regex = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+mime_guess = { workspace = true }

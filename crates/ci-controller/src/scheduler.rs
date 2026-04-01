@@ -53,7 +53,13 @@ impl Scheduler for BestFitScheduler {
                     .supported_job_types
                     .contains(&job.job_type.to_string());
 
-                mem_ok && disk_ok && cpu_ok && type_ok
+                // Check required labels: worker must have all labels the job requires
+                let labels_ok = job
+                    .required_labels
+                    .iter()
+                    .all(|lbl| w.info.labels.contains(lbl));
+
+                mem_ok && disk_ok && cpu_ok && type_ok && labels_ok
             })
             .collect();
 

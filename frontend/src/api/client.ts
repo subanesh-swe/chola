@@ -31,7 +31,17 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401) {
       useAuthStore.getState().logout();
       window.location.href = '/login';
+      return Promise.reject(error);
     }
+    const message = error.response?.data?.error
+      || error.response?.statusText
+      || error.message
+      || 'An unexpected error occurred';
+    const status = error.response?.status;
+    error.userMessage = status >= 500
+      ? 'Server error. Please try again later.'
+      : message;
+    error.statusCode = status;
     return Promise.reject(error);
   },
 );

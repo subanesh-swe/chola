@@ -32,7 +32,9 @@ pub fn topo_sort(deps: &HashMap<String, Vec<String>>) -> Result<Vec<String>, Str
         sorted.push(node.to_string());
         if let Some(kids) = children.get(node) {
             for &kid in kids {
-                let d = in_degree.get_mut(kid).unwrap();
+                let d = in_degree.get_mut(kid).ok_or_else(|| {
+                    format!("Stage '{}' referenced in depends_on but not defined", kid)
+                })?;
                 *d -= 1;
                 if *d == 0 {
                     queue.push_back(kid);

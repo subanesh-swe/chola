@@ -1,0 +1,1 @@
+ALTER TABLE job_groups ADD COLUMN IF NOT EXISTS pr_number INT;

@@ -7,13 +7,14 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use ci_core::models::user::UserRole;
 
 use super::jwt;
 
-/// Extracted from JWT token on every protected request.
+/// Extracted from JWT token or API key on every protected request.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user_id: Uuid,
@@ -22,12 +23,11 @@ pub struct AuthUser {
 }
 
 /// State needed by the auth extractor.
-/// This will be part of the app state.
 #[derive(Clone)]
 pub struct AuthConfig {
     pub enabled: bool,
     pub jwt_secret: String,
-    /// Storage reference for session revocation checks. Set after construction.
+    /// Storage reference for session revocation + API key lookups.
     pub storage: Option<Arc<crate::storage::Storage>>,
 }
 
@@ -53,6 +53,12 @@ impl IntoResponse for AuthError {
     }
 }
 
+fn sha256_hex(data: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(data.as_bytes());
+    hex::encode(h.finalize())
+}
+
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync + AsRef<AuthConfig>,
@@ -62,7 +68,6 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth_config = state.as_ref();
 
-        // If auth is disabled, return a synthetic super admin
         if !auth_config.enabled {
             return Ok(AuthUser {
                 user_id: Uuid::nil(),
@@ -71,29 +76,47 @@ where
             });
         }
 
-        // Extract the Authorization header
+        // --- API key: X-API-Key header ---
+        if let Some(raw_key) = parts.headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
+            return resolve_api_key(raw_key, auth_config).await;
+        }
+
+        // --- Query param token (for SSE/EventSource which can't set headers) ---
+        let query_token = parts
+            .uri
+            .query()
+            .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("token=")))
+            .map(|t| t.to_string());
+
         let auth_header = parts
             .headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .or_else(|| query_token.as_ref().map(|t| format!("Bearer {t}")))
             .ok_or(AuthError {
                 status: StatusCode::UNAUTHORIZED,
                 message: "Missing Authorization header".to_string(),
             })?;
+        let auth_header = auth_header.as_str();
 
-        // Must be Bearer token
+        // --- API key: Authorization: Bearer chola_* ---
+        if let Some(raw_key) = auth_header.strip_prefix("Bearer chola_") {
+            let full = format!("chola_{raw_key}");
+            return resolve_api_key(&full, auth_config).await;
+        }
+
+        // --- JWT ---
         let token = auth_header.strip_prefix("Bearer ").ok_or(AuthError {
             status: StatusCode::UNAUTHORIZED,
             message: "Invalid Authorization header format".to_string(),
         })?;
 
-        // Decode the JWT (also validates expiry via jsonwebtoken)
         let claims = jwt::decode_token(&auth_config.jwt_secret, token).map_err(|e| AuthError {
             status: StatusCode::UNAUTHORIZED,
-            message: format!("Invalid token: {}", e),
+            message: format!("Invalid token: {e}"),
         })?;
 
-        // Check session revocation in storage
         if let Some(storage) = &auth_config.storage {
             let valid = storage.is_session_valid(&claims.jti).await.unwrap_or(false);
             if !valid {
@@ -104,7 +127,6 @@ where
             }
         }
 
-        // Parse user ID
         let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError {
             status: StatusCode::UNAUTHORIZED,
             message: "Invalid user ID in token".to_string(),
@@ -116,4 +138,49 @@ where
             role: UserRole::from_db_str(&claims.role),
         })
     }
+}
+
+async fn resolve_api_key(raw_key: &str, cfg: &AuthConfig) -> Result<AuthUser, AuthError> {
+    let storage = cfg.storage.as_ref().ok_or(AuthError {
+        status: StatusCode::UNAUTHORIZED,
+        message: "Storage unavailable".to_string(),
+    })?;
+
+    let hash = sha256_hex(raw_key);
+    let api_key = storage
+        .get_api_key_by_hash(&hash)
+        .await
+        .map_err(|_| AuthError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "Key lookup failed".to_string(),
+        })?
+        .ok_or(AuthError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "Invalid API key".to_string(),
+        })?;
+
+    let user = storage
+        .get_user(api_key.user_id)
+        .await
+        .map_err(|_| AuthError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "User lookup failed".to_string(),
+        })?
+        .ok_or(AuthError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "API key owner not found".to_string(),
+        })?;
+
+    if !user.active {
+        return Err(AuthError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "Account is disabled".to_string(),
+        });
+    }
+
+    Ok(AuthUser {
+        user_id: user.id,
+        username: user.username,
+        role: user.role,
+    })
 }

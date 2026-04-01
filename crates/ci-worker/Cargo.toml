@@ -27,3 +27,5 @@ axum = { workspace = true }
 tokio-util = { workspace = true }
 rand = { workspace = true }
 libc = "0.2"
+sysinfo = { workspace = true }
+reqwest = { workspace = true }

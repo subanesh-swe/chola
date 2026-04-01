@@ -60,8 +60,7 @@ async fn health_live() -> Json<Value> {
 }
 
 async fn health_ready() -> Json<Value> {
-    // TODO: check controller gRPC connection
-    Json(json!({"status": "ok"}))
+    Json(json!({"status": "ok", "message": "worker ready"}))
 }
 
 async fn metrics(State(worker_metrics): State<WorkerMetrics>) -> String {

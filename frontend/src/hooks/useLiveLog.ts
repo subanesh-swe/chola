@@ -14,11 +14,20 @@ export function useLiveLog(jobId: string | null, enabled: boolean) {
     const source = new EventSource(url);
     sourceRef.current = source;
 
-    source.addEventListener('log', (event) => {
-      const data = JSON.parse(event.data);
-      setChunks((prev) => [...prev, atob(data.data)]);
-    });
+    // Default message events (no event: prefix from server)
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.data) {
+          setChunks((prev) => [...prev, data.data]);
+        }
+      } catch {
+        // Raw text fallback
+        setChunks((prev) => [...prev, event.data]);
+      }
+    };
 
+    // Named 'complete' event from server
     source.addEventListener('complete', () => {
       setIsComplete(true);
       source.close();

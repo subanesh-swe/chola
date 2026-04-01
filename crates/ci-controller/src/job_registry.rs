@@ -175,6 +175,15 @@ impl JobRegistry {
         cancelled
     }
 
+    /// Evict terminal jobs older than `max_age`. Returns count evicted.
+    pub fn evict_terminal(&mut self, max_age: std::time::Duration) -> usize {
+        let cutoff = chrono::Utc::now() - chrono::Duration::from_std(max_age).unwrap_or_default();
+        let before = self.jobs.len();
+        self.jobs
+            .retain(|_, job| !job.state.is_terminal() || job.updated_at > cutoff);
+        before - self.jobs.len()
+    }
+
     /// Get jobs that should be orphaned (submitter disconnected and timeout passed)
     pub fn get_orphaned_jobs(&self, connection_id: &str) -> Vec<&Job> {
         self.jobs

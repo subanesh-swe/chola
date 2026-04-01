@@ -9,6 +9,8 @@ pub struct ControllerConfig {
     pub bind_address: String,
     #[serde(default)]
     pub tls: Option<TlsServerConfig>,
+    #[serde(default)]
+    pub http_tls: Option<TlsServerConfig>,
     pub storage: StorageConfig,
     pub redis: RedisConfig,
     pub scheduling: SchedulingConfig,
@@ -21,10 +23,29 @@ pub struct ControllerConfig {
     pub auth: AuthConfig,
     #[serde(default = "default_controller_http_port")]
     pub http_port: u16,
+    #[serde(default)]
+    pub retention: Option<RetentionConfig>,
 }
 
 fn default_controller_http_port() -> u16 {
     8080
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    pub max_age_days: u32,
+    pub max_builds_per_repo: u32,
+    pub cleanup_interval_secs: u64,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            max_age_days: 90,
+            max_builds_per_repo: 500,
+            cleanup_interval_secs: 3600,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +62,9 @@ pub struct AuthConfig {
     pub default_admin_username: Option<String>,
     #[serde(default)]
     pub default_admin_password: Option<String>,
+    /// AES-256-GCM key for encrypting secret pipeline variables. If unset, plaintext stored.
+    #[serde(default)]
+    pub encryption_key: Option<String>,
 }
 
 fn default_jwt_secret() -> String {
@@ -60,6 +84,7 @@ impl Default for AuthConfig {
             jwt_expiry_secs: default_jwt_expiry(),
             default_admin_username: None,
             default_admin_password: None,
+            encryption_key: None,
         }
     }
 }
@@ -282,6 +307,9 @@ pub struct WorkerConfig {
     pub auth_token: Option<String>,
     #[serde(default = "default_worker_http_port")]
     pub http_port: u16,
+    /// Disk mount points to track. If empty, auto-detect and dedup by device.
+    #[serde(default)]
+    pub tracked_disk_paths: Vec<String>,
 }
 
 fn default_worker_http_port() -> u16 {
@@ -293,6 +321,10 @@ pub struct ControllerConnectionConfig {
     pub address: String,
     #[serde(default)]
     pub tls: Option<TlsClientConfig>,
+    /// HTTP REST URL of the controller (e.g. "http://localhost:8080").
+    /// If omitted, derived from gRPC address by replacing port with 8080.
+    #[serde(default)]
+    pub http_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,6 +355,8 @@ pub struct CapabilitiesConfig {
     pub supported_job_types: Vec<String>,
     #[serde(default)]
     pub docker_enabled: bool,
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,6 +457,7 @@ impl Default for LoggingConfig {
 // ============================================================================
 
 impl ControllerConfig {
+    #[allow(clippy::result_large_err)]
     pub fn from_file(path: &str) -> crate::errors::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_yaml::from_str(&content)?;
@@ -431,6 +466,7 @@ impl ControllerConfig {
 }
 
 impl WorkerConfig {
+    #[allow(clippy::result_large_err)]
     pub fn from_file(path: &str) -> crate::errors::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_yaml::from_str(&content)?;

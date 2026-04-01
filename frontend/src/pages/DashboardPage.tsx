@@ -92,23 +92,24 @@ function SystemStatusPanel({
 
 export default function DashboardPage() {
   const nav = useNavigate();
-  const { data: summary, isLoading: sumLoading } = useQuery({
+  const { data: summary, isLoading: sumLoading, isError: sumError } = useQuery({
     queryKey: ['dashboard'],
     queryFn: getDashboardSummary,
     refetchInterval: 5000,
   });
-  const { data: builds, isLoading: buildsLoading } = useQuery({
+  const { data: builds, isLoading: buildsLoading, isError: buildsError } = useQuery({
     queryKey: ['builds', 'recent'],
     queryFn: () => listBuilds({ limit: 10 }),
     refetchInterval: 5000,
   });
-  const { data: workersData, isLoading: workersLoading } = useQuery({
+  const { data: workersData, isLoading: workersLoading, isError: workersError } = useQuery({
     queryKey: ['workers'],
     queryFn: () => listWorkers(),
     refetchInterval: 5000,
   });
 
-  const isLoading = sumLoading && buildsLoading && workersLoading;
+  const isLoading = sumLoading || buildsLoading || workersLoading;
+  const isError = sumError || buildsError || workersError;
 
   const wc = workersData?.data ?? [];
   const connected = summary?.workers.connected ?? wc.filter((w) => w.status === 'Connected').length;
@@ -126,6 +127,15 @@ export default function DashboardPage() {
   const failedTrend = useTrendWindow(failed, 'failed');
 
   if (isLoading) return <DashboardSkeleton />;
+  if (isError) return (
+    <div className="p-6">
+      <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <h3 className="font-semibold">Failed to load dashboard</h3>
+        <p className="text-sm mt-1">An error occurred. Please try again.</p>
+        <button onClick={() => window.location.reload()} className="mt-3 px-3 py-1 bg-red-800 hover:bg-red-700 rounded text-sm text-white">Retry</button>
+      </div>
+    </div>
+  );
 
   const recentBuilds = builds?.data ?? summary?.recent_builds ?? [];
 

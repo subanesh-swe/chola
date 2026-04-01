@@ -24,7 +24,13 @@ impl IntoResponse for ApiError {
             Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            Self::Internal(msg) => {
+                tracing::error!("Internal server error: {msg}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Server error. Please try again later.".to_string(),
+                )
+            }
             Self::StorageUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Database unavailable".to_string(),
@@ -37,5 +43,12 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
         Self::Internal(err.to_string())
+    }
+}
+
+/// Convert axum PathRejection to JSON ApiError (prevents plain-text UUID parse errors)
+impl From<axum::extract::rejection::PathRejection> for ApiError {
+    fn from(err: axum::extract::rejection::PathRejection) -> Self {
+        Self::BadRequest(format!("Invalid path parameter: {}", err))
     }
 }

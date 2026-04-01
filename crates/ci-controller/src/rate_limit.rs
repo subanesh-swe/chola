@@ -24,7 +24,7 @@ impl RateLimiter {
 
     /// Returns true if the request is within the rate limit.
     pub fn check(&self, ip: IpAddr) -> bool {
-        let mut map = self.state.lock().unwrap();
+        let mut map = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let entry = map.entry(ip).or_insert((0, now));
         if now.duration_since(entry.1) >= self.window {

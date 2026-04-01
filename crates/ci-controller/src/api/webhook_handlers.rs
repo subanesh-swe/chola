@@ -39,10 +39,11 @@ fn verify_github_signature(secret: &str, body: &[u8], signature: &str) -> bool {
 
 // ── Payload parsing ─────────────────────────────────────────────────────────
 
-/// Extracted fields from a webhook push event.
+/// Extracted fields from a webhook push/PR event.
 struct PushPayload {
     branch: String,
     commit_sha: String,
+    pr_number: Option<i32>,
 }
 
 fn parse_github_push(body: &Value) -> Option<PushPayload> {
@@ -56,6 +57,7 @@ fn parse_github_push(body: &Value) -> Option<PushPayload> {
     Some(PushPayload {
         branch: branch.to_string(),
         commit_sha: after.to_string(),
+        pr_number: None,
     })
 }
 
@@ -69,6 +71,33 @@ fn parse_gitlab_push(body: &Value) -> Option<PushPayload> {
     Some(PushPayload {
         branch: branch.to_string(),
         commit_sha: after.to_string(),
+        pr_number: None,
+    })
+}
+
+/// Parse a GitHub pull_request event (opened/synchronize/closed+merged).
+fn parse_github_pr(body: &Value) -> Option<PushPayload> {
+    let action = body.get("action")?.as_str()?;
+    let pr = body.get("pull_request")?;
+
+    // closed action only triggers on merged PRs
+    if action == "closed" && pr.get("merged").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    if !matches!(action, "opened" | "synchronize" | "closed") {
+        return None;
+    }
+
+    let head = pr.get("head")?;
+    let pr_number = body
+        .get("number")
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32);
+
+    Some(PushPayload {
+        branch: head.get("ref")?.as_str()?.to_string(),
+        commit_sha: head.get("sha")?.as_str()?.to_string(),
+        pr_number,
     })
 }
 
@@ -80,6 +109,7 @@ async fn trigger_build(
     branch: &str,
     commit_sha: &str,
     trigger_source: &str,
+    pr_number: Option<i32>,
 ) -> Result<Value, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
 
@@ -114,6 +144,7 @@ async fn trigger_build(
         Some(commit_sha.to_string()),
     );
     group.trigger_source = trigger_source.to_string();
+    group.pr_number = pr_number;
 
     // Try to reserve a worker
     let worker_id = pick_worker(state).await?;
@@ -136,7 +167,9 @@ async fn trigger_build(
                 "Could not acquire worker reservation".into(),
             ));
         }
-        let _ = redis.remove_available_worker(&worker_id).await;
+        if let Err(e) = redis.remove_available_worker(&worker_id).await {
+            tracing::warn!("Failed to remove available worker {}: {}", worker_id, e);
+        }
     }
 
     // Persist
@@ -188,7 +221,7 @@ async fn submit_stages(
         let job_id = format!("{}-{}", group_id, stage.stage_name);
         let mut job = Job::new(
             job_id.clone(),
-            stage.command.clone(),
+            stage.command.clone().unwrap_or_default(),
             JobType::Common,
             stage.required_cpu as u32,
             stage.required_memory_mb as u64,
@@ -224,9 +257,9 @@ async fn submit_stages(
             let db_job = crate::storage::DbJob {
                 id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, job_id.as_bytes()),
                 job_group_id: group_id,
-                stage_config_id: stage.id,
+                stage_config_id: Some(stage.id),
                 stage_name: stage.stage_name.clone(),
-                command: stage.command.clone(),
+                command: stage.command.clone().unwrap_or_default(),
                 pre_script: None,
                 post_script: None,
                 worker_id: Some(worker_id.to_string()),
@@ -237,6 +270,7 @@ async fn submit_stages(
                 log_path: None,
                 started_at: None,
                 completed_at: None,
+                retry_count: 0,
                 created_at: now,
                 updated_at: now,
             };
@@ -303,22 +337,7 @@ pub async fn receive(
     let payload: Value =
         serde_json::from_slice(&body).map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    let push = match provider.as_str() {
-        "github" => parse_github_push(&payload),
-        "gitlab" => parse_gitlab_push(&payload),
-        _ => None,
-    };
-
-    let push = match push {
-        Some(p) => p,
-        None => {
-            return Ok(Json(
-                json!({"message": "Event ignored (not a push or branch deleted)"}),
-            ))
-        }
-    };
-
-    // Check that the event type is in the webhook's events list
+    // Detect event type first to dispatch correctly and check against webhook config
     let event_type = match provider.as_str() {
         "github" => headers
             .get("x-github-event")
@@ -337,22 +356,82 @@ pub async fn receive(
         })));
     }
 
+    let push = match (provider.as_str(), event_type) {
+        ("github", "pull_request") => parse_github_pr(&payload),
+        ("github", _) => parse_github_push(&payload),
+        ("gitlab", _) => parse_gitlab_push(&payload),
+        _ => None,
+    };
+
+    let push = match push {
+        Some(p) => p,
+        None => {
+            return Ok(Json(
+                json!({"message": "Event ignored (not a push/PR or branch deleted)"}),
+            ))
+        }
+    };
+
     info!(
-        "Webhook trigger: provider={} repo_id={} branch={} commit={}",
-        provider, webhook.repo_id, push.branch, push.commit_sha
+        "Webhook trigger: provider={} event={} repo_id={} branch={} commit={}",
+        provider, event_type, webhook.repo_id, push.branch, push.commit_sha
     );
 
-    let trigger_source = format!("webhook:{}", provider);
+    let trigger_source = if event_type == "pull_request" {
+        "webhook:pr".to_string()
+    } else {
+        format!("webhook:{}", provider)
+    };
+
+    let start = std::time::Instant::now();
     let result = trigger_build(
         &state,
         webhook.repo_id,
         &push.branch,
         &push.commit_sha,
         &trigger_source,
+        push.pr_number,
     )
-    .await?;
+    .await;
 
-    Ok(Json(result))
+    let elapsed_ms = start.elapsed().as_millis() as i32;
+    let (status_code, err_msg): (Option<i32>, Option<String>) = match &result {
+        Ok(_) => (Some(200), None),
+        Err(_) => (Some(500), Some("Build trigger failed".to_string())),
+    };
+    {
+        let s = storage.clone();
+        let wid = webhook.id;
+        let ev = event_type.to_string();
+        let em = err_msg.clone();
+        tokio::spawn(async move {
+            if let Err(e) = s
+                .record_webhook_delivery(wid, &ev, status_code, Some(elapsed_ms), em.as_deref())
+                .await
+            {
+                tracing::warn!("Failed to record webhook delivery: {}", e);
+            }
+        });
+    }
+
+    Ok(Json(result?))
+}
+
+/// GET /api/v1/repos/{repo_id}/webhooks/{webhook_id}/deliveries
+pub async fn list_deliveries(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path((_repo_id, webhook_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_repos() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+    let deliveries = storage
+        .list_webhook_deliveries(webhook_id, 50)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({ "deliveries": deliveries })))
 }
 
 // ── Webhook CRUD (protected, admin) ─────────────────────────────────────────

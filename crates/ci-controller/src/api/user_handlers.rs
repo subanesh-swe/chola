@@ -46,9 +46,14 @@ pub struct UpdateUserRequest {
     pub password: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ResetPasswordRequest {
+    pub new_password: String,
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn validate_password(password: &str) -> Result<(), ApiError> {
+pub fn validate_password(password: &str) -> Result<(), ApiError> {
     if password.len() < 8 {
         return Err(ApiError::BadRequest(
             "Password must be at least 8 characters".to_string(),
@@ -199,6 +204,31 @@ pub async fn update(
         .ok_or_else(|| ApiError::NotFound("User not found".into()))?;
 
     Ok(Json(user_to_json(&user)))
+}
+
+/// PUT /api/v1/users/:id/password  (super_admin only)
+pub async fn reset_password(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ResetPasswordRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_users() {
+        return Err(ApiError::Forbidden("Super admin only".into()));
+    }
+    validate_password(&body.new_password)?;
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+    let hash = password::hash_password(&body.new_password)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let updated = storage
+        .update_user_password(id, &hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if updated {
+        Ok(Json(json!({"message": "Password reset"})))
+    } else {
+        Err(ApiError::NotFound("User not found".into()))
+    }
 }
 
 /// DELETE /api/v1/users/:id

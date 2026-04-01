@@ -17,6 +17,7 @@ pub async fn execute(
         branch: branch.unwrap_or_default(),
         commit_sha: commit.unwrap_or_default(),
         stages,
+        priority: 0,
     });
 
     let response = client.reserve_worker(request).await?;

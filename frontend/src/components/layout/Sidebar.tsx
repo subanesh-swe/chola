@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth';
 import { clsx } from 'clsx';
 
@@ -17,10 +17,24 @@ function BuildIcon() {
     </svg>
   );
 }
+function RunsIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  );
+}
 function WorkerIcon() {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+    </svg>
+  );
+}
+function QueueIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 10h16M4 14h10M4 18h6" />
     </svg>
   );
 }
@@ -52,13 +66,42 @@ type NavItemDef = { to: string; label: string; Icon: () => React.ReactElement };
 const navItems: NavItemDef[] = [
   { to: '/', label: 'Dashboard', Icon: DashIcon },
   { to: '/builds', label: 'Builds', Icon: BuildIcon },
+  { to: '/runs', label: 'Runs', Icon: RunsIcon },
+  { to: '/queue', label: 'Queue', Icon: QueueIcon },
   { to: '/workers', label: 'Workers', Icon: WorkerIcon },
   { to: '/repos', label: 'Repos', Icon: RepoIcon },
+  { to: '/analytics', label: 'Analytics', Icon: AnalyticsIcon },
 ];
+
+function AnalyticsIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  );
+}
+
+function AuditIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+    </svg>
+  );
+}
+
+function BlacklistIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+    </svg>
+  );
+}
 
 const adminItems: NavItemDef[] = [
   { to: '/users', label: 'Users', Icon: UserIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
+  { to: '/audit-log', label: 'Audit Log', Icon: AuditIcon },
+  { to: '/blacklist', label: 'Blacklist', Icon: BlacklistIcon },
 ];
 
 function NavItem({ to, label, Icon, collapsed, end, onClick }: NavItemDef & { collapsed: boolean; end?: boolean; onClick?: () => void }) {
@@ -103,6 +146,7 @@ export function Sidebar() {
   const showAdmin = user?.role === 'super_admin';
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const nav = useNavigate();
 
   // Auto-collapse on small screens
   useEffect(() => {
@@ -210,7 +254,11 @@ export function Sidebar() {
 
         {(!collapsed || mobileOpen) && (
           <div className="p-3 border-t border-slate-800">
-            <div className="flex items-center gap-2 px-2">
+            <button
+              onClick={() => { nav('/profile'); setMobileOpen(false); }}
+              className="flex items-center gap-2 px-2 w-full text-left rounded-lg hover:bg-slate-800 py-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Go to profile"
+            >
               <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold text-white shrink-0" aria-hidden="true">
                 {(user?.username?.[0] ?? 'U').toUpperCase()}
               </div>
@@ -218,7 +266,7 @@ export function Sidebar() {
                 <p className="text-xs text-slate-300 truncate">{user?.display_name || user?.username}</p>
                 <p className="text-[10px] text-slate-600">{user?.role}</p>
               </div>
-            </div>
+            </button>
           </div>
         )}
       </aside>

@@ -4,6 +4,7 @@ use sqlx::{Acquire, Executor, PgPool, Row};
 use tracing::info;
 use uuid::Uuid;
 
+use ci_core::models::api_key::ApiKey;
 use ci_core::models::job_group::{JobGroup, JobGroupState};
 use ci_core::models::schedule::CronSchedule;
 use ci_core::models::stage::{Repo, StageConfig, StageScript, WorkerReservation};
@@ -14,13 +15,16 @@ use ci_core::models::variable::PipelineVariable;
 // Column list constants (prevent drift between SELECT / INSERT / RETURNING)
 // ============================================================================
 
-const REPO_COLUMNS: &str =
-    "id, repo_name, repo_url, default_branch, enabled, created_at, updated_at";
+const REPO_COLUMNS: &str = "id, repo_name, repo_url, default_branch, enabled, \
+     COALESCE(max_concurrent_builds, 0) AS max_concurrent_builds, \
+     COALESCE(cancel_superseded, false) AS cancel_superseded, \
+     created_at, updated_at";
 
 const STAGE_CONFIG_COLUMNS: &str =
     "id, repo_id, stage_name, command, required_cpu, required_memory_mb, \
      required_disk_mb, max_duration_secs, execution_order, parallel_group, \
-     allow_worker_migration, job_type, created_at, updated_at";
+     allow_worker_migration, job_type, depends_on, required_labels, max_retries, \
+     command_mode, created_at, updated_at";
 
 const STAGE_SCRIPT_COLUMNS: &str =
     "id, stage_config_id, worker_id, script_type, script_scope, script, \
@@ -28,21 +32,24 @@ const STAGE_SCRIPT_COLUMNS: &str =
 
 const JOB_GROUP_COLUMNS: &str =
     "id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
-     state, created_at, updated_at, completed_at";
+     state, priority, pr_number, created_at, updated_at, completed_at";
 
 const JOB_COLUMNS: &str = "id, job_group_id, stage_config_id, stage_name, command, pre_script, \
      post_script, worker_id, state, exit_code, pre_exit_code, post_exit_code, \
-     log_path, started_at, completed_at, created_at, updated_at";
+     log_path, started_at, completed_at, retry_count, created_at, updated_at";
 
 const WORKER_COLUMNS: &str =
     "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
-     supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at";
+     supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at, labels, \
+     system_info";
 
 const RESERVATION_COLUMNS: &str =
     "id, worker_id, job_group_id, reserved_at, expires_at, released_at, release_reason";
 
 const USER_COLUMNS: &str =
     "id, username, password_hash, display_name, role, active, created_at, updated_at";
+
+const API_KEY_COLUMNS: &str = "id, user_id, name, created_at, last_used_at, revoked";
 
 // ============================================================================
 // Row mapping helpers
@@ -55,6 +62,8 @@ fn map_repo(r: sqlx::postgres::PgRow) -> Repo {
         repo_url: r.get("repo_url"),
         default_branch: r.get("default_branch"),
         enabled: r.get("enabled"),
+        max_concurrent_builds: r.get("max_concurrent_builds"),
+        cancel_superseded: r.get("cancel_superseded"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -75,6 +84,11 @@ fn map_stage_config(r: sqlx::postgres::PgRow) -> StageConfig {
         allow_worker_migration: r.get("allow_worker_migration"),
         job_type: r.get("job_type"),
         depends_on: r.get("depends_on"),
+        required_labels: r.get("required_labels"),
+        max_retries: r.get("max_retries"),
+        command_mode: r
+            .try_get("command_mode")
+            .unwrap_or_else(|_| "fixed".to_string()),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -115,6 +129,9 @@ fn map_job_group(r: sqlx::postgres::PgRow) -> JobGroup {
         trigger_source: r.get("trigger_source"),
         reserved_worker_id: r.get("reserved_worker_id"),
         state: JobGroupState::from_str(&state_str),
+        priority: r.get("priority"),
+        pr_number: r.try_get("pr_number").ok().flatten(),
+        allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
         completed_at: r.get("completed_at"),
@@ -131,6 +148,17 @@ fn map_user(r: &sqlx::postgres::PgRow) -> User {
         active: r.get("active"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
+    }
+}
+
+fn map_api_key(r: &sqlx::postgres::PgRow) -> ApiKey {
+    ApiKey {
+        id: r.get("id"),
+        user_id: r.get("user_id"),
+        name: r.get("name"),
+        created_at: r.get("created_at"),
+        last_used_at: r.get("last_used_at"),
+        revoked: r.get("revoked"),
     }
 }
 
@@ -152,6 +180,7 @@ impl From<sqlx::postgres::PgRow> for DbJob {
             log_path: r.get("log_path"),
             started_at: r.get("started_at"),
             completed_at: r.get("completed_at"),
+            retry_count: r.get("retry_count"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         }
@@ -172,6 +201,8 @@ impl From<sqlx::postgres::PgRow> for WorkerRow {
             status: r.get("status"),
             last_heartbeat_at: r.get("last_heartbeat_at"),
             registered_at: r.get("registered_at"),
+            labels: r.get("labels"),
+            system_info: r.get("system_info"),
         }
     }
 }
@@ -184,6 +215,41 @@ impl From<sqlx::postgres::PgRow> for WorkerRow {
 pub struct Storage {
     pool: PgPool,
     schema: String,
+    encryption_key: Option<String>,
+}
+
+// ── Encryption helpers ────────────────────────────────────────────────────────
+
+/// AES-256-GCM encrypt `plaintext`. Returns `hex(nonce || ciphertext)`.
+fn encrypt_value(key: &str, plaintext: &str) -> anyhow::Result<String> {
+    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+    use rand::RngCore;
+    use sha2::Digest;
+    let key_bytes: [u8; 32] = sha2::Sha256::digest(key.as_bytes()).into();
+    let cipher = Aes256Gcm::new(&key_bytes.into());
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let ct = cipher
+        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_bytes())
+        .map_err(|e| anyhow::anyhow!("encrypt: {e}"))?;
+    let mut combined = nonce_bytes.to_vec();
+    combined.extend_from_slice(&ct);
+    Ok(hex::encode(combined))
+}
+
+/// Decrypt a value produced by `encrypt_value`.
+fn decrypt_value(key: &str, encoded: &str) -> anyhow::Result<String> {
+    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+    use sha2::Digest;
+    let combined = hex::decode(encoded).map_err(|e| anyhow::anyhow!("hex: {e}"))?;
+    anyhow::ensure!(combined.len() > 12, "ciphertext too short");
+    let (nonce_bytes, ct) = combined.split_at(12);
+    let key_bytes: [u8; 32] = sha2::Sha256::digest(key.as_bytes()).into();
+    let cipher = Aes256Gcm::new(&key_bytes.into());
+    let plain = cipher
+        .decrypt(Nonce::from_slice(nonce_bytes), ct)
+        .map_err(|e| anyhow::anyhow!("decrypt: {e}"))?;
+    Ok(String::from_utf8(plain)?)
 }
 
 /// Worker row from the workers table
@@ -200,6 +266,8 @@ pub struct WorkerRow {
     pub status: String,
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     pub registered_at: DateTime<Utc>,
+    pub labels: Option<Vec<String>>,
+    pub system_info: Option<serde_json::Value>,
 }
 
 /// Job row from the jobs table (database-level job, not the in-memory Job struct)
@@ -207,7 +275,7 @@ pub struct WorkerRow {
 pub struct DbJob {
     pub id: Uuid,
     pub job_group_id: Uuid,
-    pub stage_config_id: Uuid,
+    pub stage_config_id: Option<Uuid>,
     pub stage_name: String,
     pub command: String,
     pub pre_script: Option<String>,
@@ -220,8 +288,54 @@ pub struct DbJob {
     pub log_path: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub retry_count: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// A job row joined with its group + repo info for the /runs endpoint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunRow {
+    pub id: Uuid,
+    pub job_group_id: Uuid,
+    pub stage_name: String,
+    pub command: String,
+    pub worker_id: Option<String>,
+    pub state: String,
+    pub exit_code: Option<i32>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    // Joined fields
+    pub branch: Option<String>,
+    pub repo_name: Option<String>,
+    pub group_state: String,
+    pub trigger_source: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResourceRecommendation {
+    pub recommended_cpu: i32,
+    pub recommended_memory_mb: i64,
+    pub recommended_disk_mb: i64,
+    pub recommended_duration_secs: i32,
+    pub sample_count: i64,
+    pub p50_duration: f64,
+    pub p90_duration: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResourceHistoryRow {
+    pub id: Uuid,
+    pub stage_config_id: Uuid,
+    pub repo_id: Uuid,
+    pub job_id: Uuid,
+    pub actual_cpu_percent: Option<f64>,
+    pub actual_memory_mb: Option<i64>,
+    pub actual_disk_mb: Option<i64>,
+    pub actual_duration_secs: Option<i32>,
+    pub exit_code: Option<i32>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +343,54 @@ pub struct NotificationConfig {
     pub id: Uuid,
     pub channel_type: String,
     pub config: serde_json::Value,
+}
+
+// ============================================================================
+// Analytics structs
+// ============================================================================
+
+#[derive(Debug, serde::Serialize)]
+pub struct BuildTrendPoint {
+    pub date: String,
+    pub total: i64,
+    pub success: i64,
+    pub failed: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct DurationTrendPoint {
+    pub date: String,
+    pub avg_duration_secs: i64,
+    pub p95_duration_secs: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SlowStage {
+    pub stage_name: String,
+    pub repo_name: String,
+    pub avg_secs: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct FailingRepo {
+    pub repo_name: String,
+    pub total: i64,
+    pub failed: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct WorkerUtilization {
+    pub worker_id: String,
+    pub hostname: Option<String>,
+    pub status: String,
+    pub active_jobs: i64,
+    pub total_jobs_30d: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct QueueWaitPoint {
+    pub date: String,
+    pub avg_wait_secs: i64,
 }
 
 impl Storage {
@@ -265,7 +427,14 @@ impl Storage {
         Ok(Self {
             pool,
             schema: schema_owned,
+            encryption_key: None,
         })
+    }
+
+    /// Set the AES-256-GCM encryption key for secret pipeline variables.
+    pub fn with_encryption_key(mut self, key: Option<String>) -> Self {
+        self.encryption_key = key;
+        self
     }
 
     /// Run SQL migration files from the migrations/ directory.
@@ -350,6 +519,76 @@ impl Storage {
                 10,
                 "cron_schedules",
                 include_str!("../../../migrations/010_cron_schedules.sql"),
+            ),
+            (
+                11,
+                "partial_indexes",
+                include_str!("../../../migrations/011_partial_indexes.sql"),
+            ),
+            (
+                12,
+                "api_keys",
+                include_str!("../../../migrations/012_api_keys.sql"),
+            ),
+            (
+                13,
+                "priority_labels",
+                include_str!("../../../migrations/012_priority_labels.sql"),
+            ),
+            (
+                14,
+                "webhook_deliveries",
+                include_str!("../../../migrations/013_webhook_deliveries.sql"),
+            ),
+            (
+                15,
+                "job_retry",
+                include_str!("../../../migrations/014_job_retry.sql"),
+            ),
+            (
+                16,
+                "pr_number",
+                include_str!("../../../migrations/015_pr_number.sql"),
+            ),
+            (
+                17,
+                "stage_resource_history",
+                include_str!("../../../migrations/016_stage_resource_history.sql"),
+            ),
+            (
+                18,
+                "retention_cascade",
+                include_str!("../../../migrations/017_retention_cascade.sql"),
+            ),
+            (
+                19,
+                "blacklists",
+                include_str!("../../../migrations/018_blacklists.sql"),
+            ),
+            (
+                20,
+                "new_features",
+                include_str!("../../../migrations/019_new_features.sql"),
+            ),
+            (
+                21,
+                "config_settings",
+                include_str!("../../../migrations/020_config_settings.sql"),
+            ),
+            (
+                22,
+                "worker_system_info",
+                include_str!("../../../migrations/023_worker_system_info.sql"),
+            ),
+            (
+                23,
+                "nullable_stage_config_id",
+                include_str!("../../../migrations/021_nullable_stage_config_id.sql"),
+            ),
+            (
+                24,
+                "command_mode",
+                include_str!("../../../migrations/024_command_mode.sql"),
             ),
         ];
 
@@ -516,8 +755,8 @@ impl Storage {
     pub async fn create_job_group(&self, group: &JobGroup) -> anyhow::Result<JobGroup> {
         let q = format!(
             "INSERT INTO job_groups (id, repo_id, branch, commit_sha, trigger_source, \
-             reserved_worker_id, state, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             reserved_worker_id, state, priority, pr_number, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              RETURNING {JOB_GROUP_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -528,6 +767,8 @@ impl Storage {
             .bind(&group.trigger_source)
             .bind(&group.reserved_worker_id)
             .bind(group.state.to_string())
+            .bind(group.priority)
+            .bind(group.pr_number)
             .bind(group.created_at)
             .bind(group.updated_at)
             .fetch_one(&self.pool)
@@ -762,7 +1003,7 @@ impl Storage {
     pub async fn upsert_worker(&self, worker: &WorkerRow) -> anyhow::Result<WorkerRow> {
         let q = format!(
             "INSERT INTO workers ({WORKER_COLUMNS}) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
              ON CONFLICT (worker_id) DO UPDATE \
              SET hostname = EXCLUDED.hostname, \
                  total_cpu = EXCLUDED.total_cpu, \
@@ -772,7 +1013,8 @@ impl Storage {
                  supported_job_types = EXCLUDED.supported_job_types, \
                  docker_enabled = EXCLUDED.docker_enabled, \
                  status = EXCLUDED.status, \
-                 last_heartbeat_at = EXCLUDED.last_heartbeat_at \
+                 last_heartbeat_at = EXCLUDED.last_heartbeat_at, \
+                 labels = EXCLUDED.labels \
              RETURNING {WORKER_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -787,10 +1029,38 @@ impl Storage {
             .bind(&worker.status)
             .bind(worker.last_heartbeat_at)
             .bind(worker.registered_at)
+            .bind(&worker.labels)
+            .bind(&worker.system_info)
             .fetch_one(&self.pool)
             .await?;
 
         Ok(WorkerRow::from(row))
+    }
+
+    pub async fn update_worker_metadata(
+        &self,
+        worker_id: &str,
+        metadata: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        sqlx::query("UPDATE workers SET system_info = $2 WHERE worker_id = $1")
+            .bind(worker_id)
+            .bind(metadata)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_worker_labels(
+        &self,
+        worker_id: &str,
+        labels: &[String],
+    ) -> anyhow::Result<()> {
+        sqlx::query("UPDATE workers SET labels = $2 WHERE worker_id = $1")
+            .bind(worker_id)
+            .bind(labels)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn update_worker_status(
@@ -910,6 +1180,20 @@ impl Storage {
         Ok(row.as_ref().map(map_user))
     }
 
+    pub async fn update_user_password(
+        &self,
+        id: Uuid,
+        password_hash: &str,
+    ) -> anyhow::Result<bool> {
+        let result =
+            sqlx::query("UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1")
+                .bind(id)
+                .bind(password_hash)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn delete_user(&self, id: Uuid) -> anyhow::Result<bool> {
         let q = "DELETE FROM users WHERE id = $1";
         let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
@@ -927,11 +1211,9 @@ impl Storage {
         token_jti: &str,
         expires_at: DateTime<Utc>,
     ) -> anyhow::Result<()> {
-        let q = format!(
-            "INSERT INTO sessions (user_id, token_jti, expires_at) \
-             VALUES ($1, $2, $3)"
-        );
-        sqlx::query(&q)
+        let q = "INSERT INTO sessions (user_id, token_jti, expires_at) \
+             VALUES ($1, $2, $3)";
+        sqlx::query(q)
             .bind(user_id)
             .bind(token_jti)
             .bind(expires_at)
@@ -972,6 +1254,7 @@ impl Storage {
     // Audit Log
     // ========================================================================
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_audit_log(
         &self,
         user_id: Option<Uuid>,
@@ -999,6 +1282,41 @@ impl Storage {
         Ok(())
     }
 
+    pub async fn list_audit_logs(&self, limit: i64) -> anyhow::Result<Vec<serde_json::Value>> {
+        let q = "SELECT id, user_id, username, action, resource_type, resource_id, \
+                        details, ip_address, created_at \
+                 FROM audit_log \
+                 ORDER BY created_at DESC \
+                 LIMIT $1";
+        let rows = sqlx::query(q).bind(limit).fetch_all(&self.pool).await?;
+        let entries = rows
+            .iter()
+            .map(|r| {
+                let id: Uuid = r.get("id");
+                let user_id: Option<Uuid> = r.get("user_id");
+                let username: String = r.get("username");
+                let action: String = r.get("action");
+                let resource_type: Option<String> = r.get("resource_type");
+                let resource_id: Option<String> = r.get("resource_id");
+                let details: Option<serde_json::Value> = r.get("details");
+                let ip_address: Option<String> = r.get("ip_address");
+                let created_at: DateTime<Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id,
+                    "user_id": user_id,
+                    "username": username,
+                    "action": action,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "details": details,
+                    "ip_address": ip_address,
+                    "created_at": created_at.to_rfc3339(),
+                })
+            })
+            .collect();
+        Ok(entries)
+    }
+
     // ========================================================================
     // State Recovery (startup)
     // ========================================================================
@@ -1015,11 +1333,14 @@ impl Storage {
     }
 
     /// Load all non-terminal jobs for state recovery on startup.
+    /// Uses FOR UPDATE SKIP LOCKED to prevent lock contention when
+    /// multiple controllers recover concurrently.
     pub async fn load_active_jobs(&self) -> anyhow::Result<Vec<DbJob>> {
         let q = format!(
             "SELECT {JOB_COLUMNS} FROM jobs \
              WHERE state NOT IN ('success', 'failed', 'cancelled') \
-             ORDER BY created_at"
+             ORDER BY created_at \
+             FOR UPDATE SKIP LOCKED"
         );
         let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(DbJob::from).collect())
@@ -1053,7 +1374,7 @@ impl Storage {
         let count_q = format!("SELECT COUNT(*) FROM job_groups {where_clause}");
         let data_q = format!(
             "SELECT {JOB_GROUP_COLUMNS} FROM job_groups {where_clause} \
-             ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+             ORDER BY priority DESC, created_at DESC LIMIT ${} OFFSET ${}",
             bind_offset + 1,
             bind_offset + 2
         );
@@ -1108,6 +1429,7 @@ impl Storage {
         Ok(row.map(map_repo))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_repo(
         &self,
         id: Uuid,
@@ -1115,6 +1437,8 @@ impl Storage {
         repo_url: Option<&str>,
         default_branch: Option<&str>,
         enabled: Option<bool>,
+        max_concurrent_builds: Option<i32>,
+        cancel_superseded: Option<bool>,
     ) -> anyhow::Result<Option<Repo>> {
         let q = format!(
             "UPDATE repos \
@@ -1122,6 +1446,8 @@ impl Storage {
                  repo_url = COALESCE($3, repo_url), \
                  default_branch = COALESCE($4, default_branch), \
                  enabled = COALESCE($5, enabled), \
+                 max_concurrent_builds = COALESCE($6, max_concurrent_builds), \
+                 cancel_superseded = COALESCE($7, cancel_superseded), \
                  updated_at = now() \
              WHERE id = $1 \
              RETURNING {REPO_COLUMNS}"
@@ -1132,6 +1458,8 @@ impl Storage {
             .bind(repo_url)
             .bind(default_branch)
             .bind(enabled)
+            .bind(max_concurrent_builds)
+            .bind(cancel_superseded)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_repo))
@@ -1147,11 +1475,12 @@ impl Storage {
     // Stage Configs (additional CRUD)
     // ========================================================================
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_stage_config(
         &self,
         repo_id: Uuid,
         stage_name: &str,
-        command: &str,
+        command: Option<&str>,
         required_cpu: i32,
         required_memory_mb: i32,
         required_disk_mb: i32,
@@ -1161,13 +1490,15 @@ impl Storage {
         allow_worker_migration: bool,
         job_type: &str,
         depends_on: Option<&[String]>,
+        required_labels: Option<&[String]>,
+        command_mode: &str,
     ) -> anyhow::Result<StageConfig> {
         let q = format!(
             "INSERT INTO stage_configs \
              (repo_id, stage_name, command, required_cpu, required_memory_mb, \
               required_disk_mb, max_duration_secs, execution_order, parallel_group, \
-              allow_worker_migration, job_type) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+              allow_worker_migration, job_type, depends_on, required_labels, command_mode) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
              RETURNING {STAGE_CONFIG_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1183,11 +1514,14 @@ impl Storage {
             .bind(allow_worker_migration)
             .bind(job_type)
             .bind(depends_on)
+            .bind(required_labels)
+            .bind(command_mode)
             .fetch_one(&self.pool)
             .await?;
         Ok(map_stage_config(row))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_stage_config(
         &self,
         id: Uuid,
@@ -1202,6 +1536,8 @@ impl Storage {
         allow_worker_migration: Option<bool>,
         job_type: Option<&str>,
         depends_on: Option<&[String]>,
+        required_labels: Option<&[String]>,
+        command_mode: Option<&str>,
     ) -> anyhow::Result<Option<StageConfig>> {
         let q = format!(
             "UPDATE stage_configs \
@@ -1215,11 +1551,13 @@ impl Storage {
                  parallel_group = COALESCE($9, parallel_group), \
                  allow_worker_migration = COALESCE($10, allow_worker_migration), \
                  job_type = COALESCE($11, job_type), \
+                 depends_on = COALESCE($12, depends_on), \
+                 required_labels = COALESCE($13, required_labels), \
+                 command_mode = COALESCE($14, command_mode), \
                  updated_at = now() \
              WHERE id = $1 \
              RETURNING {STAGE_CONFIG_COLUMNS}"
         );
-        let new_depends = depends_on;
         let row = sqlx::query(&q)
             .bind(id)
             .bind(stage_name)
@@ -1232,7 +1570,26 @@ impl Storage {
             .bind(parallel_group)
             .bind(allow_worker_migration)
             .bind(job_type)
-            .bind(new_depends.map(|s| s.to_vec()))
+            .bind(depends_on.map(|s| s.to_vec()))
+            .bind(required_labels.map(|s| s.to_vec()))
+            .bind(command_mode)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(map_stage_config))
+    }
+
+    pub async fn get_stage_config_by_name(
+        &self,
+        repo_id: Uuid,
+        stage_name: &str,
+    ) -> anyhow::Result<Option<StageConfig>> {
+        let q = format!(
+            "SELECT {STAGE_CONFIG_COLUMNS} FROM stage_configs \
+             WHERE repo_id = $1 AND stage_name = $2"
+        );
+        let row = sqlx::query(&q)
+            .bind(repo_id)
+            .bind(stage_name)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_stage_config))
@@ -1385,6 +1742,87 @@ impl Storage {
         Ok((rows.into_iter().map(DbJob::from).collect(), total))
     }
 
+    /// List individual job runs with group + repo context.
+    pub async fn list_runs_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+        state_filter: Option<&str>,
+        worker_filter: Option<&str>,
+    ) -> anyhow::Result<(Vec<RunRow>, i64)> {
+        let mut conditions: Vec<String> = Vec::new();
+        let mut bind_idx = 0u32;
+        if state_filter.is_some() {
+            bind_idx += 1;
+            conditions.push(format!("j.state = ${bind_idx}"));
+        }
+        if worker_filter.is_some() {
+            bind_idx += 1;
+            conditions.push(format!("j.worker_id = ${bind_idx}"));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let count_q = format!("SELECT COUNT(*) FROM jobs j {where_clause}");
+        let data_q = format!(
+            "SELECT j.id, j.job_group_id, j.stage_name, j.command, j.worker_id, \
+             j.state, j.exit_code, j.started_at, j.completed_at, j.created_at, \
+             jg.branch, jg.state AS group_state, jg.trigger_source, \
+             r.repo_name \
+             FROM jobs j \
+             JOIN job_groups jg ON j.job_group_id = jg.id \
+             LEFT JOIN repos r ON jg.repo_id = r.id \
+             {where_clause} \
+             ORDER BY j.created_at DESC LIMIT ${} OFFSET ${}",
+            bind_idx + 1,
+            bind_idx + 2
+        );
+
+        let mut count_query = sqlx::query_scalar::<_, i64>(&count_q);
+        if let Some(s) = state_filter {
+            count_query = count_query.bind(s.to_string());
+        }
+        if let Some(w) = worker_filter {
+            count_query = count_query.bind(w.to_string());
+        }
+        let total: i64 = count_query.fetch_one(&self.pool).await?;
+
+        let mut data_query = sqlx::query(&data_q);
+        if let Some(s) = state_filter {
+            data_query = data_query.bind(s.to_string());
+        }
+        if let Some(w) = worker_filter {
+            data_query = data_query.bind(w.to_string());
+        }
+        data_query = data_query.bind(limit).bind(offset);
+
+        let rows = data_query.fetch_all(&self.pool).await?;
+        let runs = rows
+            .into_iter()
+            .map(|r| RunRow {
+                id: r.get("id"),
+                job_group_id: r.get("job_group_id"),
+                stage_name: r.get("stage_name"),
+                command: r.get("command"),
+                worker_id: r.get("worker_id"),
+                state: r.get("state"),
+                exit_code: r.get("exit_code"),
+                started_at: r.get("started_at"),
+                completed_at: r.get("completed_at"),
+                created_at: r.get("created_at"),
+                branch: r.get("branch"),
+                repo_name: r.get("repo_name"),
+                group_state: r.get("group_state"),
+                trigger_source: r.get("trigger_source"),
+            })
+            .collect();
+
+        Ok((runs, total))
+    }
+
     pub async fn get_notification_configs_for_trigger(
         &self,
         repo_id: Uuid,
@@ -1407,6 +1845,222 @@ impl Storage {
             .collect())
     }
 
+    // ── Notification CRUD ────────────────────────────────────────────────────
+
+    pub async fn list_notification_configs(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query(
+            "SELECT id, repo_id, trigger, channel_type, config, enabled, created_at \
+             FROM notification_configs WHERE repo_id = $1 ORDER BY created_at",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let id: Uuid = r.get("id");
+                let rid: Uuid = r.get("repo_id");
+                let trigger: String = r.get("trigger");
+                let channel_type: String = r.get("channel_type");
+                let config: serde_json::Value = r.get("config");
+                let enabled: bool = r.get("enabled");
+                let created_at: DateTime<Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id, "repo_id": rid, "trigger": trigger,
+                    "channel_type": channel_type, "config": config,
+                    "enabled": enabled, "created_at": created_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    pub async fn create_notification_config(
+        &self,
+        repo_id: Uuid,
+        trigger: &str,
+        channel_type: &str,
+        config: serde_json::Value,
+        enabled: bool,
+    ) -> anyhow::Result<serde_json::Value> {
+        let row = sqlx::query(
+            "INSERT INTO notification_configs (repo_id, trigger, channel_type, config, enabled) \
+             VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, repo_id, trigger, channel_type, config, enabled, created_at",
+        )
+        .bind(repo_id)
+        .bind(trigger)
+        .bind(channel_type)
+        .bind(&config)
+        .bind(enabled)
+        .fetch_one(&self.pool)
+        .await?;
+        let id: Uuid = row.get("id");
+        let rid: Uuid = row.get("repo_id");
+        let trig: String = row.get("trigger");
+        let ct: String = row.get("channel_type");
+        let cfg: serde_json::Value = row.get("config");
+        let en: bool = row.get("enabled");
+        let ca: DateTime<Utc> = row.get("created_at");
+        Ok(serde_json::json!({
+            "id": id, "repo_id": rid, "trigger": trig,
+            "channel_type": ct, "config": cfg,
+            "enabled": en, "created_at": ca.to_rfc3339(),
+        }))
+    }
+
+    pub async fn update_notification_config(
+        &self,
+        id: Uuid,
+        enabled: bool,
+        config: serde_json::Value,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let row = sqlx::query(
+            "UPDATE notification_configs SET enabled = $1, config = $2 WHERE id = $3 \
+             RETURNING id, repo_id, trigger, channel_type, config, enabled, created_at",
+        )
+        .bind(enabled)
+        .bind(&config)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| {
+            let rid: Uuid = r.get("repo_id");
+            let trig: String = r.get("trigger");
+            let ct: String = r.get("channel_type");
+            let cfg: serde_json::Value = r.get("config");
+            let en: bool = r.get("enabled");
+            let ca: DateTime<Utc> = r.get("created_at");
+            serde_json::json!({
+                "id": id, "repo_id": rid, "trigger": trig,
+                "channel_type": ct, "config": cfg,
+                "enabled": en, "created_at": ca.to_rfc3339(),
+            })
+        }))
+    }
+
+    pub async fn delete_notification_config(&self, id: Uuid) -> anyhow::Result<bool> {
+        let res = sqlx::query("DELETE FROM notification_configs WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    // ── Cron Schedule CRUD ───────────────────────────────────────────────────
+
+    pub async fn list_cron_schedules_for_repo(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<Vec<CronSchedule>> {
+        let rows = sqlx::query(
+            "SELECT id, repo_id, interval_secs, next_run_at, stages, branch, enabled, \
+                    last_triggered_at, created_at, updated_at \
+             FROM cron_schedules WHERE repo_id = $1 ORDER BY created_at",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CronSchedule {
+                id: r.get("id"),
+                repo_id: r.get("repo_id"),
+                interval_secs: r.get("interval_secs"),
+                next_run_at: r.get("next_run_at"),
+                stages: r.get("stages"),
+                branch: r.get("branch"),
+                enabled: r.get("enabled"),
+                last_triggered_at: r.get("last_triggered_at"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            })
+            .collect())
+    }
+
+    pub async fn create_cron_schedule(
+        &self,
+        repo_id: Uuid,
+        interval_secs: i64,
+        stages: &[String],
+        branch: &str,
+    ) -> anyhow::Result<CronSchedule> {
+        let row = sqlx::query(
+            "INSERT INTO cron_schedules (repo_id, interval_secs, stages, branch) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING id, repo_id, interval_secs, next_run_at, stages, branch, enabled, \
+                       last_triggered_at, created_at, updated_at",
+        )
+        .bind(repo_id)
+        .bind(interval_secs)
+        .bind(stages)
+        .bind(branch)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(CronSchedule {
+            id: row.get("id"),
+            repo_id: row.get("repo_id"),
+            interval_secs: row.get("interval_secs"),
+            next_run_at: row.get("next_run_at"),
+            stages: row.get("stages"),
+            branch: row.get("branch"),
+            enabled: row.get("enabled"),
+            last_triggered_at: row.get("last_triggered_at"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+    }
+
+    pub async fn update_cron_schedule(
+        &self,
+        id: Uuid,
+        interval_secs: Option<i64>,
+        stages: Option<&[String]>,
+        branch: Option<&str>,
+        enabled: Option<bool>,
+    ) -> anyhow::Result<Option<CronSchedule>> {
+        let row = sqlx::query(
+            "UPDATE cron_schedules SET \
+                interval_secs = COALESCE($1, interval_secs), \
+                stages = COALESCE($2, stages), \
+                branch = COALESCE($3, branch), \
+                enabled = COALESCE($4, enabled), \
+                updated_at = now() \
+             WHERE id = $5 \
+             RETURNING id, repo_id, interval_secs, next_run_at, stages, branch, enabled, \
+                       last_triggered_at, created_at, updated_at",
+        )
+        .bind(interval_secs)
+        .bind(stages)
+        .bind(branch)
+        .bind(enabled)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| CronSchedule {
+            id: r.get("id"),
+            repo_id: r.get("repo_id"),
+            interval_secs: r.get("interval_secs"),
+            next_run_at: r.get("next_run_at"),
+            stages: r.get("stages"),
+            branch: r.get("branch"),
+            enabled: r.get("enabled"),
+            last_triggered_at: r.get("last_triggered_at"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        }))
+    }
+
+    pub async fn delete_cron_schedule(&self, id: Uuid) -> anyhow::Result<bool> {
+        let res = sqlx::query("DELETE FROM cron_schedules WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn get_stage_dependencies(
         &self,
         repo_id: Uuid,
@@ -1421,10 +2075,10 @@ impl Storage {
     }
 
     pub async fn list_due_schedules(&self) -> anyhow::Result<Vec<CronSchedule>> {
-        let q = format!(
-            "SELECT id, repo_id, interval_secs, next_run_at, stages, branch, enabled,              last_triggered_at, created_at, updated_at              FROM cron_schedules WHERE enabled = true AND next_run_at <= now()"
-        );
-        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        let q = "SELECT id, repo_id, interval_secs, next_run_at, stages, branch, enabled, \
+             last_triggered_at, created_at, updated_at \
+             FROM cron_schedules WHERE enabled = true AND next_run_at <= now()";
+        let rows = sqlx::query(q).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| CronSchedule {
@@ -1444,6 +2098,20 @@ impl Storage {
 
     // ── Pipeline variables ────────────────────────────────────────────────
 
+    fn maybe_encrypt(&self, value: &str, is_secret: bool) -> anyhow::Result<String> {
+        match (is_secret, &self.encryption_key) {
+            (true, Some(key)) => encrypt_value(key, value),
+            _ => Ok(value.to_string()),
+        }
+    }
+
+    fn maybe_decrypt(&self, raw: String, is_secret: bool) -> String {
+        match (is_secret, &self.encryption_key) {
+            (true, Some(key)) => decrypt_value(key, &raw).unwrap_or(raw),
+            _ => raw,
+        }
+    }
+
     pub async fn list_variables_for_repo(
         &self,
         repo_id: Uuid,
@@ -1458,14 +2126,17 @@ impl Storage {
 
         Ok(rows
             .iter()
-            .map(|r| PipelineVariable {
-                id: r.get("id"),
-                repo_id: r.get("repo_id"),
-                name: r.get("name"),
-                value: r.get("value"),
-                is_secret: r.get("is_secret"),
-                created_at: r.get("created_at"),
-                updated_at: r.get("updated_at"),
+            .map(|r| {
+                let is_secret: bool = r.get("is_secret");
+                PipelineVariable {
+                    id: r.get("id"),
+                    repo_id: r.get("repo_id"),
+                    name: r.get("name"),
+                    value: self.maybe_decrypt(r.get("value"), is_secret),
+                    is_secret,
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                }
             })
             .collect())
     }
@@ -1477,6 +2148,7 @@ impl Storage {
         value: &str,
         is_secret: bool,
     ) -> anyhow::Result<PipelineVariable> {
+        let stored = self.maybe_encrypt(value, is_secret)?;
         let row = sqlx::query(
             "INSERT INTO pipeline_variables (id, repo_id, name, value, is_secret)
              VALUES ($1, $2, $3, $4, $5)
@@ -1485,7 +2157,7 @@ impl Storage {
         .bind(Uuid::new_v4())
         .bind(repo_id)
         .bind(name)
-        .bind(value)
+        .bind(stored)
         .bind(is_secret)
         .fetch_one(&self.pool)
         .await?;
@@ -1494,7 +2166,7 @@ impl Storage {
             id: row.get("id"),
             repo_id: row.get("repo_id"),
             name: row.get("name"),
-            value: row.get("value"),
+            value: value.to_string(), // return plaintext to caller
             is_secret: row.get("is_secret"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
@@ -1508,6 +2180,22 @@ impl Storage {
         value: Option<&str>,
         is_secret: Option<bool>,
     ) -> anyhow::Result<Option<PipelineVariable>> {
+        // If value is being updated, determine whether to encrypt it
+        let encrypted_value: Option<String> = if let Some(v) = value {
+            let will_secret = match is_secret {
+                Some(b) => b,
+                None => sqlx::query("SELECT is_secret FROM pipeline_variables WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await?
+                    .map(|r| r.get::<bool, _>("is_secret"))
+                    .unwrap_or(false),
+            };
+            Some(self.maybe_encrypt(v, will_secret)?)
+        } else {
+            None
+        };
+
         let row = sqlx::query(
             "UPDATE pipeline_variables
              SET name = COALESCE($2, name),
@@ -1519,19 +2207,22 @@ impl Storage {
         )
         .bind(id)
         .bind(name)
-        .bind(value)
+        .bind(encrypted_value.as_deref())
         .bind(is_secret)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| PipelineVariable {
-            id: r.get("id"),
-            repo_id: r.get("repo_id"),
-            name: r.get("name"),
-            value: r.get("value"),
-            is_secret: r.get("is_secret"),
-            created_at: r.get("created_at"),
-            updated_at: r.get("updated_at"),
+        Ok(row.map(|r| {
+            let is_secret: bool = r.get("is_secret");
+            PipelineVariable {
+                id: r.get("id"),
+                repo_id: r.get("repo_id"),
+                name: r.get("name"),
+                value: self.maybe_decrypt(r.get("value"), is_secret),
+                is_secret,
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            }
         }))
     }
 
@@ -1543,7 +2234,7 @@ impl Storage {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Get secret variable values for a repo (for log masking).
+    /// Get secret variable values for a repo (log masking). Returns plaintext.
     pub async fn get_secret_values_for_repo(&self, repo_id: Uuid) -> anyhow::Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT value FROM pipeline_variables
@@ -1553,7 +2244,10 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.iter().map(|r| r.get::<String, _>("value")).collect())
+        Ok(rows
+            .iter()
+            .map(|r| self.maybe_decrypt(r.get::<String, _>("value"), true))
+            .collect())
     }
 
     pub async fn mark_schedule_triggered(&self, schedule_id: Uuid) -> anyhow::Result<()> {
@@ -1648,6 +2342,908 @@ impl Storage {
     pub async fn delete_webhook(&self, webhook_id: Uuid) -> anyhow::Result<bool> {
         let result = sqlx::query("DELETE FROM webhooks WHERE id = $1")
             .bind(webhook_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ========================================================================
+    // API Keys
+    // ========================================================================
+
+    pub async fn create_api_key(
+        &self,
+        user_id: Uuid,
+        key_hash: &str,
+        name: &str,
+    ) -> anyhow::Result<ApiKey> {
+        let q = format!(
+            "INSERT INTO api_keys (user_id, key_hash, name) \
+             VALUES ($1, $2, $3) \
+             RETURNING {API_KEY_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(user_id)
+            .bind(key_hash)
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(map_api_key(&row))
+    }
+
+    /// Look up an active (non-revoked) API key by its SHA-256 hash.
+    /// Also bumps last_used_at.
+    pub async fn get_api_key_by_hash(&self, key_hash: &str) -> anyhow::Result<Option<ApiKey>> {
+        let row = sqlx::query(
+            "UPDATE api_keys SET last_used_at = now() \
+             WHERE key_hash = $1 AND revoked = false \
+             RETURNING id, user_id, name, created_at, last_used_at, revoked",
+        )
+        .bind(key_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.as_ref().map(map_api_key))
+    }
+
+    pub async fn list_api_keys_for_user(&self, user_id: Uuid) -> anyhow::Result<Vec<ApiKey>> {
+        let q = format!(
+            "SELECT {API_KEY_COLUMNS} FROM api_keys \
+             WHERE user_id = $1 ORDER BY created_at DESC"
+        );
+        let rows = sqlx::query(&q).bind(user_id).fetch_all(&self.pool).await?;
+        Ok(rows.iter().map(map_api_key).collect())
+    }
+
+    pub async fn revoke_api_key(&self, id: Uuid, user_id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query(
+            "UPDATE api_keys SET revoked = true \
+             WHERE id = $1 AND user_id = $2 AND revoked = false",
+        )
+        .bind(id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ========================================================================
+    // Badge — latest job group state for a repo
+    // ========================================================================
+
+    pub async fn get_latest_job_group_for_repo(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<Option<JobGroup>> {
+        let q = format!(
+            "SELECT {JOB_GROUP_COLUMNS} FROM job_groups \
+             WHERE repo_id = $1 ORDER BY created_at DESC LIMIT 1"
+        );
+        let row = sqlx::query(&q)
+            .bind(repo_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(map_job_group))
+    }
+
+    // ========================================================================
+    // Webhook deliveries
+    // ========================================================================
+
+    pub async fn record_webhook_delivery(
+        &self,
+        webhook_id: Uuid,
+        event: &str,
+        status_code: Option<i32>,
+        response_time_ms: Option<i32>,
+        error_message: Option<&str>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO webhook_deliveries              (webhook_id, event, status_code, response_time_ms, error_message)              VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(webhook_id)
+        .bind(event)
+        .bind(status_code)
+        .bind(response_time_ms)
+        .bind(error_message)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_webhook_deliveries(
+        &self,
+        webhook_id: Uuid,
+        limit: i64,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query(
+            "SELECT id, webhook_id, event, status_code, response_time_ms,              error_message, created_at              FROM webhook_deliveries WHERE webhook_id = $1              ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(webhook_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let id: Uuid = r.get("id");
+                let event: String = r.get("event");
+                let status_code: Option<i32> = r.get("status_code");
+                let response_time_ms: Option<i32> = r.get("response_time_ms");
+                let error_message: Option<String> = r.get("error_message");
+                let created_at: DateTime<Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id,
+                    "webhook_id": webhook_id,
+                    "event": event,
+                    "status_code": status_code,
+                    "response_time_ms": response_time_ms,
+                    "error_message": error_message,
+                    "created_at": created_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    // ========================================================================
+    // Job retry
+    // ========================================================================
+
+    /// Re-queue a failed job: set state=queued, increment retry_count.
+    pub async fn retry_job(&self, id: Uuid) -> anyhow::Result<Option<DbJob>> {
+        let q = format!(
+            "UPDATE jobs              SET state = 'queued', retry_count = retry_count + 1,                  exit_code = NULL, started_at = NULL, completed_at = NULL,                  updated_at = now()              WHERE id = $1 AND state IN ('failed', 'cancelled')              RETURNING {JOB_COLUMNS}"
+        );
+        let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.map(DbJob::from))
+    }
+
+    /// Get max_retries for a job's stage_config.
+    pub async fn get_max_retries_for_job(&self, job_id: Uuid) -> anyhow::Result<i32> {
+        let result: Option<i32> = sqlx::query_scalar(
+            "SELECT sc.max_retries FROM jobs j              JOIN stage_configs sc ON sc.id = j.stage_config_id              WHERE j.id = $1",
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(result.unwrap_or(0))
+    }
+
+    // ========================================================================
+    // Stage Resource History
+    // ========================================================================
+
+    /// Record actual resource usage after a stage completes.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_stage_resources(
+        &self,
+        stage_config_id: Uuid,
+        repo_id: Uuid,
+        job_id: Uuid,
+        cpu: Option<f64>,
+        memory_mb: Option<i64>,
+        disk_mb: Option<i64>,
+        duration_secs: Option<i32>,
+        exit_code: Option<i32>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO stage_resource_history \
+             (stage_config_id, repo_id, job_id, actual_cpu_percent, actual_memory_mb, \
+              actual_disk_mb, actual_duration_secs, exit_code) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(stage_config_id)
+        .bind(repo_id)
+        .bind(job_id)
+        .bind(cpu)
+        .bind(memory_mb)
+        .bind(disk_mb)
+        .bind(duration_secs)
+        .bind(exit_code)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get p90 resource recommendations from the last 20 successful runs.
+    pub async fn get_resource_recommendations(
+        &self,
+        stage_config_id: Uuid,
+    ) -> anyhow::Result<Option<ResourceRecommendation>> {
+        let row = sqlx::query(
+            "WITH recent AS ( \
+                SELECT actual_cpu_percent, actual_memory_mb, actual_disk_mb, actual_duration_secs \
+                FROM stage_resource_history \
+                WHERE stage_config_id = $1 AND exit_code = 0 \
+                ORDER BY created_at DESC LIMIT 20 \
+            ) \
+            SELECT \
+                COUNT(*) AS sample_count, \
+                PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY actual_cpu_percent) AS p90_cpu, \
+                PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY actual_memory_mb) AS p90_memory, \
+                PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY actual_disk_mb) AS p90_disk, \
+                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY actual_duration_secs) AS p50_duration, \
+                PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY actual_duration_secs) AS p90_duration \
+            FROM recent",
+        )
+        .bind(stage_config_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let sample_count: i64 = row.get("sample_count");
+        if sample_count == 0 {
+            return Ok(None);
+        }
+
+        let p90_cpu: Option<f64> = row.get("p90_cpu");
+        let p90_memory: Option<f64> = row.get("p90_memory");
+        let p90_disk: Option<f64> = row.get("p90_disk");
+        let p50_duration: Option<f64> = row.get("p50_duration");
+        let p90_duration: Option<f64> = row.get("p90_duration");
+
+        Ok(Some(ResourceRecommendation {
+            recommended_cpu: p90_cpu.unwrap_or(0.0).ceil() as i32,
+            recommended_memory_mb: p90_memory.unwrap_or(0.0).ceil() as i64,
+            recommended_disk_mb: p90_disk.unwrap_or(0.0).ceil() as i64,
+            recommended_duration_secs: p90_duration.unwrap_or(0.0).ceil() as i32,
+            sample_count,
+            p50_duration: p50_duration.unwrap_or(0.0),
+            p90_duration: p90_duration.unwrap_or(0.0),
+        }))
+    }
+
+    // ========================================================================
+    // Retention / Cleanup
+    // ========================================================================
+
+    pub async fn find_expired_groups(&self, max_age_days: i32) -> anyhow::Result<Vec<Uuid>> {
+        let q = format!(
+            "SELECT id FROM {s}.job_groups \
+             WHERE completed_at < NOW() - make_interval(days => $1) \
+             AND state IN ('success', 'failed', 'cancelled') \
+             ORDER BY completed_at ASC LIMIT 1000",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(max_age_days)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
+    }
+
+    pub async fn find_excess_groups_per_repo(
+        &self,
+        max_per_repo: i32,
+    ) -> anyhow::Result<Vec<Uuid>> {
+        let q = format!(
+            "WITH ranked AS ( \
+                SELECT id, repo_id, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC) as rn \
+                FROM {s}.job_groups \
+                WHERE state IN ('success', 'failed', 'cancelled') \
+            ) SELECT id FROM ranked WHERE rn > $1 LIMIT 5000",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(max_per_repo)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
+    }
+
+    pub async fn delete_job_groups_batch(&self, ids: &[Uuid]) -> anyhow::Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let q = format!(
+            "DELETE FROM {s}.job_groups WHERE id = ANY($1)",
+            s = self.schema
+        );
+        let result = sqlx::query(&q).bind(ids).execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
+    /// List recent resource history entries for a stage.
+    pub async fn list_resource_history(
+        &self,
+        stage_config_id: Uuid,
+        limit: i64,
+    ) -> anyhow::Result<Vec<ResourceHistoryRow>> {
+        let rows = sqlx::query(
+            "SELECT id, stage_config_id, repo_id, job_id, actual_cpu_percent, \
+             actual_memory_mb, actual_disk_mb, actual_duration_secs, exit_code, created_at \
+             FROM stage_resource_history \
+             WHERE stage_config_id = $1 \
+             ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(stage_config_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ResourceHistoryRow {
+                id: r.get("id"),
+                stage_config_id: r.get("stage_config_id"),
+                repo_id: r.get("repo_id"),
+                job_id: r.get("job_id"),
+                actual_cpu_percent: r.get("actual_cpu_percent"),
+                actual_memory_mb: r.get("actual_memory_mb"),
+                actual_disk_mb: r.get("actual_disk_mb"),
+                actual_duration_secs: r.get("actual_duration_secs"),
+                exit_code: r.get("exit_code"),
+                created_at: r.get("created_at"),
+            })
+            .collect())
+    }
+
+    // ========================================================================
+    // Analytics
+    // ========================================================================
+
+    pub async fn get_build_trends(&self, days: i32) -> anyhow::Result<Vec<BuildTrendPoint>> {
+        let q = format!(
+            "SELECT DATE(created_at)::text as date, COUNT(*)::bigint as total, \
+             COUNT(*) FILTER (WHERE state = 'success')::bigint as success, \
+             COUNT(*) FILTER (WHERE state = 'failed')::bigint as failed \
+             FROM {s}.job_groups WHERE created_at > NOW() - make_interval(days => $1) \
+             GROUP BY DATE(created_at) ORDER BY date",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q).bind(days).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| BuildTrendPoint {
+                date: r.get("date"),
+                total: r.get("total"),
+                success: r.get("success"),
+                failed: r.get("failed"),
+            })
+            .collect())
+    }
+
+    pub async fn get_duration_trends(&self, days: i32) -> anyhow::Result<Vec<DurationTrendPoint>> {
+        let q = format!(
+            "SELECT DATE(created_at)::text as date, \
+             COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)))::bigint, 0) as avg_duration_secs, \
+             COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)))::bigint, 0) as p95_duration_secs \
+             FROM {s}.job_groups WHERE completed_at IS NOT NULL AND created_at > NOW() - make_interval(days => $1) \
+             GROUP BY DATE(created_at) ORDER BY date",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q).bind(days).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| DurationTrendPoint {
+                date: r.get("date"),
+                avg_duration_secs: r.get("avg_duration_secs"),
+                p95_duration_secs: r.get("p95_duration_secs"),
+            })
+            .collect())
+    }
+
+    pub async fn get_slowest_stages(
+        &self,
+        days: i32,
+        limit: i32,
+    ) -> anyhow::Result<Vec<SlowStage>> {
+        let q = format!(
+            "SELECT sc.stage_name, r.repo_name, \
+             COALESCE(AVG(EXTRACT(EPOCH FROM (j.completed_at - j.started_at)))::bigint, 0) as avg_secs \
+             FROM {s}.jobs j JOIN {s}.stage_configs sc ON j.stage_config_id = sc.id \
+             JOIN {s}.repos r ON sc.repo_id = r.id \
+             WHERE j.completed_at IS NOT NULL AND j.started_at IS NOT NULL \
+             AND j.created_at > NOW() - make_interval(days => $1) \
+             GROUP BY sc.stage_name, r.repo_name ORDER BY avg_secs DESC LIMIT $2",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|r| SlowStage {
+                stage_name: r.get("stage_name"),
+                repo_name: r.get("repo_name"),
+                avg_secs: r.get("avg_secs"),
+            })
+            .collect())
+    }
+
+    pub async fn get_most_failing_repos(
+        &self,
+        days: i32,
+        limit: i32,
+    ) -> anyhow::Result<Vec<FailingRepo>> {
+        let q = format!(
+            "SELECT r.repo_name, COUNT(*)::bigint as total, \
+             COUNT(*) FILTER (WHERE jg.state = 'failed')::bigint as failed \
+             FROM {s}.job_groups jg JOIN {s}.repos r ON jg.repo_id = r.id \
+             WHERE jg.created_at > NOW() - make_interval(days => $1) \
+             GROUP BY r.repo_name ORDER BY failed DESC LIMIT $2",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|r| FailingRepo {
+                repo_name: r.get("repo_name"),
+                total: r.get("total"),
+                failed: r.get("failed"),
+            })
+            .collect())
+    }
+
+    pub async fn get_worker_utilization(&self) -> anyhow::Result<Vec<WorkerUtilization>> {
+        let q = format!(
+            "SELECT w.worker_id, w.hostname, w.status::text, \
+             COUNT(j.id) FILTER (WHERE j.state = 'running')::bigint as active_jobs, \
+             COUNT(j.id)::bigint as total_jobs_30d \
+             FROM {s}.workers w LEFT JOIN {s}.jobs j ON j.worker_id = w.worker_id \
+             AND j.created_at > NOW() - INTERVAL '30 days' \
+             GROUP BY w.worker_id, w.hostname, w.status",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| WorkerUtilization {
+                worker_id: r.get("worker_id"),
+                hostname: r.get("hostname"),
+                status: r.get("status"),
+                active_jobs: r.get("active_jobs"),
+                total_jobs_30d: r.get("total_jobs_30d"),
+            })
+            .collect())
+    }
+
+    pub async fn get_queue_wait_trends(&self, days: i32) -> anyhow::Result<Vec<QueueWaitPoint>> {
+        let q = format!(
+            "SELECT DATE(created_at)::text as date, \
+             COALESCE(AVG(EXTRACT(EPOCH FROM (started_at - created_at)))::bigint, 0) as avg_wait_secs \
+             FROM {s}.jobs WHERE started_at IS NOT NULL AND created_at > NOW() - make_interval(days => $1) \
+             GROUP BY DATE(created_at) ORDER BY date",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q).bind(days).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| QueueWaitPoint {
+                date: r.get("date"),
+                avg_wait_secs: r.get("avg_wait_secs"),
+            })
+            .collect())
+    }
+
+    // ========================================================================
+    // Command Blacklist
+    // ========================================================================
+
+    pub async fn list_command_blacklist(
+        &self,
+        repo_id: Option<Uuid>,
+        stage_config_id: Option<Uuid>,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let mut q = String::from(
+            "SELECT id, repo_id, stage_config_id, pattern, description, enabled, created_at \
+             FROM stage_command_blacklist WHERE 1=1",
+        );
+        let mut binds: Vec<Option<Uuid>> = Vec::new();
+        if let Some(rid) = repo_id {
+            binds.push(Some(rid));
+            q.push_str(&format!(" AND repo_id = ${}", binds.len()));
+        }
+        if let Some(sid) = stage_config_id {
+            binds.push(Some(sid));
+            q.push_str(&format!(" AND stage_config_id = ${}", binds.len()));
+        }
+        q.push_str(" ORDER BY created_at DESC");
+
+        let mut query = sqlx::query(&q);
+        for b in &binds {
+            query = query.bind(*b);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let id: Uuid = r.get("id");
+                let repo_id: Option<Uuid> = r.get("repo_id");
+                let stage_config_id: Option<Uuid> = r.get("stage_config_id");
+                let pattern: String = r.get("pattern");
+                let description: Option<String> = r.get("description");
+                let enabled: bool = r.get("enabled");
+                let created_at: DateTime<Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id,
+                    "repo_id": repo_id,
+                    "stage_config_id": stage_config_id,
+                    "pattern": pattern,
+                    "description": description,
+                    "enabled": enabled,
+                    "created_at": created_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    pub async fn create_command_blacklist(
+        &self,
+        repo_id: Option<Uuid>,
+        stage_config_id: Option<Uuid>,
+        pattern: &str,
+        description: Option<&str>,
+    ) -> anyhow::Result<Uuid> {
+        let row = sqlx::query(
+            "INSERT INTO stage_command_blacklist (repo_id, stage_config_id, pattern, description) \
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(repo_id)
+        .bind(stage_config_id)
+        .bind(pattern)
+        .bind(description)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get("id"))
+    }
+
+    pub async fn update_command_blacklist(
+        &self,
+        id: Uuid,
+        pattern: Option<&str>,
+        description: Option<&str>,
+        enabled: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        let result = sqlx::query(
+            "UPDATE stage_command_blacklist \
+             SET pattern = COALESCE($2, pattern), \
+                 description = COALESCE($3, description), \
+                 enabled = COALESCE($4, enabled), \
+                 updated_at = NOW() \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(pattern)
+        .bind(description)
+        .bind(enabled)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn delete_command_blacklist(&self, id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM stage_command_blacklist WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn get_active_command_blacklist(
+        &self,
+        repo_id: Uuid,
+        stage_config_id: Option<Uuid>,
+    ) -> anyhow::Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT pattern FROM stage_command_blacklist \
+             WHERE enabled = true \
+               AND (repo_id IS NULL OR repo_id = $1) \
+               AND (stage_config_id IS NULL OR stage_config_id = $2)",
+        )
+        .bind(repo_id)
+        .bind(stage_config_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(|r| r.get::<String, _>("pattern")).collect())
+    }
+
+    // ========================================================================
+    // Branch Blacklist
+    // ========================================================================
+
+    pub async fn list_branch_blacklist(
+        &self,
+        worker_id: Option<&str>,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let (q, filter) = match worker_id {
+            Some(wid) => (
+                "SELECT id, worker_id, pattern, description, enabled, created_at \
+                 FROM worker_branch_blacklist WHERE worker_id = $1 \
+                 ORDER BY created_at DESC"
+                    .to_string(),
+                Some(wid.to_string()),
+            ),
+            None => (
+                "SELECT id, worker_id, pattern, description, enabled, created_at \
+                 FROM worker_branch_blacklist \
+                 ORDER BY created_at DESC"
+                    .to_string(),
+                None,
+            ),
+        };
+
+        let mut query = sqlx::query(&q);
+        if let Some(ref wid) = filter {
+            query = query.bind(wid);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let id: Uuid = r.get("id");
+                let worker_id: String = r.get("worker_id");
+                let pattern: String = r.get("pattern");
+                let description: Option<String> = r.get("description");
+                let enabled: bool = r.get("enabled");
+                let created_at: DateTime<Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id,
+                    "worker_id": worker_id,
+                    "pattern": pattern,
+                    "description": description,
+                    "enabled": enabled,
+                    "created_at": created_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    pub async fn create_branch_blacklist(
+        &self,
+        worker_id: &str,
+        pattern: &str,
+        description: Option<&str>,
+    ) -> anyhow::Result<Uuid> {
+        let row = sqlx::query(
+            "INSERT INTO worker_branch_blacklist (worker_id, pattern, description) \
+             VALUES ($1, $2, $3) RETURNING id",
+        )
+        .bind(worker_id)
+        .bind(pattern)
+        .bind(description)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get("id"))
+    }
+
+    pub async fn update_branch_blacklist(
+        &self,
+        id: Uuid,
+        pattern: Option<&str>,
+        description: Option<&str>,
+        enabled: Option<bool>,
+    ) -> anyhow::Result<bool> {
+        let result = sqlx::query(
+            "UPDATE worker_branch_blacklist \
+             SET pattern = COALESCE($2, pattern), \
+                 description = COALESCE($3, description), \
+                 enabled = COALESCE($4, enabled), \
+                 updated_at = NOW() \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(pattern)
+        .bind(description)
+        .bind(enabled)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn delete_branch_blacklist(&self, id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM worker_branch_blacklist WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn get_active_branch_blacklist(
+        &self,
+        worker_id: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT pattern FROM worker_branch_blacklist \
+             WHERE worker_id = $1 AND enabled = true",
+        )
+        .bind(worker_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(|r| r.get::<String, _>("pattern")).collect())
+    }
+
+    // ========================================================================
+    // Artifacts
+    // ========================================================================
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_artifact(
+        &self,
+        group_id: Uuid,
+        job_id: Option<Uuid>,
+        stage_name: &str,
+        filename: &str,
+        file_path: &str,
+        size_bytes: i64,
+        content_type: &str,
+    ) -> anyhow::Result<Uuid> {
+        let row = sqlx::query(
+            "INSERT INTO artifacts \
+             (job_group_id, job_id, stage_name, filename, file_path, size_bytes, content_type) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        )
+        .bind(group_id)
+        .bind(job_id)
+        .bind(stage_name)
+        .bind(filename)
+        .bind(file_path)
+        .bind(size_bytes)
+        .bind(content_type)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get("id"))
+    }
+
+    pub async fn list_artifacts_for_group(
+        &self,
+        group_id: Uuid,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query(
+            "SELECT id, job_group_id, job_id, stage_name, filename, file_path, \
+                    size_bytes, content_type, created_at \
+             FROM artifacts WHERE job_group_id = $1 ORDER BY created_at",
+        )
+        .bind(group_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let id: Uuid = r.get("id");
+                let job_id: Option<Uuid> = r.get("job_id");
+                let stage_name: String = r.get("stage_name");
+                let filename: String = r.get("filename");
+                let size_bytes: i64 = r.get("size_bytes");
+                let content_type: String = r.get("content_type");
+                let created_at: DateTime<Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id,
+                    "job_id": job_id,
+                    "stage_name": stage_name,
+                    "filename": filename,
+                    "size_bytes": size_bytes,
+                    "content_type": content_type,
+                    "created_at": created_at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    /// Returns (file_path, filename, content_type)
+    pub async fn get_artifact(
+        &self,
+        artifact_id: Uuid,
+    ) -> anyhow::Result<Option<(String, String, String)>> {
+        let row =
+            sqlx::query("SELECT file_path, filename, content_type FROM artifacts WHERE id = $1")
+                .bind(artifact_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|r| {
+            (
+                r.get::<String, _>("file_path"),
+                r.get::<String, _>("filename"),
+                r.get::<String, _>("content_type"),
+            )
+        }))
+    }
+
+    pub async fn delete_artifacts_for_group(&self, group_id: Uuid) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM artifacts WHERE job_group_id = $1")
+            .bind(group_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    // ========================================================================
+    // Concurrency controls
+    // ========================================================================
+
+    /// Count active (non-terminal) job groups for a repo.
+    pub async fn count_active_groups_for_repo(&self, repo_id: Uuid) -> anyhow::Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM job_groups \
+             WHERE repo_id = $1 AND state NOT IN ('completed', 'failed', 'cancelled')",
+        )
+        .bind(repo_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Find active groups on the same repo+branch that would be superseded.
+    /// Excludes `exclude_id` (the new group being created).
+    pub async fn find_superseded_groups(
+        &self,
+        repo_id: Uuid,
+        branch: &str,
+        exclude_id: Uuid,
+    ) -> anyhow::Result<Vec<Uuid>> {
+        let rows = sqlx::query(
+            "SELECT id FROM job_groups \
+             WHERE repo_id = $1 AND branch = $2 AND id != $3 \
+               AND state NOT IN ('completed', 'failed', 'cancelled') \
+             ORDER BY created_at ASC",
+        )
+        .bind(repo_id)
+        .bind(branch)
+        .bind(exclude_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
+    }
+
+    // ── Config Settings ───────────────────────────────────────────────────
+
+    pub async fn get_all_config_settings(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let rows = sqlx::query("SELECT key, value FROM config_settings")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            map.insert(r.get::<String, _>("key"), r.get::<String, _>("value"));
+        }
+        Ok(map)
+    }
+
+    pub async fn get_config_setting(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let row = sqlx::query("SELECT value FROM config_settings WHERE key = $1")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.get::<String, _>("value")))
+    }
+
+    pub async fn set_config_setting(
+        &self,
+        key: &str,
+        value: &str,
+        description: Option<&str>,
+        updated_by: &str,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO config_settings (key, value, description, updated_by, updated_at) \
+             VALUES ($1, $2, $3, $4, NOW()) \
+             ON CONFLICT (key) DO UPDATE SET \
+               value = $2, \
+               description = COALESCE($3, config_settings.description), \
+               updated_by = $4, \
+               updated_at = NOW()",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(description)
+        .bind(updated_by)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_config_setting(&self, key: &str) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM config_settings WHERE key = $1")
+            .bind(key)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
