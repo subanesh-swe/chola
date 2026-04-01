@@ -24,7 +24,7 @@ impl JobGroupRegistry {
 
     pub fn add_group(&mut self, group: JobGroup) {
         info!("Job group added: {} (state: {})", group.id, group.state);
-        self.group_jobs.entry(group.id).or_insert_with(Vec::new);
+        self.group_jobs.entry(group.id).or_default();
         self.groups.insert(group.id, group);
     }
 
@@ -39,11 +39,12 @@ impl JobGroupRegistry {
     pub fn update_state(&mut self, group_id: &Uuid, new_state: JobGroupState) -> bool {
         if let Some(group) = self.groups.get_mut(group_id) {
             let valid = match (&group.state, &new_state) {
-                // Can always cancel
+                // Can always cancel or fail
                 (_, JobGroupState::Cancelled) => true,
+                (_, JobGroupState::Failed) => true,
                 (JobGroupState::Pending, JobGroupState::Reserved) => true,
                 (JobGroupState::Reserved, JobGroupState::Running) => true,
-                (JobGroupState::Running, JobGroupState::Success | JobGroupState::Failed) => true,
+                (JobGroupState::Running, JobGroupState::Success) => true,
                 _ => false,
             };
             if valid {
@@ -71,10 +72,7 @@ impl JobGroupRegistry {
 
     pub fn add_job_to_group(&mut self, group_id: &Uuid, job: Job) {
         info!("Adding job {} to group {}", job.job_id, group_id);
-        self.group_jobs
-            .entry(*group_id)
-            .or_insert_with(Vec::new)
-            .push(job);
+        self.group_jobs.entry(*group_id).or_default().push(job);
     }
 
     pub fn get_jobs_for_group(&self, group_id: &Uuid) -> &[Job] {
@@ -146,6 +144,22 @@ impl JobGroupRegistry {
 
         self.update_state(group_id, new_state);
         Some(new_state)
+    }
+
+    /// Evict terminal groups older than `max_age`. Returns count evicted.
+    pub fn evict_terminal(&mut self, max_age: std::time::Duration) -> usize {
+        let cutoff = chrono::Utc::now() - chrono::Duration::from_std(max_age).unwrap_or_default();
+        let to_remove: Vec<Uuid> = self
+            .groups
+            .iter()
+            .filter(|(_, g)| g.state.is_terminal() && g.updated_at < cutoff)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &to_remove {
+            self.groups.remove(id);
+            self.group_jobs.remove(id);
+        }
+        to_remove.len()
     }
 
     /// Return all groups that have not yet reached a terminal state.

@@ -30,17 +30,19 @@ pub struct UpdateRepoRequest {
     pub repo_url: Option<String>,
     pub default_branch: Option<String>,
     pub enabled: Option<bool>,
+    pub max_concurrent_builds: Option<i32>,
+    pub cancel_superseded: Option<bool>,
 }
 
 #[derive(Deserialize)]
 pub struct CreateStageRequest {
     pub stage_name: String,
-    pub command: String,
-    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default = "default_cpu")]
     pub required_cpu: i32,
-    #[serde(default)]
+    #[serde(default = "default_memory_mb")]
     pub required_memory_mb: i32,
-    #[serde(default)]
+    #[serde(default = "default_disk_mb")]
     pub required_disk_mb: i32,
     #[serde(default = "default_max_duration")]
     pub max_duration_secs: i32,
@@ -53,13 +55,29 @@ pub struct CreateStageRequest {
     pub job_type: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub required_labels: Vec<String>,
+    #[serde(default = "default_command_mode")]
+    pub command_mode: String,
 }
 
+fn default_cpu() -> i32 {
+    1
+}
+fn default_memory_mb() -> i32 {
+    512
+}
+fn default_disk_mb() -> i32 {
+    256
+}
 fn default_max_duration() -> i32 {
     3600
 }
 fn default_job_type() -> String {
     "common".to_string()
+}
+fn default_command_mode() -> String {
+    "fixed".to_string()
 }
 
 #[derive(Deserialize)]
@@ -75,9 +93,47 @@ pub struct UpdateStageRequest {
     pub allow_worker_migration: Option<bool>,
     pub job_type: Option<String>,
     pub depends_on: Option<Vec<String>>,
+    pub required_labels: Option<Vec<String>>,
+    pub command_mode: Option<String>,
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
+
+fn validate_resource_fields(
+    cpu: i32,
+    memory_mb: i32,
+    disk_mb: i32,
+    max_duration: i32,
+) -> Result<(), ApiError> {
+    if cpu < 0 || cpu > 1024 {
+        return Err(ApiError::BadRequest("required_cpu must be 0-1024".into()));
+    }
+    if memory_mb < 0 || memory_mb > 1_048_576 {
+        return Err(ApiError::BadRequest(
+            "required_memory_mb must be 0-1048576".into(),
+        ));
+    }
+    if disk_mb < 0 || disk_mb > 10_485_760 {
+        return Err(ApiError::BadRequest(
+            "required_disk_mb must be 0-10485760".into(),
+        ));
+    }
+    if max_duration < 0 || max_duration > 86400 {
+        return Err(ApiError::BadRequest(
+            "max_duration_secs must be 0-86400".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_command_mode(mode: &str) -> Result<(), ApiError> {
+    match mode {
+        "fixed" | "optional" | "required" => Ok(()),
+        _ => Err(ApiError::BadRequest(
+            "command_mode must be one of: fixed, optional, required".into(),
+        )),
+    }
+}
 
 fn validate_string(field: &str, value: &str, max_len: usize) -> Result<(), ApiError> {
     if value.is_empty() {
@@ -101,6 +157,8 @@ fn repo_to_json(r: &Repo) -> Value {
         "repo_url": r.repo_url,
         "default_branch": r.default_branch,
         "enabled": r.enabled,
+        "max_concurrent_builds": r.max_concurrent_builds,
+        "cancel_superseded": r.cancel_superseded,
         "created_at": r.created_at.to_rfc3339(),
         "updated_at": r.updated_at.to_rfc3339(),
     })
@@ -112,6 +170,7 @@ fn stage_to_json(s: &StageConfig) -> Value {
         "repo_id": s.repo_id.to_string(),
         "stage_name": s.stage_name,
         "command": s.command,
+        "command_mode": s.command_mode,
         "required_cpu": s.required_cpu,
         "required_memory_mb": s.required_memory_mb,
         "required_disk_mb": s.required_disk_mb,
@@ -121,6 +180,8 @@ fn stage_to_json(s: &StageConfig) -> Value {
         "allow_worker_migration": s.allow_worker_migration,
         "job_type": s.job_type,
         "depends_on": s.depends_on,
+        "required_labels": s.required_labels,
+        "max_retries": s.max_retries,
         "created_at": s.created_at.to_rfc3339(),
         "updated_at": s.updated_at.to_rfc3339(),
     })
@@ -137,6 +198,20 @@ pub struct PaginationParams {
 // ── Repo handlers ────────────────────────────────────────────────────────────
 
 /// GET /api/v1/repos
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos",
+    tag = "Repos",
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size"),
+        ("offset" = Option<i64>, Query, description = "Offset"),
+    ),
+    responses(
+        (status = 200, description = "Paginated repo list"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn list(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
@@ -216,6 +291,8 @@ pub async fn update(
             body.repo_url.as_deref(),
             body.default_branch.as_deref(),
             body.enabled,
+            body.max_concurrent_builds,
+            body.cancel_superseded,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -272,12 +349,27 @@ pub async fn create_stage(
         return Err(ApiError::Forbidden("Insufficient permissions".into()));
     }
     validate_string("stage_name", &body.stage_name, 255)?;
+    validate_command_mode(&body.command_mode)?;
+    // For fixed/optional modes, command should be provided
+    if body.command_mode != "required" {
+        if body.command.as_deref().unwrap_or("").is_empty() {
+            return Err(ApiError::BadRequest(
+                "command is required for fixed/optional mode".into(),
+            ));
+        }
+    }
+    validate_resource_fields(
+        body.required_cpu,
+        body.required_memory_mb,
+        body.required_disk_mb,
+        body.max_duration_secs,
+    )?;
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let stage = storage
         .create_stage_config(
             repo_id,
             &body.stage_name,
-            &body.command,
+            body.command.as_deref(),
             body.required_cpu,
             body.required_memory_mb,
             body.required_disk_mb,
@@ -287,6 +379,8 @@ pub async fn create_stage(
             body.allow_worker_migration,
             &body.job_type,
             Some(&body.depends_on[..]),
+            Some(&body.required_labels[..]),
+            &body.command_mode,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -306,6 +400,16 @@ pub async fn update_stage(
     if let Some(ref name) = body.stage_name {
         validate_string("stage_name", name, 255)?;
     }
+    if let Some(ref mode) = body.command_mode {
+        validate_command_mode(mode)?;
+    }
+    // Validate resource fields when provided
+    validate_resource_fields(
+        body.required_cpu.unwrap_or(0),
+        body.required_memory_mb.unwrap_or(0),
+        body.required_disk_mb.unwrap_or(0),
+        body.max_duration_secs.unwrap_or(3600),
+    )?;
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let stage = storage
         .update_stage_config(
@@ -320,7 +424,9 @@ pub async fn update_stage(
             body.parallel_group.as_deref(),
             body.allow_worker_migration,
             body.job_type.as_deref(),
-            body.depends_on.as_ref().map(|v| v.as_slice()),
+            body.depends_on.as_deref(),
+            body.required_labels.as_deref(),
+            body.command_mode.as_deref(),
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?

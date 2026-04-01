@@ -5,7 +5,8 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { toast } from 'sonner';
-import type { UserRole } from '../types';
+import type { UserRole, MutationError } from '../types';
+import { PageSkeleton } from '../components/ui/PageSkeleton';
 
 const roles: UserRole[] = ['super_admin', 'admin', 'operator', 'viewer'];
 
@@ -18,22 +19,24 @@ export default function UsersPage() {
   const [role, setRole] = useState<UserRole>('viewer');
   const [delId, setDelId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: () => listUsers() });
+  const { data, isLoading, isError } = useQuery({ queryKey: ['users'], queryFn: () => listUsers() });
 
   const addMut = useMutation({
     mutationFn: () => createUser({ username, password, display_name: displayName || undefined, role }),
     onSuccess: () => { toast.success('User created'); qc.invalidateQueries({ queryKey: ['users'] }); setShowAdd(false); setUsername(''); setPassword(''); setDisplayName(''); setRole('viewer'); },
-    onError: () => toast.error('Failed to create user'),
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to create user'),
   });
 
   const delMut = useMutation({
     mutationFn: (id: string) => deleteUser(id),
     onSuccess: () => { toast.success('User deleted'); qc.invalidateQueries({ queryKey: ['users'] }); setDelId(null); },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to delete user'),
   });
 
   const toggleMut = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => updateUser(id, { active }),
     onSuccess: () => { toast.success('User updated'); qc.invalidateQueries({ queryKey: ['users'] }); },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to update user'),
   });
 
   const users = data?.data ?? [];
@@ -45,7 +48,12 @@ export default function UsersPage() {
         <button onClick={() => setShowAdd(true)} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg">Add User</button>
       </div>
 
-      {isLoading ? <div className="text-slate-400">Loading...</div> : (
+      {isError && (
+        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+          Failed to load users. Please try again.
+        </div>
+      )}
+      {isLoading ? <PageSkeleton /> : (
         <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
           <table className="w-full">
             <thead><tr className="border-b border-slate-700">

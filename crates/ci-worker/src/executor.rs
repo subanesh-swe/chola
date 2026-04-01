@@ -345,9 +345,15 @@ impl Executor {
                 let line = mask_secret_values(&raw_line, &stdout_secrets);
                 {
                     let mut f = stdout_log_file.lock().await;
-                    let _ = f.write_all(line.as_bytes()).await;
-                    let _ = f.write_all(b"\n").await;
-                    let _ = f.flush().await;
+                    if let Err(e) = f.write_all(line.as_bytes()).await {
+                        tracing::warn!("Failed to write stdout log: {}", e);
+                    }
+                    if let Err(e) = f.write_all(b"\n").await {
+                        tracing::warn!("Failed to write stdout newline: {}", e);
+                    }
+                    if let Err(e) = f.flush().await {
+                        tracing::warn!("Failed to flush stdout log: {}", e);
+                    }
                 }
                 if stdout_tx
                     .send(LogLine {
@@ -377,9 +383,15 @@ impl Executor {
                 let line = mask_secret_values(&raw_line, &stderr_secrets);
                 {
                     let mut f = stderr_log_file.lock().await;
-                    let _ = f.write_all(line.as_bytes()).await;
-                    let _ = f.write_all(b"\n").await;
-                    let _ = f.flush().await;
+                    if let Err(e) = f.write_all(line.as_bytes()).await {
+                        tracing::warn!("Failed to write stderr log: {}", e);
+                    }
+                    if let Err(e) = f.write_all(b"\n").await {
+                        tracing::warn!("Failed to write stderr newline: {}", e);
+                    }
+                    if let Err(e) = f.flush().await {
+                        tracing::warn!("Failed to flush stderr log: {}", e);
+                    }
                 }
                 if stderr_tx
                     .send(LogLine {

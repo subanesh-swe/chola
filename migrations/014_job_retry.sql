@@ -1,0 +1,3 @@
+-- Job retry support
+ALTER TABLE jobs        ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0;
+ALTER TABLE stage_configs ADD COLUMN IF NOT EXISTS max_retries INT NOT NULL DEFAULT 0;

@@ -164,10 +164,16 @@ async fn dispatch_job_for_worker(
 
     let mut job_registry = state.job_registry.write().await;
 
-    // Find a suitable job under the write lock
+    // Find a suitable job under the write lock — highest priority first
     let job_id_to_assign: Option<String> = {
         let queued = job_registry.queued_jobs();
-        queued.iter().find_map(|queued_job| {
+        let mut sorted = queued;
+        sorted.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        });
+        sorted.iter().find_map(|queued_job| {
             let targeted_elsewhere = queued_job
                 .assigned_worker
                 .as_deref()
@@ -214,16 +220,70 @@ async fn dispatch_job_for_worker(
     true
 }
 
+/// Compute resource requirements for a reservation from stage_configs.
+///
+/// Returns (max_cpu, sum_memory, max_disk). Uses max for CPU/disk (stages run
+/// sequentially) and sum for memory (conservative). Falls back to (0,0,0)
+/// when stages have no resource config, triggering whole-worker mode.
+async fn compute_resource_needs(
+    state: &Arc<ControllerState>,
+    req: &ReserveWorkerRequest,
+) -> (u32, u64, u64) {
+    let stage_configs = if let Some(storage) = &state.storage {
+        // Look up repo_id from repo_name
+        let repo_id = match storage.get_repo_by_name(&req.repo_name).await {
+            Ok(Some(repo)) => repo.id,
+            _ => return (0, 0, 0),
+        };
+        storage
+            .get_stage_configs_for_repo(repo_id)
+            .await
+            .unwrap_or_default()
+    } else {
+        return (0, 0, 0);
+    };
+
+    // Filter to requested stages if specified
+    let relevant: Vec<_> = if req.stages.is_empty() {
+        stage_configs.iter().collect()
+    } else {
+        stage_configs
+            .iter()
+            .filter(|s| req.stages.contains(&s.stage_name))
+            .collect()
+    };
+
+    if relevant.is_empty() {
+        return (0, 0, 0);
+    }
+
+    let needed_cpu = relevant
+        .iter()
+        .map(|s| s.required_cpu.max(0) as u32)
+        .max()
+        .unwrap_or(0);
+    let needed_memory = relevant
+        .iter()
+        .map(|s| s.required_memory_mb.max(0) as u64)
+        .max()
+        .unwrap_or(0);
+    let needed_disk = relevant
+        .iter()
+        .map(|s| s.required_disk_mb.max(0) as u64)
+        .max()
+        .unwrap_or(0);
+
+    (needed_cpu, needed_memory, needed_disk)
+}
+
 /// Core logic for the `reserve_worker` RPC.
 ///
-/// Loops through connected workers and acquires the Redis lock BEFORE creating
-/// any in-memory state, preventing the double-booking window (P1-4).
+/// Resource-aware worker reservation.
 ///
-/// NOTE: BestFitScheduler::select_worker requires a &Job which doesn't exist
-/// yet at reservation time (no per-stage resource requirements are known).
-/// Workers are iterated in connected_workers() order for now. A future
-/// improvement could create a synthetic Job from request-level resource hints
-/// and use the scheduler to rank candidates (P1-10).
+/// Computes resource requirements from stage_configs, then selects a worker
+/// with enough available capacity. Multiple builds can share a worker when
+/// resources allow. Falls back to whole-worker reservation when stages have
+/// no resource requirements configured.
 pub async fn do_reserve_worker(
     state: &Arc<ControllerState>,
     req: &ReserveWorkerRequest,
@@ -231,7 +291,10 @@ pub async fn do_reserve_worker(
     // Generate group_id upfront so Redis lock references it
     let group_id = uuid::Uuid::new_v4();
 
-    // Snapshot worker IDs under the lock, then drop before async Redis calls.
+    // Compute resource requirements from stage_configs
+    let (needed_cpu, needed_memory, needed_disk) = compute_resource_needs(state, req).await;
+
+    // Snapshot candidate worker IDs that have enough resources, then drop lock.
     let candidate_ids: Vec<String> = {
         let registry = state.worker_registry.read().await;
         let connected = registry.connected_workers();
@@ -246,12 +309,35 @@ pub async fn do_reserve_worker(
             });
         }
 
-        connected.iter().map(|w| w.info.worker_id.clone()).collect()
+        // Filter by available resources (0 needed = no resource filter)
+        let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
+        connected
+            .iter()
+            .filter(|w| {
+                if !has_resource_req {
+                    return true;
+                }
+                w.available_cpu() >= needed_cpu
+                    && w.available_memory_mb() >= needed_memory
+                    && w.available_disk_mb() >= needed_disk
+            })
+            .map(|w| w.info.worker_id.clone())
+            .collect()
     };
     // worker_registry lock dropped here
 
-    // Loop through candidates and try to acquire a Redis lock on each (P1-4).
-    // The Redis reservation MUST succeed before any in-memory group creation.
+    if candidate_ids.is_empty() {
+        return Ok(ReserveWorkerResponse {
+            job_group_id: String::new(),
+            worker_id: String::new(),
+            stages: Vec::new(),
+            success: false,
+            message: "No workers with sufficient resources available".to_string(),
+        });
+    }
+
+    // Loop through candidates and try to acquire a Redis lock on each.
+    // Redis key is now per-group (not per-worker) for partial reservation.
     let mut selected = None;
     for wid in &candidate_ids {
         if let Some(redis) = &state.redis_store {
@@ -267,14 +353,13 @@ pub async fn do_reserve_worker(
                     selected = Some(wid.clone());
                     break;
                 }
-                Ok(false) => continue, // Already reserved, try next worker
+                Ok(false) => continue,
                 Err(e) => {
                     warn!("Redis error for worker {}: {}", wid, e);
-                    continue; // Skip this worker, try next
+                    continue;
                 }
             }
         } else {
-            // No Redis configured, just pick first available
             selected = Some(wid.clone());
             break;
         }
@@ -293,10 +378,44 @@ pub async fn do_reserve_worker(
         }
     };
 
+    // Allocate resources on the selected worker
+    let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
+    if has_resource_req {
+        let mut registry = state.worker_registry.write().await;
+        if let Some(w) = registry.get_mut(&worker_id) {
+            if !w.allocate(needed_cpu, needed_memory, needed_disk) {
+                warn!(
+                    "Worker {} resource allocation race — resources exhausted",
+                    worker_id
+                );
+            }
+        }
+    }
+
+    // Check branch blacklist for selected worker
+    if let Some(storage) = &state.storage {
+        if !req.branch.is_empty() {
+            let patterns = storage
+                .get_active_branch_blacklist(&worker_id)
+                .await
+                .unwrap_or_default();
+            for pattern in &patterns {
+                if let Ok(re) = regex::Regex::new(pattern) {
+                    if re.is_match(&req.branch) {
+                        return Err(Status::failed_precondition(format!(
+                            "Branch '{}' is blacklisted on worker '{}'",
+                            req.branch, worker_id
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     // Look up repo by name — must exist in DB
-    let repo_id = if let Some(storage) = &state.storage {
+    let (repo_id, max_concurrent, cancel_superseded) = if let Some(storage) = &state.storage {
         match storage.get_repo_by_name(&req.repo_name).await {
-            Ok(Some(repo)) => repo.id,
+            Ok(Some(repo)) => (repo.id, repo.max_concurrent_builds, repo.cancel_superseded),
             Ok(None) => {
                 return Ok(ReserveWorkerResponse {
                     job_group_id: String::new(),
@@ -311,12 +430,57 @@ pub async fn do_reserve_worker(
             }
             Err(e) => {
                 warn!("Failed to lookup repo {}: {}", req.repo_name, e);
-                uuid::Uuid::new_v4()
+                (uuid::Uuid::new_v4(), 0, false)
             }
         }
     } else {
-        uuid::Uuid::new_v4() // no DB — in-memory only
+        (uuid::Uuid::new_v4(), 0, false) // no DB — in-memory only
     };
+
+    // Enforce concurrency limits
+    if max_concurrent > 0 {
+        if let Some(storage) = &state.storage {
+            let active = storage
+                .count_active_groups_for_repo(repo_id)
+                .await
+                .unwrap_or(0);
+            if active >= max_concurrent as i64 {
+                if cancel_superseded && !req.branch.is_empty() {
+                    let superseded = storage
+                        .find_superseded_groups(repo_id, &req.branch, group_id)
+                        .await
+                        .unwrap_or_default();
+                    for gid in &superseded {
+                        if let Err(e) = storage
+                            .update_job_group_state(
+                                *gid,
+                                ci_core::models::job_group::JobGroupState::Cancelled,
+                            )
+                            .await
+                        {
+                            warn!("Failed to cancel superseded group {}: {}", gid, e);
+                        }
+                    }
+                    // Re-check count after cancellations
+                    let new_count = storage
+                        .count_active_groups_for_repo(repo_id)
+                        .await
+                        .unwrap_or(active);
+                    if new_count >= max_concurrent as i64 {
+                        return Err(Status::resource_exhausted(format!(
+                            "Max concurrent builds ({}) reached for repo",
+                            max_concurrent
+                        )));
+                    }
+                } else {
+                    return Err(Status::resource_exhausted(format!(
+                        "Max concurrent builds ({}) reached for repo",
+                        max_concurrent
+                    )));
+                }
+            }
+        }
+    }
 
     // Fetch stage dependency map for DAG validation and StageInfo enrichment
     let stage_deps: std::collections::HashMap<String, Vec<String>> =
@@ -382,6 +546,12 @@ pub async fn do_reserve_worker(
     group.id = group_id;
     group.reserved_worker_id = Some(worker_id.clone());
     group.state = ci_core::models::job_group::JobGroupState::Reserved;
+    group.priority = req.priority;
+    group.allocated_resources = ci_core::models::job_group::AllocatedResources {
+        cpu: needed_cpu,
+        memory_mb: needed_memory,
+        disk_mb: needed_disk,
+    };
     group.updated_at = chrono::Utc::now();
 
     // Build stage info from request stages
@@ -428,7 +598,7 @@ async fn do_submit_stage(
         .map_err(|e| Status::invalid_argument(format!("Invalid job_group_id: {}", e)))?;
 
     // Verify the group exists and get the reserved worker
-    let (worker_id, repo_id) = {
+    let (worker_id, repo_id, group_priority) = {
         let jg_registry = state.job_group_registry.read().await;
         let group = jg_registry.get(&group_id).ok_or_else(|| {
             Status::not_found(format!("Job group {} not found", req.job_group_id))
@@ -439,14 +609,15 @@ async fn do_submit_stage(
                 req.job_group_id
             ))
         })?;
-        (wid, group.repo_id)
+        (wid, group.repo_id, group.priority)
     };
 
     // Check DAG dependencies: all depends_on stages must be in Success state
     {
-        let depends_on: Vec<String> = if let Some(storage) = &state.storage {
+        let depends_on: Vec<String> = if let (Some(storage), Some(rid)) = (&state.storage, repo_id)
+        {
             storage
-                .get_stage_dependencies(repo_id)
+                .get_stage_dependencies(rid)
                 .await
                 .unwrap_or_default()
                 .remove(&req.stage_name)
@@ -473,18 +644,79 @@ async fn do_submit_stage(
         req.job_id.clone()
     };
 
-    // Determine command: use override if provided, otherwise use stage_name as placeholder
-    let command = if req.command_override.is_empty() {
-        format!("echo 'Running stage: {}'", req.stage_name)
+    // Load stage config once for labels + blacklist scope + command_mode
+    let stage_config = if let (Some(storage), Some(rid)) = (&state.storage, repo_id) {
+        storage
+            .get_stage_config_by_name(rid, &req.stage_name)
+            .await
+            .unwrap_or(None)
     } else {
-        req.command_override.clone()
+        None
     };
+    let stage_config_id = stage_config.as_ref().map(|sc| sc.id);
+
+    // Resolve command based on command_mode
+    let user_command = &req.command_override;
+    let command = if let Some(ref sc) = stage_config {
+        match sc.command_mode.as_str() {
+            "fixed" => {
+                // Use configured command only, ignore user command
+                sc.command
+                    .clone()
+                    .ok_or_else(|| Status::invalid_argument("Stage has no configured command"))?
+            }
+            "optional" => {
+                // User command overrides if provided, else use configured
+                if !user_command.is_empty() {
+                    user_command.clone()
+                } else {
+                    sc.command.clone().ok_or_else(|| {
+                        Status::invalid_argument(
+                            "Stage has no configured command and none provided",
+                        )
+                    })?
+                }
+            }
+            "required" => {
+                // User MUST provide command
+                if user_command.is_empty() {
+                    return Err(Status::invalid_argument(
+                        "This stage requires a command from the user",
+                    ));
+                }
+                user_command.clone()
+            }
+            _ => sc.command.clone().unwrap_or_default(),
+        }
+    } else if !user_command.is_empty() {
+        user_command.clone()
+    } else {
+        format!("echo 'Running stage: {}'", req.stage_name)
+    };
+
+    // Check command blacklist
+    if let (Some(storage), Some(rid)) = (&state.storage, repo_id) {
+        let patterns = storage
+            .get_active_command_blacklist(rid, stage_config_id)
+            .await
+            .unwrap_or_default();
+        for pattern in &patterns {
+            if let Ok(re) = regex::Regex::new(pattern) {
+                if re.is_match(&command) {
+                    return Err(Status::permission_denied(format!(
+                        "Command blocked by blacklist rule: {}",
+                        pattern
+                    )));
+                }
+            }
+        }
+    }
 
     // Load pipeline variables and inject into environment; track secret keys
     let mut environment = req.environment.clone();
     let mut secret_env_keys: Vec<String> = Vec::new();
-    if let Some(storage) = &state.storage {
-        if let Ok(vars) = storage.list_variables_for_repo(repo_id).await {
+    if let (Some(storage), Some(rid)) = (&state.storage, repo_id) {
+        if let Ok(vars) = storage.list_variables_for_repo(rid).await {
             for var in vars {
                 environment.entry(var.name.clone()).or_insert(var.value);
                 if var.is_secret {
@@ -493,6 +725,11 @@ async fn do_submit_stage(
             }
         }
     }
+
+    // Load required_labels from stage config (already fetched above)
+    let required_labels = stage_config
+        .map(|sc| sc.required_labels)
+        .unwrap_or_default();
 
     // Create the job
     let mut job = Job::new(
@@ -508,6 +745,8 @@ async fn do_submit_stage(
     job.assigned_worker = Some(worker_id.clone());
     job.environment = environment.clone();
     job.state = ci_core::models::job::JobState::Queued;
+    job.priority = group_priority;
+    job.required_labels = required_labels;
 
     // Add to both registries
     {
@@ -538,7 +777,7 @@ async fn do_submit_stage(
         let db_job = crate::storage::DbJob {
             id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, job_id.as_bytes()),
             job_group_id: group_id,
-            stage_config_id: uuid::Uuid::nil(), // no stage_config mapping yet
+            stage_config_id,
             stage_name: req.stage_name.clone(),
             command: command.clone(),
             pre_script: None,
@@ -551,12 +790,21 @@ async fn do_submit_stage(
             log_path: None,
             started_at: None,
             completed_at: None,
+            retry_count: 0,
             created_at: now,
             updated_at: now,
         };
         if let Err(e) = storage.create_job(&db_job).await {
             warn!("Failed to persist job {}: {}", job_id, e);
         }
+    }
+
+    // Register structured log path + UUID alias
+    {
+        let job_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, job_id.as_bytes());
+        let mut log_agg = state.log_aggregator.write().await;
+        log_agg.register_alias(job_uuid.to_string(), job_id.clone());
+        log_agg.register_log_path(&job_id, &group_id.to_string(), &req.stage_name);
     }
 
     // Wake all waiting job_stream tasks to check for new work
@@ -603,7 +851,9 @@ async fn do_submit_stage(
     // Refresh reservation TTL so long-running pipelines don't expire mid-build
     if let Some(redis) = &state.redis_store {
         let ttl = state.config.workers.reservation_timeout_secs;
-        let _ = redis.refresh_reservation_ttl(&worker_id, ttl).await;
+        if let Err(e) = redis.refresh_reservation_ttl(&worker_id, ttl).await {
+            warn!("Failed to refresh reservation TTL for worker {worker_id}: {e}");
+        }
     }
 
     Ok(SubmitStageResponse {
@@ -642,7 +892,12 @@ impl Orchestrator for OrchestratorService {
 
         // Add worker to Redis available set
         if let Some(redis) = &self.state.redis_store {
-            let _ = redis.add_available_worker(&req.worker_id).await;
+            if let Err(e) = redis.add_available_worker(&req.worker_id).await {
+                warn!(
+                    "Failed to add worker {} to Redis available set: {e}",
+                    req.worker_id
+                );
+            }
         }
 
         Ok(Response::new(RegisterResponse {
@@ -763,6 +1018,106 @@ impl Orchestrator for OrchestratorService {
             self.state.metrics.dec_active_stages();
         }
 
+        // Persist job state to DB
+        if let Some(storage) = &self.state.storage {
+            let state_str = match reported_state {
+                x if x == ci_core::proto::orchestrator::JobState::Running as i32 => "running",
+                x if x == ci_core::proto::orchestrator::JobState::Success as i32 => "success",
+                x if x == ci_core::proto::orchestrator::JobState::Failed as i32 => "failed",
+                x if x == ci_core::proto::orchestrator::JobState::Cancelled as i32 => "cancelled",
+                x if x == ci_core::proto::orchestrator::JobState::Assigned as i32 => "assigned",
+                _ => "unknown",
+            };
+            if let Ok(job_uuid) = uuid::Uuid::parse_str(&req.job_id) {
+                if let Err(e) = storage
+                    .update_job_state(
+                        job_uuid,
+                        state_str,
+                        if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
+                            Some(req.exit_code)
+                        } else {
+                            None
+                        },
+                        None,
+                        None,
+                        Some(&req.worker_id),
+                    )
+                    .await
+                {
+                    warn!("Failed to update job state in DB: {}", e);
+                }
+            } else {
+                // Legacy job IDs are strings like "job-20260401T...", generate matching UUID
+                let job_uuid = uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_OID,
+                    format!("job-{}", req.job_id).as_bytes(),
+                );
+                if let Err(e) = storage
+                    .update_job_state(
+                        job_uuid,
+                        state_str,
+                        if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
+                            Some(req.exit_code)
+                        } else {
+                            None
+                        },
+                        None,
+                        None,
+                        Some(&req.worker_id),
+                    )
+                    .await
+                {
+                    warn!("Failed to update legacy job state in DB: {}", e);
+                }
+            }
+        }
+
+        // Record resource usage for terminal states
+        let is_terminal = reported_state == ci_core::proto::orchestrator::JobState::Success as i32
+            || reported_state == ci_core::proto::orchestrator::JobState::Failed as i32
+            || reported_state == ci_core::proto::orchestrator::JobState::Cancelled as i32;
+        if is_terminal {
+            if let Some(storage) = &self.state.storage {
+                let registry = self.state.job_registry.read().await;
+                if let Some(job) = registry.get(&req.job_id) {
+                    if let Some(stage_config_id) = job.stage_config_id {
+                        let repo_id = if let Some(group_id) = job.job_group_id {
+                            let jg = self.state.job_group_registry.read().await;
+                            jg.get(&group_id)
+                                .and_then(|g| g.repo_id)
+                                .unwrap_or_default()
+                        } else {
+                            uuid::Uuid::nil()
+                        };
+                        let job_uuid = uuid::Uuid::parse_str(&req.job_id).unwrap_or_default();
+                        let duration_secs = job.started_at.map(|start| {
+                            chrono::Utc::now()
+                                .signed_duration_since(start)
+                                .num_seconds() as i32
+                        });
+                        if let Err(e) = storage
+                            .record_stage_resources(
+                                stage_config_id,
+                                repo_id,
+                                job_uuid,
+                                None, // cpu — not tracked in heartbeat yet
+                                None, // memory — not tracked in heartbeat yet
+                                None, // disk — not tracked in heartbeat yet
+                                duration_secs,
+                                Some(req.exit_code),
+                            )
+                            .await
+                        {
+                            warn!(
+                                "Failed to record stage resources for job {}: {e}",
+                                req.job_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Check group completion
         if !req.job_group_id.is_empty() {
             if let Ok(group_id) = uuid::Uuid::parse_str(&req.job_group_id) {
@@ -795,26 +1150,45 @@ impl Orchestrator for OrchestratorService {
 
                     jg.check_group_completion(&group_id).map(|new_state| {
                         let worker_id = jg.on_group_completed(&group_id);
-                        let repo_id = jg.get(&group_id).map(|g| g.repo_id);
+                        let repo_id = jg.get(&group_id).and_then(|g| g.repo_id);
                         let branch = jg.get(&group_id).and_then(|g| g.branch.clone());
                         let commit_sha = jg.get(&group_id).and_then(|g| g.commit_sha.clone());
-                        (new_state, worker_id, repo_id, branch, commit_sha)
+                        let alloc = jg
+                            .get(&group_id)
+                            .map(|g| g.allocated_resources)
+                            .unwrap_or_default();
+                        (new_state, worker_id, repo_id, branch, commit_sha, alloc)
                     })
                 }; // jg write lock dropped here
 
                 // Phase 2: async I/O without holding the lock
-                if let Some((new_state, worker_id, repo_id, branch, commit_sha)) = completion_info {
+                if let Some((new_state, worker_id, repo_id, branch, commit_sha, alloc)) =
+                    completion_info
+                {
                     info!("Job group {} completed: {}", group_id, new_state);
                     self.state.metrics.dec_active_builds();
 
-                    if let Some(worker_id) = worker_id {
+                    if let Some(ref wid) = worker_id {
+                        // Release allocated resources on the worker
+                        if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+                            let mut wr = self.state.worker_registry.write().await;
+                            if let Some(w) = wr.get_mut(wid) {
+                                w.release(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+                            }
+                        }
+
                         if let Some(redis) = &self.state.redis_store {
-                            let _ = ReservationManager::release(redis, &worker_id, &group_id).await;
+                            if let Err(e) = ReservationManager::release(redis, wid, &group_id).await
+                            {
+                                warn!("Failed to release reservation for worker {}: {}", wid, e);
+                            }
                         }
                     }
 
                     if let Some(storage) = &self.state.storage {
-                        let _ = storage.update_job_group_state(group_id, new_state).await;
+                        if let Err(e) = storage.update_job_group_state(group_id, new_state).await {
+                            error!("Failed to persist group {} state to DB: {e}", group_id);
+                        }
 
                         // Dispatch notifications for completed group
                         if let Some(repo_id) = repo_id {
@@ -1029,7 +1403,9 @@ impl Orchestrator for OrchestratorService {
             _ => JobType::Common,
         };
 
-        // Create job
+        // Create job with an ad-hoc group ID so completion tracking works
+        let branch = Some(req.branch_id.clone()).filter(|s| !s.is_empty());
+        let group_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, req.job_id.as_bytes());
         let mut job = Job::new(
             req.job_id.clone(),
             req.command.clone(),
@@ -1039,17 +1415,94 @@ impl Orchestrator for OrchestratorService {
             req.required_disk_mb,
         );
         job.isolation_required = req.isolation_required;
-        job.branch_id = Some(req.branch_id).filter(|s| !s.is_empty());
+        job.branch_id = branch.clone();
         job.environment = req.environment;
         job.submitter_connection_id = Some(peer_addr);
+        job.job_group_id = Some(group_id);
 
-        // Add to registry
-        let mut registry = self.state.job_registry.write().await;
-        registry.add_job(job);
-        drop(registry);
+        // Add to registries (both job + group so completion detection works)
+        {
+            let mut jgr = self.state.job_group_registry.write().await;
+            let group = ci_core::models::job_group::JobGroup::new_with_id(
+                group_id,
+                None,
+                branch.clone(),
+                None,
+                "cli".to_string(),
+            );
+            jgr.add_group(group);
+            jgr.add_job_to_group(&group_id, job.clone());
+        }
+        {
+            let mut registry = self.state.job_registry.write().await;
+            registry.add_job(job);
+        }
+
+        // Register UUID alias + structured log path
+        {
+            let job_uuid = uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_OID,
+                format!("job-{}", req.job_id).as_bytes(),
+            );
+            let mut log_agg = self.state.log_aggregator.write().await;
+            log_agg.register_alias(job_uuid.to_string(), req.job_id.clone());
+            log_agg.register_log_path(&req.job_id, &group_id.to_string(), "default");
+        }
 
         self.state.metrics.inc_jobs_submitted();
         self.state.metrics.inc_active_stages();
+
+        // Persist to DB (ad-hoc job group + job)
+        if let Some(storage) = &self.state.storage {
+            let now = chrono::Utc::now();
+            let group_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, req.job_id.as_bytes());
+
+            let group = ci_core::models::job_group::JobGroup {
+                id: group_id,
+                repo_id: None,
+                branch: branch.clone(),
+                commit_sha: None,
+                trigger_source: "cli".to_string(),
+                reserved_worker_id: None,
+                state: ci_core::models::job_group::JobGroupState::Running,
+                priority: 0,
+                pr_number: None,
+                allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
+                created_at: now,
+                updated_at: now,
+                completed_at: None,
+            };
+            if let Err(e) = storage.create_job_group(&group).await {
+                warn!("Failed to persist ad-hoc job group: {}", e);
+            }
+
+            let db_job = crate::storage::DbJob {
+                id: uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_OID,
+                    format!("job-{}", req.job_id).as_bytes(),
+                ),
+                job_group_id: group_id,
+                stage_config_id: None,
+                stage_name: "default".to_string(),
+                command: req.command.clone(),
+                pre_script: None,
+                post_script: None,
+                worker_id: None,
+                state: "queued".to_string(),
+                exit_code: None,
+                pre_exit_code: None,
+                post_exit_code: None,
+                log_path: None,
+                started_at: None,
+                completed_at: None,
+                retry_count: 0,
+                created_at: now,
+                updated_at: now,
+            };
+            if let Err(e) = storage.create_job(&db_job).await {
+                warn!("Failed to persist ad-hoc job: {}", e);
+            }
+        }
 
         // Wake all waiting job_stream tasks to check for new work
         self.state.scheduler_notify.notify_waiters();
@@ -1377,17 +1830,24 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
 
                         for gid in db_updates {
                             if let Some(storage) = &state_for_hb.storage {
-                                let _ = storage
+                                if let Err(e) = storage
                                     .update_job_group_state(
                                         gid,
                                         ci_core::models::job_group::JobGroupState::Failed,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    error!("Failed to mark group {gid} as failed after worker death: {e}");
+                                }
                             }
                         }
 
                         if let Some(redis) = &state_for_hb.redis_store {
-                            let _ = ReservationManager::release_force(redis, worker_id).await;
+                            if let Err(e) =
+                                ReservationManager::release_force(redis, worker_id).await
+                            {
+                                warn!("Failed to release reservation for dead worker {worker_id}: {e}");
+                            }
                         }
                     }
                 }
@@ -1451,6 +1911,32 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
         });
     }
 
+    // ── Terminal entry eviction — every 10 minutes ────────────────────────────
+    {
+        let state_evict = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                let evicted_jobs = {
+                    let mut jr = state_evict.job_registry.write().await;
+                    jr.evict_terminal(std::time::Duration::from_secs(1800))
+                };
+                let evicted_groups = {
+                    let mut jgr = state_evict.job_group_registry.write().await;
+                    jgr.evict_terminal(std::time::Duration::from_secs(1800))
+                };
+                if evicted_jobs > 0 || evicted_groups > 0 {
+                    info!(
+                        jobs = evicted_jobs,
+                        groups = evicted_groups,
+                        "Evicted terminal entries from memory"
+                    );
+                }
+            }
+        });
+    }
+
     // ── Cron/scheduled builds — every 60 seconds ──────────────────────────────
     {
         let state_cron = state.clone();
@@ -1493,6 +1979,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                         branch: schedule.branch.clone(),
                         commit_sha: String::new(), // cron builds use latest
                         stages: schedule.stages.clone(),
+                        priority: 0,
                     };
                     match do_reserve_worker(&state_cron, &req).await {
                         Ok(resp) if resp.success => {

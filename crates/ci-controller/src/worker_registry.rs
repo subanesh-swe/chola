@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use tracing::info;
 
-use ci_core::models::worker::{DiskType, WorkerHeartbeat, WorkerInfo, WorkerState, WorkerStatus};
+use ci_core::models::worker::{
+    DiskDetailInfo, DiskType, WorkerHeartbeat, WorkerInfo, WorkerState, WorkerStatus,
+};
 use ci_core::proto::orchestrator::{HeartbeatMessage, RegisterRequest};
 
 /// In-memory worker registry
@@ -22,6 +24,19 @@ impl WorkerRegistry {
             _ => DiskType::Sata,
         };
 
+        let disk_details: Vec<DiskDetailInfo> = req
+            .disk_details
+            .iter()
+            .map(|d| DiskDetailInfo {
+                mount_point: d.mount_point.clone(),
+                device: d.device.clone(),
+                fs_type: d.fs_type.clone(),
+                total_mb: d.total_mb,
+                used_mb: d.used_mb,
+                available_mb: d.available_mb,
+            })
+            .collect();
+
         let info = WorkerInfo {
             worker_id: req.worker_id.clone(),
             hostname: req.hostname.clone(),
@@ -31,6 +46,8 @@ impl WorkerRegistry {
             disk_type,
             supported_job_types: req.supported_job_types.clone(),
             docker_enabled: req.docker_enabled,
+            labels: req.labels.clone(),
+            disk_details,
         };
 
         let state = WorkerState::new(info);
@@ -41,6 +58,18 @@ impl WorkerRegistry {
     pub fn update_heartbeat(&mut self, msg: &HeartbeatMessage) {
         if let Some(worker) = self.workers.get_mut(&msg.worker_id) {
             worker.status = WorkerStatus::Connected;
+            let disk_details: Vec<DiskDetailInfo> = msg
+                .disk_details
+                .iter()
+                .map(|d| DiskDetailInfo {
+                    mount_point: d.mount_point.clone(),
+                    device: d.device.clone(),
+                    fs_type: d.fs_type.clone(),
+                    total_mb: d.total_mb,
+                    used_mb: d.used_mb,
+                    available_mb: d.available_mb,
+                })
+                .collect();
             worker.last_heartbeat = Some(WorkerHeartbeat {
                 worker_id: msg.worker_id.clone(),
                 used_cpu_percent: msg.used_cpu_percent,
@@ -49,12 +78,17 @@ impl WorkerRegistry {
                 running_job_ids: msg.running_job_ids.clone(),
                 system_load: msg.system_load,
                 timestamp: chrono::Utc::now(),
+                disk_details,
             });
         }
     }
 
     pub fn get(&self, worker_id: &str) -> Option<&WorkerState> {
         self.workers.get(worker_id)
+    }
+
+    pub fn get_mut(&mut self, worker_id: &str) -> Option<&mut WorkerState> {
+        self.workers.get_mut(worker_id)
     }
 
     pub fn connected_workers(&self) -> Vec<&WorkerState> {
@@ -102,6 +136,33 @@ impl WorkerRegistry {
     pub fn insert_worker_state(&mut self, state: WorkerState) {
         info!("Worker state recovered: {}", state.info.worker_id);
         self.workers.insert(state.info.worker_id.clone(), state);
+    }
+
+    /// Update labels for a worker. Returns true if found.
+    pub fn update_labels(&mut self, worker_id: &str, labels: Vec<String>) -> bool {
+        if let Some(worker) = self.workers.get_mut(worker_id) {
+            worker.info.labels = labels;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get labels for a worker.
+    pub fn get_labels(&self, worker_id: &str) -> Option<&[String]> {
+        self.workers
+            .get(worker_id)
+            .map(|w| w.info.labels.as_slice())
+    }
+
+    /// Update system metadata for a worker. Returns true if found.
+    pub fn update_system_info(&mut self, worker_id: &str, info: serde_json::Value) -> bool {
+        if let Some(worker) = self.workers.get_mut(worker_id) {
+            worker.system_info = Some(info);
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns `true` if the worker is currently in drain mode.

@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 
 use ci_core::models::config::WorkerConfig;
 use ci_core::proto::orchestrator::{
-    JobState, JobStatusUpdate, ReconnectRequest, RegisterRequest, RunningJobInfo,
+    DiskInfo, JobState, JobStatusUpdate, ReconnectRequest, RegisterRequest, RunningJobInfo,
 };
 
 use crate::executor::{ExecutionResult, Executor};
@@ -128,18 +128,43 @@ async fn run_session(
     let jobs_snapshot = running_jobs.read().await.clone();
     if jobs_snapshot.is_empty() {
         // Fresh registration
+        // Use real system info for totals, fall back to config
+        let sys = sysinfo::System::new_all();
+        let real_cpu = sys.cpus().len() as u32;
+        let real_memory_mb = sys.total_memory() / 1024 / 1024;
+        let disk_details = collect_disk_details(&config.tracked_disk_paths);
+        let total_disk_mb: u64 = disk_details.iter().map(|d| d.total_mb).sum();
+        let total_disk_mb = if total_disk_mb > 0 {
+            total_disk_mb
+        } else {
+            config.resources.total_disk_gb as u64 * 1024
+        };
+
         let register_req = RegisterRequest {
             worker_id: config.worker_id.clone(),
             hostname: config.hostname.clone(),
-            total_cpu: config.resources.total_cpu,
-            total_memory_mb: config.resources.total_memory_gb * 1024,
-            total_disk_mb: config.resources.total_disk_gb * 1024,
+            total_cpu: if real_cpu > 0 {
+                real_cpu
+            } else {
+                config.resources.total_cpu
+            },
+            total_memory_mb: if real_memory_mb > 0 {
+                real_memory_mb
+            } else {
+                config.resources.total_memory_gb as u64 * 1024
+            },
+            total_disk_mb,
             disk_type: config.resources.disk_type.clone(),
             supported_job_types: config.capabilities.supported_job_types.clone(),
             docker_enabled: config.capabilities.docker_enabled,
+            labels: Vec::new(),
+            disk_details,
         };
         let resp = client.register(register_req).await?;
         info!("Registration response: {}", resp.message);
+
+        // Report system metadata to controller REST API
+        report_system_metadata(config).await;
     } else {
         // Attempt reconnect with current state
         let running_job_infos: Vec<RunningJobInfo> = jobs_snapshot
@@ -188,10 +213,14 @@ async fn run_session(
     let worker_id = config.worker_id.clone();
     let running_jobs_for_hb = running_jobs.clone();
     let hb_token = cancel_token.clone();
+    let tracked_paths = config.tracked_disk_paths.clone();
 
     tokio::spawn(async move {
         let mut interval =
             tokio::time::interval(tokio::time::Duration::from_secs(hb_interval.into()));
+        let mut sys = sysinfo::System::new();
+        // Initial CPU refresh so the first reading isn't always 0
+        sys.refresh_cpu_all();
         loop {
             tokio::select! {
                 _ = hb_token.cancelled() => {
@@ -199,16 +228,19 @@ async fn run_session(
                     break;
                 }
                 _ = interval.tick() => {
+                    let (cpu, mem, disk, load) = collect_system_metrics(&mut sys, &tracked_paths);
+                    let disk_details = collect_disk_details(&tracked_paths);
                     let jobs = running_jobs_for_hb.read().await.clone();
                     let job_ids: Vec<String> = jobs.iter().map(|j| j.job_id.clone()).collect();
                     let msg = ci_core::proto::orchestrator::HeartbeatMessage {
                         worker_id: worker_id.clone(),
-                        used_cpu_percent: 0.0,
-                        used_memory_mb: 0,
-                        used_disk_mb: 0,
+                        used_cpu_percent: cpu,
+                        used_memory_mb: mem,
+                        used_disk_mb: disk,
                         running_job_ids: job_ids,
-                        system_load: 0.0,
+                        system_load: load,
                         timestamp_unix: chrono::Utc::now().timestamp(),
+                        disk_details,
                     };
                     if hb_tx.send(msg).await.is_err() {
                         break;
@@ -693,7 +725,7 @@ async fn run_job_with_streaming(
     let final_message = format!("{} ({} bytes of logs)", report.message, log_bytes);
     let exit_code = report.exit_code;
     let final_state = report.state;
-    let _ = report_status(
+    if let Err(e) = report_status(
         job_client,
         ctx,
         StatusReport {
@@ -701,9 +733,146 @@ async fn run_job_with_streaming(
             ..report
         },
     )
-    .await;
+    .await
+    {
+        warn!("Failed to report final status for job {}: {e}", ctx.job_id);
+    }
 
     info!("Job {} completed with exit code {}", ctx.job_id, exit_code);
 
     final_state
+}
+
+/// Collect real CPU, memory, disk usage and system load via sysinfo.
+///
+/// Returns `(used_cpu_percent, used_memory_mb, used_disk_mb, system_load_1m)`.
+fn collect_system_metrics(
+    sys: &mut sysinfo::System,
+    tracked_paths: &[String],
+) -> (f64, u64, u64, f64) {
+    sys.refresh_cpu_all();
+    sys.refresh_memory();
+
+    let cpu = sys.global_cpu_usage() as f64;
+    let used_memory_mb = sys.used_memory() / 1024 / 1024;
+
+    let disk_details = collect_disk_details(tracked_paths);
+    let used_disk_mb: u64 = disk_details.iter().map(|d| d.used_mb).sum();
+
+    let load_avg = sysinfo::System::load_average();
+
+    (cpu, used_memory_mb, used_disk_mb, load_avg.one)
+}
+
+/// Collect per-disk/partition info, filtering virtual filesystems.
+fn collect_disk_details(tracked_paths: &[String]) -> Vec<DiskInfo> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+
+    // If specific paths configured, only show those
+    if !tracked_paths.is_empty() {
+        return disks
+            .iter()
+            .filter(|d| {
+                let mount = d.mount_point().to_string_lossy();
+                tracked_paths.iter().any(|p| mount.as_ref() == p.as_str())
+            })
+            .map(|d| DiskInfo {
+                mount_point: d.mount_point().to_string_lossy().to_string(),
+                device: d.name().to_string_lossy().to_string(),
+                fs_type: d.file_system().to_string_lossy().to_string(),
+                total_mb: d.total_space() / 1024 / 1024,
+                used_mb: (d.total_space() - d.available_space()) / 1024 / 1024,
+                available_mb: d.available_space() / 1024 / 1024,
+            })
+            .collect();
+    }
+
+    // Auto-detect: filter noise, dedup by device (keep shortest mount point per device)
+    let mut by_device: std::collections::HashMap<String, DiskInfo> =
+        std::collections::HashMap::new();
+    for d in disks.iter() {
+        let fs = d.file_system().to_string_lossy().to_string();
+        let mount = d.mount_point().to_string_lossy().to_string();
+        // Skip virtual/noise filesystems
+        if matches!(
+            fs.as_str(),
+            "tmpfs" | "devtmpfs" | "efivarfs" | "squashfs" | "vfat"
+        ) || mount.starts_with("/snap/")
+            || mount.starts_with("/sys/")
+            || mount.starts_with("/boot")
+        {
+            continue;
+        }
+        let device = d.name().to_string_lossy().to_string();
+        let info = DiskInfo {
+            mount_point: mount.clone(),
+            device: device.clone(),
+            fs_type: fs,
+            total_mb: d.total_space() / 1024 / 1024,
+            used_mb: (d.total_space() - d.available_space()) / 1024 / 1024,
+            available_mb: d.available_space() / 1024 / 1024,
+        };
+        // Keep the shortest mount point per device (e.g., /data over /data/subanesh/...)
+        by_device
+            .entry(device)
+            .and_modify(|existing| {
+                if mount.len() < existing.mount_point.len() {
+                    *existing = info.clone();
+                }
+            })
+            .or_insert(info);
+    }
+    let mut result: Vec<DiskInfo> = by_device.into_values().collect();
+    result.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+    result
+}
+
+/// Derive the controller HTTP URL from config.
+fn controller_http_url(config: &WorkerConfig) -> String {
+    if let Some(url) = &config.controller.http_url {
+        return url.clone();
+    }
+    // Replace gRPC port (typically 50051) with HTTP port (8080)
+    let addr = &config.controller.address;
+    if let Some(colon) = addr.rfind(':') {
+        format!("{}:8080", &addr[..colon])
+    } else {
+        format!("{addr}:8080")
+    }
+}
+
+/// Collect and POST system metadata to controller after registration.
+async fn report_system_metadata(config: &WorkerConfig) {
+    let sys = sysinfo::System::new_all();
+    let metadata = serde_json::json!({
+        "os_name": sysinfo::System::name().unwrap_or_default(),
+        "os_version": sysinfo::System::os_version().unwrap_or_default(),
+        "kernel_version": sysinfo::System::kernel_version().unwrap_or_default(),
+        "arch": std::env::consts::ARCH,
+        "host_name": sysinfo::System::host_name().unwrap_or_default(),
+        "cpu_brand": sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default(),
+        "cpu_count": sys.cpus().len(),
+        "boot_time": sysinfo::System::boot_time(),
+        "uptime": sysinfo::System::uptime(),
+    });
+
+    let base = controller_http_url(config);
+    let url = format!("{base}/api/v1/workers/{}/metadata", config.worker_id);
+
+    match reqwest::Client::new()
+        .put(&url)
+        .json(&metadata)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            info!("Reported system metadata to controller");
+        }
+        Ok(resp) => {
+            warn!("Controller rejected metadata: {}", resp.status());
+        }
+        Err(e) => {
+            warn!("Failed to send system metadata: {e}");
+        }
+    }
 }

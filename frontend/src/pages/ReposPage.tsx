@@ -7,6 +7,7 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { usePermission } from '../hooks/usePermission';
 import { toast } from 'sonner';
+import type { MutationError } from '../types';
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -109,7 +110,7 @@ export default function ReposPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [delId, setDelId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ['repos'], queryFn: () => listRepos() });
+  const { data, isLoading, isError } = useQuery({ queryKey: ['repos'], queryFn: () => listRepos() });
 
   const addMut = useMutation({
     mutationFn: ({ name, url }: { name: string; url: string }) =>
@@ -119,7 +120,7 @@ export default function ReposPage() {
       qc.invalidateQueries({ queryKey: ['repos'] });
       setShowAdd(false);
     },
-    onError: () => toast.error('Failed to create repo'),
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to create repo'),
   });
 
   const delMut = useMutation({
@@ -129,6 +130,7 @@ export default function ReposPage() {
       qc.invalidateQueries({ queryKey: ['repos'] });
       setDelId(null);
     },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to delete repo'),
   });
 
   const repos = data?.data ?? [];
@@ -152,6 +154,11 @@ export default function ReposPage() {
         )}
       </div>
 
+      {isError && (
+        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+          Failed to load repositories. Please try again.
+        </div>
+      )}
       {isLoading ? (
         <div className="text-slate-400" role="status" aria-live="polite">Loading...</div>
       ) : (

@@ -9,3 +9,6 @@ export const logout = () =>
 
 export const getMe = () =>
   apiClient.get<User>('/auth/me').then((r) => r.data);
+
+export const changePassword = (data: { current_password: string; new_password: string }) =>
+  apiClient.put('/auth/password', data).then((r) => r.data);

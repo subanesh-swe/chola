@@ -12,21 +12,22 @@ use crate::auth::{jwt, middleware::AuthUser, password};
 use crate::state::ControllerState;
 
 use super::error::ApiError;
+use super::user_handlers::validate_password;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub token: String,
     pub expires_at: String,
     pub user: UserResponse,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct UserResponse {
     pub id: String,
     pub username: String,
@@ -52,6 +53,17 @@ impl From<User> for UserResponse {
 }
 
 /// POST /api/v1/auth/login
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = LoginResponse),
+        (status = 401, description = "Invalid credentials"),
+        (status = 429, description = "Too many requests"),
+    )
+)]
 pub async fn login(
     State(state): State<Arc<ControllerState>>,
     Json(body): Json<LoginRequest>,
@@ -101,7 +113,58 @@ pub async fn login(
     }))
 }
 
+/// PUT /api/v1/auth/password
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+pub async fn change_password(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Json(body): Json<ChangePasswordRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    let user = storage
+        .get_user(auth_user.user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("User not found".into()))?;
+
+    let valid = password::verify_password(&body.current_password, &user.password_hash)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !valid {
+        return Err(ApiError::Unauthorized(
+            "Current password is incorrect".into(),
+        ));
+    }
+
+    validate_password(&body.new_password)?;
+    let hash = password::hash_password(&body.new_password)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    storage
+        .update_user_password(auth_user.user_id, &hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    info!("User '{}' changed their password", user.username);
+    Ok(Json(json!({"message": "Password updated"})))
+}
+
 /// GET /api/v1/auth/me
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/me",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Current user info"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn me(
     State(state): State<Arc<ControllerState>>,
     auth_user: AuthUser,
@@ -114,7 +177,9 @@ pub async fn me(
         .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
 
     let resp: UserResponse = user.into();
-    Ok(Json(serde_json::to_value(resp).unwrap()))
+    Ok(Json(
+        serde_json::to_value(resp).map_err(|e| ApiError::Internal(e.to_string()))?,
+    ))
 }
 
 /// POST /api/v1/auth/logout
@@ -129,7 +194,9 @@ pub async fn logout(
                 if let Ok(claims) =
                     crate::auth::jwt::decode_token(&state.auth_config.jwt_secret, token)
                 {
-                    let _ = storage.revoke_session(&claims.jti).await;
+                    if let Err(e) = storage.revoke_session(&claims.jti).await {
+                        tracing::warn!("Failed to revoke session: {}", e);
+                    }
                 }
             }
         }

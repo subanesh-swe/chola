@@ -1,3 +1,4 @@
+pub mod api_key;
 pub mod config;
 pub mod job;
 pub mod job_group;

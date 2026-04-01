@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import { login } from '../api/auth';
 import { toast } from 'sonner';
+import type { MutationError } from '../types';
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -12,7 +13,16 @@ export default function LoginPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault(); setLoading(true);
     try { const res = await login({ username, password }); authLogin(res.token, res.expires_at, res.user); nav('/'); }
-    catch { toast.error('Login failed. Check your credentials.'); }
+    catch (err: unknown) {
+      const e = err as MutationError;
+      if (e.statusCode && e.statusCode >= 500) {
+        toast.error('Server error. Please try again later.');
+      } else if (e.statusCode === 401 || e.statusCode === 403) {
+        toast.error('Invalid username or password.');
+      } else {
+        toast.error(e.userMessage || 'Login failed.');
+      }
+    }
     finally { setLoading(false); }
   };
   return (

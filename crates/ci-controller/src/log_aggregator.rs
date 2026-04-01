@@ -44,14 +44,20 @@ pub struct LogAggregator {
     broadcast_capacity: usize,
     /// Directory to write log files for Vector to tail
     log_dir: Option<String>,
+    /// Map UUID strings to original job_id strings for log lookup
+    uuid_aliases: HashMap<String, String>,
+    /// Map job_id to structured disk path: {group_id}/{stage_name}.log
+    job_log_paths: HashMap<String, String>,
 }
 
 impl LogAggregator {
     pub fn new() -> Self {
         Self {
             jobs: HashMap::new(),
-            broadcast_capacity: 256, // Buffer up to 256 log chunks per job
+            broadcast_capacity: 256,
             log_dir: None,
+            uuid_aliases: HashMap::new(),
+            job_log_paths: HashMap::new(),
         }
     }
 
@@ -60,7 +66,25 @@ impl LogAggregator {
             jobs: HashMap::new(),
             broadcast_capacity: 256,
             log_dir: Some(log_dir),
+            uuid_aliases: HashMap::new(),
+            job_log_paths: HashMap::new(),
         }
+    }
+
+    /// Register a UUID alias for a job_id so logs can be looked up by either.
+    pub fn register_alias(&mut self, uuid: String, job_id: String) {
+        self.uuid_aliases.insert(uuid, job_id);
+    }
+
+    /// Register a structured log path for a job: {group_id}/{stage_name}.log
+    pub fn register_log_path(&mut self, job_id: &str, group_id: &str, stage_name: &str) {
+        let path = format!("{}/{}.log", group_id, stage_name);
+        self.job_log_paths.insert(job_id.to_string(), path);
+    }
+
+    /// Resolve a job_id: if it's a UUID alias, return the original job_id.
+    fn resolve_job_id<'a>(&'a self, id: &'a str) -> &'a str {
+        self.uuid_aliases.get(id).map(|s| s.as_str()).unwrap_or(id)
     }
 
     /// Append a log chunk for a job. Returns the new last_offset.
@@ -167,12 +191,18 @@ impl LogAggregator {
         // Store the log data
         state.log_data.extend_from_slice(data);
 
-        // Write to disk for Vector to tail
+        // Write to disk: {log_dir}/{group_id}/{stage_name}.log or fallback flat
         if let Some(ref log_dir) = self.log_dir {
-            let log_path = format!("{}/{}.log", log_dir, job_id);
+            let log_path = if let Some(structured) = self.job_log_paths.get(job_id) {
+                format!("{}/{}", log_dir, structured)
+            } else {
+                format!("{}/{}.log", log_dir, job_id)
+            };
             // Use sync write since we're in a sync context (behind RwLock)
             if let Some(parent) = std::path::Path::new(&log_path).parent() {
-                let _ = std::fs::create_dir_all(parent);
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!("Failed to create log dir {:?}: {}", parent, e);
+                }
             }
             if let Ok(mut file) = std::fs::OpenOptions::new()
                 .create(true)
@@ -180,7 +210,9 @@ impl LogAggregator {
                 .open(&log_path)
             {
                 use std::io::Write;
-                let _ = file.write_all(data);
+                if let Err(e) = file.write_all(data) {
+                    warn!("Failed to write log data to {}: {}", log_path, e);
+                }
             }
         }
 
@@ -204,7 +236,8 @@ impl LogAggregator {
     /// Get the last acknowledged offset for a job.
     /// Used by the Reconnect RPC to tell the worker where to resume.
     pub fn last_offset(&self, job_id: &str) -> u64 {
-        self.jobs.get(job_id).map(|s| s.last_offset).unwrap_or(0)
+        let id = self.resolve_job_id(job_id);
+        self.jobs.get(id).map(|s| s.last_offset).unwrap_or(0)
     }
 
     /// Mark a job's log stream as complete.
@@ -221,21 +254,44 @@ impl LogAggregator {
 
     /// Check if a job's log stream is complete.
     pub fn is_complete(&self, job_id: &str) -> bool {
-        self.jobs.get(job_id).map(|s| s.complete).unwrap_or(false)
+        let id = self.resolve_job_id(job_id);
+        self.jobs.get(id).map(|s| s.complete).unwrap_or(false)
     }
 
     /// Get the accumulated log data for a job.
     /// Returns an empty slice if the job doesn't exist.
     pub fn get_log_data(&self, job_id: &str) -> &[u8] {
+        let id = self.resolve_job_id(job_id);
         self.jobs
-            .get(job_id)
+            .get(id)
             .map(|s| s.log_data.as_slice())
             .unwrap_or(&[])
     }
 
     /// Get the log data as a string (for display purposes).
+    /// Falls back to reading from disk if in-memory buffer is empty.
     pub fn get_log_string(&self, job_id: &str) -> String {
-        String::from_utf8_lossy(self.get_log_data(job_id)).to_string()
+        let data = self.get_log_data(job_id);
+        if !data.is_empty() {
+            return String::from_utf8_lossy(data).to_string();
+        }
+        // Fallback: read from disk
+        if let Some(ref log_dir) = self.log_dir {
+            let id = self.resolve_job_id(job_id);
+            // Try structured path first
+            if let Some(structured) = self.job_log_paths.get(id) {
+                let path = format!("{}/{}", log_dir, structured);
+                if let Ok(contents) = std::fs::read_to_string(&path) {
+                    return contents;
+                }
+            }
+            // Try flat path
+            let flat_path = format!("{}/{}.log", log_dir, id);
+            if let Ok(contents) = std::fs::read_to_string(&flat_path) {
+                return contents;
+            }
+        }
+        String::new()
     }
 
     /// Subscribe to live log updates for a job.
@@ -252,7 +308,8 @@ impl LogAggregator {
         job_id: &str,
         from_offset: u64,
     ) -> (Vec<LogChunkData>, broadcast::Receiver<LogChunkData>, bool) {
-        match self.jobs.get(job_id) {
+        let job_id = self.resolve_job_id(job_id).to_string();
+        match self.jobs.get(&job_id) {
             Some(state) => {
                 // Clamp from_offset to actual buffer size
                 let actual_offset = if from_offset as usize > state.log_data.len() {
@@ -323,7 +380,7 @@ impl LogAggregator {
                 state.complete
                     && state
                         .finalized_at
-                        .map_or(false, |t| (now - t).num_seconds() > max_age_secs)
+                        .is_some_and(|t| (now - t).num_seconds() > max_age_secs)
             })
             .map(|(id, _)| id.clone())
             .collect();

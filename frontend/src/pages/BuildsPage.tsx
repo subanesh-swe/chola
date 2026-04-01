@@ -13,7 +13,7 @@ export default function BuildsPage() {
   const [page, setPage] = useState(1);
   const [stateFilter, setStateFilter] = useState('');
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['builds', page, stateFilter],
     queryFn: () => listBuilds({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, state: stateFilter || undefined }),
     refetchInterval: 5000,
@@ -40,6 +40,11 @@ export default function BuildsPage() {
         </div>
       </div>
 
+      {isError && (
+        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+          Failed to load builds. Please try again.
+        </div>
+      )}
       <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-slate-400">Loading...</div>

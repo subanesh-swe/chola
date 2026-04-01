@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -20,6 +20,20 @@ pub struct PaginationParams {
 }
 
 /// GET /api/v1/workers
+#[utoipa::path(
+    get,
+    path = "/api/v1/workers",
+    tag = "Workers",
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size"),
+        ("offset" = Option<i64>, Query, description = "Offset"),
+    ),
+    responses(
+        (status = 200, description = "Paginated worker list"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn list(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
@@ -44,6 +58,7 @@ pub async fn list(
                     "running_jobs": hb.running_job_ids.len(),
                     "system_load": hb.system_load,
                     "timestamp": hb.timestamp.to_rfc3339(),
+                    "disk_details": hb.disk_details,
                 })
             });
             json!({
@@ -51,13 +66,21 @@ pub async fn list(
                 "hostname": w.info.hostname,
                 "status": format!("{:?}", w.status),
                 "total_cpu": w.info.total_cpu,
+                "allocated_cpu": w.allocated_cpu,
+                "available_cpu": w.available_cpu(),
                 "total_memory_mb": w.info.total_memory_mb,
+                "allocated_memory_mb": w.allocated_memory_mb,
+                "available_memory_mb": w.available_memory_mb(),
                 "total_disk_mb": w.info.total_disk_mb,
+                "allocated_disk_mb": w.allocated_disk_mb,
+                "available_disk_mb": w.available_disk_mb(),
                 "disk_type": w.info.disk_type.to_string(),
                 "docker_enabled": w.info.docker_enabled,
                 "supported_job_types": w.info.supported_job_types,
                 "registered_at": w.registered_at.to_rfc3339(),
                 "last_heartbeat": last_hb,
+                "disk_details": w.info.disk_details,
+                "system_info": w.system_info,
             })
         })
         .collect();
@@ -87,6 +110,7 @@ pub async fn get_one(
             "running_jobs": hb.running_job_ids.len(),
             "system_load": hb.system_load,
             "timestamp": hb.timestamp.to_rfc3339(),
+            "disk_details": hb.disk_details,
         })
     });
 
@@ -95,14 +119,45 @@ pub async fn get_one(
         "hostname": w.info.hostname,
         "status": format!("{:?}", w.status),
         "total_cpu": w.info.total_cpu,
+        "allocated_cpu": w.allocated_cpu,
+        "available_cpu": w.available_cpu(),
         "total_memory_mb": w.info.total_memory_mb,
+        "allocated_memory_mb": w.allocated_memory_mb,
+        "available_memory_mb": w.available_memory_mb(),
         "total_disk_mb": w.info.total_disk_mb,
+        "allocated_disk_mb": w.allocated_disk_mb,
+        "available_disk_mb": w.available_disk_mb(),
         "disk_type": w.info.disk_type.to_string(),
         "docker_enabled": w.info.docker_enabled,
         "supported_job_types": w.info.supported_job_types,
         "registered_at": w.registered_at.to_rfc3339(),
         "last_heartbeat": last_hb,
+        "disk_details": w.info.disk_details,
+        "system_info": w.system_info,
     })))
+}
+
+/// PUT /api/v1/workers/:id/metadata
+/// Called by workers after gRPC registration to report OS/kernel/arch info.
+/// No auth required (workers use gRPC tokens, not JWT).
+pub async fn update_metadata(
+    State(state): State<Arc<ControllerState>>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let updated = {
+        let mut registry = state.worker_registry.write().await;
+        registry.update_system_info(&id, body.clone())
+    };
+    if !updated {
+        return Err(ApiError::NotFound(format!("Worker '{}' not found", id)));
+    }
+    if let Some(storage) = &state.storage {
+        if let Err(e) = storage.update_worker_metadata(&id, &body).await {
+            tracing::warn!("Failed to persist metadata for worker {id}: {e}");
+        }
+    }
+    Ok(Json(json!({ "status": "updated" })))
 }
 
 /// POST /api/v1/workers/:id/drain
@@ -125,6 +180,50 @@ pub async fn drain(
     } else {
         Err(ApiError::NotFound(format!("Worker '{}' not found", id)))
     }
+}
+
+/// GET /api/v1/workers/:id/labels
+pub async fn get_labels(
+    State(state): State<Arc<ControllerState>>,
+    _auth_user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let registry = state.worker_registry.read().await;
+    let labels = registry
+        .get_labels(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("Worker '{}' not found", id)))?
+        .to_vec();
+    Ok(Json(json!({ "worker_id": id, "labels": labels })))
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct UpdateLabelsRequest {
+    pub labels: Vec<String>,
+}
+
+/// PUT /api/v1/workers/:id/labels
+pub async fn update_labels(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateLabelsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_workers() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    let updated = {
+        let mut registry = state.worker_registry.write().await;
+        registry.update_labels(&id, body.labels.clone())
+    };
+    if !updated {
+        return Err(ApiError::NotFound(format!("Worker '{}' not found", id)));
+    }
+    if let Some(storage) = &state.storage {
+        if let Err(e) = storage.update_worker_labels(&id, &body.labels).await {
+            tracing::warn!("Failed to persist labels for worker {id}: {e}");
+        }
+    }
+    Ok(Json(json!({ "worker_id": id, "labels": body.labels })))
 }
 
 /// POST /api/v1/workers/:id/undrain

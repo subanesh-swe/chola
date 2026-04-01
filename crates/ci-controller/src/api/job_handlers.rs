@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
@@ -17,6 +18,14 @@ use super::error::ApiError;
 pub struct PaginationParams {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct RunListParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    pub state: Option<String>,
+    pub worker_id: Option<String>,
 }
 
 /// GET /api/v1/job-groups/:id/jobs
@@ -74,7 +83,7 @@ pub async fn get_one(
     Ok(Json(json!({
         "id": job.id.to_string(),
         "job_group_id": job.job_group_id.to_string(),
-        "stage_config_id": job.stage_config_id.to_string(),
+        "stage_config_id": job.stage_config_id.map(|id| id.to_string()),
         "stage_name": job.stage_name,
         "command": job.command,
         "pre_script": job.pre_script,
@@ -106,9 +115,12 @@ pub async fn cancel(
 
     // Also update in DB
     if let Some(storage) = &state.storage {
-        let _ = storage
+        if let Err(e) = storage
             .update_job_state(id, "cancelled", None, None, None, None)
-            .await;
+            .await
+        {
+            warn!("Failed to persist cancel state for job {id}: {e}");
+        }
     }
 
     match worker_id {
@@ -122,4 +134,77 @@ pub async fn cancel(
             "state": "cancelled",
         }))),
     }
+}
+
+/// POST /api/v1/jobs/:id/retry — manually re-queue a failed/cancelled job
+pub async fn retry(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_trigger_builds() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+    let job = storage
+        .retry_job(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::BadRequest("Job not found or not in a retryable state".into()))?;
+
+    state.scheduler_notify.notify_waiters();
+
+    Ok(Json(json!({
+        "id": job.id.to_string(),
+        "state": job.state,
+        "retry_count": job.retry_count,
+    })))
+}
+
+/// GET /api/v1/runs — individual job executions with group+repo context
+pub async fn list_runs(
+    State(state): State<Arc<ControllerState>>,
+    _auth_user: AuthUser,
+    Query(params): Query<RunListParams>,
+) -> Result<Json<Value>, ApiError> {
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    let (runs, total) = storage
+        .list_runs_paginated(
+            limit,
+            offset,
+            params.state.as_deref(),
+            params.worker_id.as_deref(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let data: Vec<Value> = runs
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "job_group_id": r.job_group_id.to_string(),
+                "stage_name": r.stage_name,
+                "command": r.command,
+                "worker_id": r.worker_id,
+                "state": r.state,
+                "exit_code": r.exit_code,
+                "started_at": r.started_at.map(|t| t.to_rfc3339()),
+                "completed_at": r.completed_at.map(|t| t.to_rfc3339()),
+                "created_at": r.created_at.to_rfc3339(),
+                "branch": r.branch,
+                "repo_name": r.repo_name,
+                "group_state": r.group_state,
+                "trigger_source": r.trigger_source,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "data": data,
+        "pagination": { "total": total, "limit": limit, "offset": offset },
+    })))
 }

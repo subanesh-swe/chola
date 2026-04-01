@@ -1,6 +1,14 @@
 bind_address: "0.0.0.0:50051"
 http_port: 8080
 
+# Optional TLS for the REST API (HTTP server). Leave commented out for plain HTTP (dev).
+# For production with auth enabled: configure http_tls OR use a reverse proxy (nginx) with TLS.
+# Without TLS, credentials and tokens are transmitted in plaintext.
+# http_tls:
+#   enabled: true
+#   server_cert: "/etc/chola/certs/server.crt"
+#   server_key: "/etc/chola/certs/server.key"
+
 storage:
   postgres:
     host: localhost
@@ -32,6 +40,14 @@ auth:
   jwt_expiry_secs: 86400
   default_admin_username: "admin"
   default_admin_password: "changeme"
+  # AES-256-GCM key for encrypting secret pipeline variables at rest.
+  # Omit to store plaintext (backward compatible).
+  # encryption_key: "change-me-32-char-secret-key-here"
+
+retention:
+  max_age_days: 90
+  max_builds_per_repo: 500
+  cleanup_interval_secs: 3600
 
 logging:
   level: "info"

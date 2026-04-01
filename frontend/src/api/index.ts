@@ -6,4 +6,7 @@ export * as usersApi from './users';
 export * as dashboardApi from './dashboard';
 export * as jobsApi from './jobs';
 export * as settingsApi from './settings';
-export type { SystemSettings } from './settings';
+export type { SettingsResponse, SettingItem } from './settings';
+export * as auditApi from './audit';
+export type { AuditEntry, AuditLogResponse } from './audit';
+export * as blacklistApi from './blacklist';

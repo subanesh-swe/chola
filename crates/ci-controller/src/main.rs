@@ -19,9 +19,11 @@ mod job_registry;
 mod log_aggregator;
 mod monitoring;
 mod notifier;
+pub mod openapi;
 mod rate_limit;
 mod redis_store;
 mod reservation;
+mod retention;
 mod scheduler;
 mod state;
 mod storage;
@@ -88,6 +90,12 @@ async fn main() -> anyhow::Result<()> {
         warn!("Using default JWT secret! Set auth.jwt_secret in config for production.");
     }
 
+    // Warn if auth is enabled but HTTP traffic is unencrypted
+    if config.auth.enabled && config.http_tls.is_none() {
+        warn!("Auth enabled but HTTP TLS not configured. API traffic is unencrypted.");
+        warn!("Set http_tls in config for production, or use a reverse proxy (nginx) with TLS.");
+    }
+
     info!("Starting CI Controller");
     info!("Bind address: {}", config.bind_address);
     info!("HTTP port: {}", config.http_port);
@@ -107,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
     {
         Ok(s) => {
             info!("Connected to PostgreSQL");
+            let s = s.with_encryption_key(config.auth.encryption_key.clone());
             if let Err(e) = s.migrate().await {
                 warn!("Migration failed: {}", e);
             }
@@ -224,6 +233,24 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => warn!("Failed to recover jobs: {}", e),
         }
 
+        // Restore group_jobs mapping so the group registry knows which jobs
+        // belong to each group (needed for completion checks, cancellation, etc.)
+        match storage.load_active_jobs().await {
+            Ok(db_jobs) => {
+                let mut jgr = state.job_group_registry.write().await;
+                let mut restored = 0usize;
+                for db_job in &db_jobs {
+                    let job = db_job_to_job(db_job);
+                    jgr.add_job_to_group(&db_job.job_group_id, job);
+                    restored += 1;
+                }
+                if restored > 0 {
+                    info!("Restored {} jobs to group registries", restored);
+                }
+            }
+            Err(e) => warn!("Failed to restore group_jobs: {}", e),
+        }
+
         // Recover workers (mark all as Disconnected until they reconnect)
         match storage.load_workers().await {
             Ok(worker_rows) => {
@@ -269,10 +296,10 @@ async fn main() -> anyhow::Result<()> {
                 match redis.get_worker_reservation(wid).await {
                     Ok(Some(group_id_str)) => {
                         let group_uuid = group_id_str.parse::<uuid::Uuid>().ok();
-                        let still_active = group_uuid.map_or(false, |gid| {
+                        let still_active = group_uuid.is_some_and(|gid| {
                             active_groups
                                 .get(&gid)
-                                .map_or(false, |g| !g.state.is_terminal())
+                                .is_some_and(|g| !g.state.is_terminal())
                         });
                         if !still_active {
                             warn!(
@@ -298,12 +325,26 @@ async fn main() -> anyhow::Result<()> {
     }
     // ── End state recovery ────────────────────────────────────────────────────
 
+    // ── Retention cleanup background task ────────────────────────────────────
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    if let Some(retention_config) = config.retention.clone() {
+        if state.storage.is_some() {
+            let _retention = retention::spawn_cleanup_task(
+                state.clone(),
+                retention_config,
+                cancel_token.clone(),
+            );
+            info!("Retention cleanup task started");
+        }
+    }
+
     // Start HTTP sidecar in background
     let http_addr: std::net::SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
     {
         let http_state = state.clone();
+        let http_tls = config.http_tls.clone();
         tokio::spawn(async move {
-            if let Err(e) = http_server::run(http_addr, http_state).await {
+            if let Err(e) = http_server::run(http_addr, http_state, http_tls).await {
                 error!("HTTP server failed: {}", e);
             }
         });
@@ -319,6 +360,7 @@ async fn main() -> anyhow::Result<()> {
         }
         _ = shutdown_signal() => {
             info!("Controller shutting down gracefully");
+            cancel_token.cancel();
         }
     }
 
@@ -335,7 +377,7 @@ fn db_job_to_job(db: &storage::DbJob) -> Job {
     job.state = JobState::from_str(&db.state);
     job.assigned_worker = db.worker_id.clone();
     job.job_group_id = Some(db.job_group_id);
-    job.stage_config_id = Some(db.stage_config_id);
+    job.stage_config_id = db.stage_config_id;
     job.stage_name = Some(db.stage_name.clone());
     job.pre_script = db.pre_script.clone();
     job.post_script = db.post_script.clone();
@@ -367,12 +409,18 @@ fn worker_row_to_state(row: &storage::WorkerRow) -> WorkerState {
         disk_type,
         supported_job_types: row.supported_job_types.clone().unwrap_or_default(),
         docker_enabled: row.docker_enabled,
+        labels: Vec::new(),
+        disk_details: Vec::new(),
     };
     WorkerState {
         info,
         status: WorkerStatus::Disconnected,
         last_heartbeat: None,
         registered_at: row.registered_at,
+        system_info: row.system_info.clone(),
+        allocated_cpu: 0,
+        allocated_memory_mb: 0,
+        allocated_disk_mb: 0,
     }
 }
 

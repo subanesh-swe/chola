@@ -28,3 +28,9 @@ execution:
 
 logging:
   level: "info"
+
+# Disk mount points to track (optional). If empty, auto-detects and deduplicates by device.
+# tracked_disk_paths:
+#   - "/"
+#   - "/home"
+#   - "/data"

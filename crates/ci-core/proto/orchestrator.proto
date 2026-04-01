@@ -59,12 +59,27 @@ message RegisterRequest {
   string disk_type = 6;            // "nvme" | "sata"
   repeated string supported_job_types = 7;
   bool docker_enabled = 8;
+  repeated string labels = 9;      // worker capability labels for routing
+  repeated DiskInfo disk_details = 10;
 }
 
 message RegisterResponse {
   bool accepted = 1;
   string message = 2;
   uint32 heartbeat_interval_secs = 3;
+}
+
+// ============================================================================
+// Per-disk metrics
+// ============================================================================
+
+message DiskInfo {
+  string mount_point = 1;
+  string device = 2;
+  string fs_type = 3;
+  uint64 total_mb = 4;
+  uint64 used_mb = 5;
+  uint64 available_mb = 6;
 }
 
 // ============================================================================
@@ -79,6 +94,7 @@ message HeartbeatMessage {
   repeated string running_job_ids = 5;
   double system_load = 6;
   int64 timestamp_unix = 7;
+  repeated DiskInfo disk_details = 8;
 }
 
 message HeartbeatAck {
@@ -275,6 +291,7 @@ message ReserveWorkerRequest {
     string branch = 3;
     string commit_sha = 4;
     repeated string stages = 5;
+    int32 priority = 6;            // scheduling priority (higher = more urgent)
 }
 
 message StageInfo {

@@ -4,3 +4,6 @@ export * from './build';
 export * from './job';
 export * from './stage';
 export * from './dashboard';
+export * from './error';
+export * from './analytics';
+export * from './blacklist';

@@ -1,3 +1,16 @@
+export function PageSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="p-6 space-y-4 animate-pulse">
+      <div className="h-8 bg-slate-700 rounded w-48" />
+      <div className="space-y-3">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="h-12 bg-slate-800 rounded" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">

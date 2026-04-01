@@ -21,6 +21,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
 serde_json = { workspace = true }
+utoipa = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }

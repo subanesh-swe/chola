@@ -85,6 +85,9 @@ export function SearchDialog({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
         className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
@@ -97,6 +100,7 @@ export function SearchDialog({ open, onClose }: Props) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search builds, repos, workers..."
+            aria-label="Search"
             className="flex-1 bg-transparent text-white placeholder-slate-500 outline-none text-sm"
           />
           <kbd className="text-[10px] text-slate-600 border border-slate-700 rounded px-1.5 py-0.5">esc</kbd>

@@ -12,7 +12,8 @@ export interface StageConfig {
   id: string;
   repo_id: string;
   stage_name: string;
-  command: string;
+  command: string | null;
+  command_mode: string;
   required_cpu: number;
   required_memory_mb: number;
   required_disk_mb: number;
@@ -40,11 +41,34 @@ export interface CreateRepoRequest {
   repo_name: string;
   repo_url: string;
   default_branch?: string;
+  enabled?: boolean;
+}
+
+export interface Webhook {
+  id: string;
+  repo_id: string;
+  provider: string;
+  secret: string;
+  events: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string;
+  event: string;
+  status_code: number;
+  response_time_ms: number;
+  delivered_at: string;
+  success: boolean;
 }
 
 export interface CreateStageConfigRequest {
   stage_name: string;
-  command: string;
+  command?: string | null;
+  command_mode?: string;
   required_cpu?: number;
   required_memory_mb?: number;
   required_disk_mb?: number;

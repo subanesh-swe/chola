@@ -26,6 +26,9 @@ fmt:
 controller:
     cargo run -p ci-controller -- --config config/controller.example.yaml
 
+# Auto-restart controller on code change
+watch-controller:
+    cargo watch -x 'run -p ci-controller -- --config config/controller.example.yaml' -w crates/ci-controller -w crates/ci-core -i '*.log'
 # ─── Worker ───────────────────────────────────────────────────────────────────
 
 # Usage:
@@ -34,6 +37,9 @@ controller:
 worker name='worker-1':
     cargo run -p ci-worker -- --config config/{{name}}.example.yaml
 
+# Auto-restart worker on code change
+watch-worker name='worker-1':
+    cargo watch -x 'run -p ci-worker -- --config config/{{name}}.example.yaml' -w crates/ci-worker -w crates/ci-core -i '*.log'
 # ─── Job Runner (new subcommand-based CLI) ────────────────────────────────────
 
 # Reserve a worker for a multi-stage build pipeline

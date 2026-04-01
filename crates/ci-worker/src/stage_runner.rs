@@ -35,7 +35,7 @@ impl StageRunner {
 
     /// Sanitize a path component to prevent directory traversal.
     fn sanitize_path_component(s: &str) -> String {
-        s.replace("..", "").replace('/', "_").replace('\\', "_")
+        s.replace("..", "").replace(['/', '\\'], "_")
     }
 
     /// Determine the log path for a stage
@@ -53,6 +53,7 @@ impl StageRunner {
     }
 
     /// Execute a full stage with pre/post scripts
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_stage(
         &self,
         command: &str,
