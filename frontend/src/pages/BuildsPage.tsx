@@ -1,81 +1,93 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
+import { listRepos } from '../api/repos';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
+import { DataTable, type Column } from '../components/ui/DataTable';
+import { Pagination } from '../components/ui/Pagination';
+import { FilterBar } from '../components/ui/FilterBar';
+import { useUrlFilters } from '../hooks/useUrlFilters';
+import type { JobGroup } from '../types';
 
 const PAGE_SIZE = 20;
-const states = ['', 'pending', 'reserved', 'running', 'success', 'failed', 'cancelled'];
+
+function buildQueryParams(filters: ReturnType<typeof useUrlFilters>['filters']) {
+  return {
+    limit: PAGE_SIZE,
+    offset: (filters.page - 1) * PAGE_SIZE,
+    state: filters.state.length ? filters.state.join(',') : undefined,
+    repo_id: filters.repo || undefined,
+    branch: filters.branch || undefined,
+    date_from: filters.dateFrom || undefined,
+    date_to: filters.dateTo || undefined,
+    sort_by: filters.sortKey || undefined,
+    sort_dir: filters.sortKey ? filters.sortDir : undefined,
+  };
+}
+
+function useBuildsColumns(nav: ReturnType<typeof useNavigate>): Column<JobGroup>[] {
+  return [
+    { key: 'state', header: 'Status', render: (b) => <StatusBadge status={b.state} /> },
+    { key: 'job_group_id', header: 'ID', render: (b) => <span className="font-mono text-slate-300">{b.job_group_id.slice(0, 8)}</span> },
+    { key: 'branch', header: 'Branch', sortable: true, render: (b) => b.branch || '-' },
+    { key: 'commit_sha', header: 'Commit', render: (b) => <span className="font-mono text-slate-400">{b.commit_sha?.slice(0, 7) ?? '-'}</span> },
+    { key: 'reserved_worker_id', header: 'Worker', render: (b) => <span className="text-slate-400">{b.reserved_worker_id || '-'}</span> },
+    { key: 'created_at', header: 'Created', sortable: true, render: (b) => <TimeAgo date={b.created_at} className="text-slate-500" /> },
+  ];
+}
 
 export default function BuildsPage() {
   const nav = useNavigate();
-  const [page, setPage] = useState(1);
-  const [stateFilter, setStateFilter] = useState('');
+  const { filters, setFilters, resetFilters } = useUrlFilters();
+  const columns = useBuildsColumns(nav);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['builds', page, stateFilter],
-    queryFn: () => listBuilds({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, state: stateFilter || undefined }),
+    queryKey: ['builds', filters],
+    queryFn: () => listBuilds(buildQueryParams(filters)),
     refetchInterval: 5000,
   });
 
-  const builds = data?.data ?? [];
-  const total = data?.pagination?.total ?? 0;
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const { data: reposData } = useQuery({
+    queryKey: ['repos'],
+    queryFn: listRepos,
+  });
+
+  const builds = data?.job_groups ?? [];
+  const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
+
+  const handleSort = (key: string) => {
+    if (filters.sortKey === key) {
+      setFilters({ sortDir: filters.sortDir === 'asc' ? 'desc' : 'asc', page: 1 });
+    } else {
+      setFilters({ sortKey: key, sortDir: 'asc', page: 1 });
+    }
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Builds</h2>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-slate-400">State:</label>
-          <select value={stateFilter} onChange={e => { setStateFilter(e.target.value); setPage(1); }}
-            className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white">
-            {states.map(s => <option key={s} value={s}>{s || 'All'}</option>)}
-          </select>
-        </div>
-      </div>
+      <h2 className="text-2xl font-bold text-white">Builds</h2>
 
-      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-        {isLoading ? (
-          <div className="p-8 text-center text-slate-400">Loading...</div>
-        ) : (
-          <table className="w-full">
-            <thead><tr className="border-b border-slate-700">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">ID</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Branch</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Commit</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Worker</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
-            </tr></thead>
-            <tbody className="divide-y divide-slate-800">
-              {builds.map(b => (
-                <tr key={b.job_group_id} onClick={() => nav(`/builds/${b.job_group_id}`)}
-                  className="cursor-pointer hover:bg-slate-800/50 transition-colors">
-                  <td className="px-4 py-3"><StatusBadge status={b.state} /></td>
-                  <td className="px-4 py-3 text-sm text-slate-300 font-mono">{b.job_group_id.slice(0, 8)}</td>
-                  <td className="px-4 py-3 text-sm text-slate-200">{b.branch || '-'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400 font-mono">{b.commit_sha?.slice(0, 7) || '-'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400">{b.reserved_worker_id || '-'}</td>
-                  <td className="px-4 py-3 text-sm"><TimeAgo date={b.created_at} className="text-slate-500" /></td>
-                </tr>
-              ))}
-              {!builds.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No builds found</td></tr>}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <FilterBar
+        filters={filters}
+        repos={reposData?.repos ?? []}
+        onChange={setFilters}
+        onReset={resetFilters}
+      />
 
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-            className="px-3 py-1 text-sm rounded-lg text-slate-300 hover:bg-slate-800 disabled:text-slate-600">Prev</button>
-          <span className="px-3 py-1 text-sm text-slate-400">{page} / {totalPages}</span>
-          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
-            className="px-3 py-1 text-sm rounded-lg text-slate-300 hover:bg-slate-800 disabled:text-slate-600">Next</button>
-        </div>
-      )}
+      <DataTable
+        data={builds}
+        columns={columns}
+        keyExtractor={(b) => b.job_group_id}
+        onRowClick={(b) => nav(`/builds/${b.job_group_id}`)}
+        onSort={handleSort}
+        sortKey={filters.sortKey}
+        sortDir={filters.sortDir}
+        loading={isLoading}
+        emptyMessage="No builds found"
+      />
+
+      <Pagination page={filters.page} totalPages={totalPages} onPageChange={(p) => setFilters({ page: p })} />
     </div>
   );
 }

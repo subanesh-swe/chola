@@ -1,11 +1,22 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-export function useKeyboardShortcuts() {
+interface Options {
+  onSearch?: () => void;
+}
+
+export function useKeyboardShortcuts({ onSearch }: Options = {}) {
   const nav = useNavigate();
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Cmd/Ctrl+K — open search (captures even inside inputs)
+      if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        onSearch?.();
+        return;
+      }
+
       // Don't capture when typing in inputs
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -19,6 +30,7 @@ export function useKeyboardShortcuts() {
             case 'w': nav('/workers'); break;
             case 'r': nav('/repos'); break;
             case 'u': nav('/users'); break;
+            case 's': nav('/settings'); break;
           }
         };
         window.addEventListener('keydown', handler2, { once: true });
@@ -34,5 +46,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [nav]);
+  }, [nav, onSearch]);
 }

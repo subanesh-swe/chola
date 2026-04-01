@@ -6,6 +6,7 @@ pub mod job_handlers;
 pub mod log_handlers;
 pub mod notification_handlers;
 pub mod repo_handlers;
+pub mod settings_handlers;
 pub mod user_handlers;
 pub mod worker_handlers;
 
@@ -81,4 +82,6 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
         )
         // Dashboard
         .route("/dashboard/summary", get(dashboard_handlers::summary))
+        // Settings (read-only config view)
+        .route("/settings", get(settings_handlers::get_settings))
 }

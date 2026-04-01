@@ -6,6 +6,11 @@ interface ListBuildsParams {
   offset?: number;
   state?: string;
   repo_id?: string;
+  branch?: string;
+  date_from?: string;
+  date_to?: string;
+  sort_by?: string;
+  sort_dir?: string;
 }
 
 interface PaginatedResponse<T> {
