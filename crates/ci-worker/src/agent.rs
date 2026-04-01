@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 
 use ci_core::models::config::WorkerConfig;
 use ci_core::proto::orchestrator::{
-    JobState, JobStatusAck, JobStatusUpdate, ReconnectRequest, RegisterRequest, RunningJobInfo,
+    JobState, JobStatusUpdate, ReconnectRequest, RegisterRequest, RunningJobInfo,
 };
 
 use crate::executor::{ExecutionResult, Executor};
@@ -26,6 +26,7 @@ struct JobContext {
     max_duration_secs: i32,
     job_group_id: String,
     stage_name: String,
+    secret_values: Arc<Vec<String>>,
 }
 
 /// Outcome of a job or stage execution, used to build the final status report.
@@ -330,6 +331,15 @@ async fn handle_job_assignment(
         });
     }
 
+    // Extract secret values: look up secret_env_keys in the environment map
+    let secret_values: Vec<String> = assignment
+        .secret_env_keys
+        .iter()
+        .filter_map(|key| assignment.environment.get(key))
+        .filter(|v| !v.is_empty())
+        .cloned()
+        .collect();
+
     let ctx = JobContext {
         worker_id: config.worker_id.clone(),
         job_id: job_id.clone(),
@@ -341,6 +351,7 @@ async fn handle_job_assignment(
         max_duration_secs: assignment.max_duration_secs,
         job_group_id: assignment.job_group_id.clone(),
         stage_name: assignment.stage_name.clone(),
+        secret_values: Arc::new(secret_values),
     };
 
     let job_client = client.clone();
@@ -597,7 +608,9 @@ async fn run_job_with_streaming(
     let sw = ctx.worker_id.clone();
     let sj = ctx.job_id.clone();
     let slc = log_client.clone();
-    let log_handle = tokio::spawn(async move { streamer.stream(sw, sj, log_rx, slc).await });
+    let log_secrets = ctx.secret_values.clone();
+    let log_handle =
+        tokio::spawn(async move { streamer.stream(sw, sj, log_rx, slc, log_secrets).await });
 
     info!(
         "Log streamer spawned, now executing command for job {}",
@@ -617,6 +630,7 @@ async fn run_job_with_streaming(
                 log_tx,
                 cancel_rx,
                 ctx.max_duration_secs,
+                ctx.secret_values.clone(),
             )
             .await;
 
@@ -634,7 +648,14 @@ async fn run_job_with_streaming(
     } else {
         let executor = Executor::new();
         let result = executor
-            .execute_streaming(&ctx.command, &ctx.work_dir, &log_path, log_tx, cancel_rx)
+            .execute_streaming(
+                &ctx.command,
+                &ctx.work_dir,
+                &log_path,
+                log_tx,
+                cancel_rx,
+                ctx.secret_values.clone(),
+            )
             .await;
         determine_final_state_from_executor(&result)
     };

@@ -168,11 +168,13 @@ async fn terminate_process_tree(pid: i32, signal: i32) {
 #[derive(Debug, Clone)]
 pub struct LogLine {
     pub line: String,
+    #[allow(dead_code)]
     pub is_stderr: bool,
 }
 
 /// Result of a job execution
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ExecutionResult {
     pub exit_code: i32,
     pub output: String,
@@ -181,6 +183,7 @@ pub struct ExecutionResult {
 /// Running job state for cancellation
 pub struct RunningJob {
     /// Process ID (negative for process group)
+    #[allow(dead_code)]
     pid: i32,
     /// Whether the job has been cancelled
     cancelled: bool,
@@ -196,6 +199,7 @@ impl Executor {
 
     /// Simple execution — waits for completion and returns all output.
     /// Used when log streaming is not wired up.
+    #[allow(dead_code)]
     pub async fn execute(&self, command: &str, work_dir: &str) -> anyhow::Result<ExecutionResult> {
         info!("Executing command: {}", command);
 
@@ -275,6 +279,7 @@ impl Executor {
         log_path: &str,
         log_tx: mpsc::Sender<LogLine>,
         mut cancel_rx: mpsc::Receiver<i32>,
+        secret_values: Arc<Vec<String>>,
     ) -> anyhow::Result<ExecutionResult> {
         info!(
             "Executing command (streaming): {}",
@@ -329,22 +334,21 @@ impl Executor {
         let stdout_tx = log_tx.clone();
         let stdout_log_file = log_file.clone();
         let running_job_stdout = running_job_clone.clone();
+        let stdout_secrets = secret_values.clone();
         let stdout_handle = tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                // Check if cancelled
+            while let Ok(Some(raw_line)) = lines.next_line().await {
                 if running_job_stdout.lock().await.cancelled {
                     break;
                 }
-                // Write to local log file
+                let line = mask_secret_values(&raw_line, &stdout_secrets);
                 {
                     let mut f = stdout_log_file.lock().await;
                     let _ = f.write_all(line.as_bytes()).await;
                     let _ = f.write_all(b"\n").await;
                     let _ = f.flush().await;
                 }
-                // Send to log streamer channel
                 if stdout_tx
                     .send(LogLine {
                         line,
@@ -362,22 +366,21 @@ impl Executor {
         let stderr_tx = log_tx.clone();
         let stderr_log_file = log_file.clone();
         let running_job_stderr = running_job_clone;
+        let stderr_secrets = secret_values.clone();
         let stderr_handle = tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                // Check if cancelled
+            while let Ok(Some(raw_line)) = lines.next_line().await {
                 if running_job_stderr.lock().await.cancelled {
                     break;
                 }
-                // Write to local log file
+                let line = mask_secret_values(&raw_line, &stderr_secrets);
                 {
                     let mut f = stderr_log_file.lock().await;
                     let _ = f.write_all(line.as_bytes()).await;
                     let _ = f.write_all(b"\n").await;
                     let _ = f.flush().await;
                 }
-                // Send to log streamer channel
                 if stderr_tx
                     .send(LogLine {
                         line,
@@ -473,4 +476,15 @@ impl Executor {
             output: String::new(), // output is in the stream, not buffered
         })
     }
+}
+
+/// Replace all occurrences of each secret value with `***`.
+pub fn mask_secret_values(s: &str, secrets: &[String]) -> String {
+    let mut masked = s.to_string();
+    for secret in secrets {
+        if !secret.is_empty() {
+            masked = masked.replace(secret.as_str(), "***");
+        }
+    }
+    masked
 }

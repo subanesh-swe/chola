@@ -155,6 +155,18 @@ pub async fn cancel(
             .await;
     }
 
+    if let Some(storage) = &state.storage {
+        super::audit::audit_action(
+            storage,
+            auth_user.user_id,
+            &auth_user.username,
+            "cancel_job_group",
+            "job_group",
+            &id.to_string(),
+        )
+        .await;
+    }
+
     Ok(Json(json!({"id": id.to_string(), "state": "cancelled"})))
 }
 

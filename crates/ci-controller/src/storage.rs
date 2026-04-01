@@ -8,6 +8,7 @@ use ci_core::models::job_group::{JobGroup, JobGroupState};
 use ci_core::models::schedule::CronSchedule;
 use ci_core::models::stage::{Repo, StageConfig, StageScript, WorkerReservation};
 use ci_core::models::user::{User, UserRole};
+use ci_core::models::variable::PipelineVariable;
 
 // ============================================================================
 // Column list constants (prevent drift between SELECT / INSERT / RETURNING)
@@ -42,8 +43,6 @@ const RESERVATION_COLUMNS: &str =
 
 const USER_COLUMNS: &str =
     "id, username, password_hash, display_name, role, active, created_at, updated_at";
-
-const SESSION_COLUMNS: &str = "id, user_id, token_jti, expires_at, revoked, created_at";
 
 // ============================================================================
 // Row mapping helpers
@@ -321,6 +320,36 @@ impl Storage {
                 4,
                 "users_and_auth",
                 include_str!("../../../migrations/004_users_and_auth.sql"),
+            ),
+            (
+                5,
+                "pipeline_variables",
+                include_str!("../../../migrations/005_pipeline_variables.sql"),
+            ),
+            (
+                6,
+                "webhooks",
+                include_str!("../../../migrations/006_webhooks.sql"),
+            ),
+            (
+                7,
+                "notifications",
+                include_str!("../../../migrations/007_notifications.sql"),
+            ),
+            (
+                8,
+                "stage_depends_on",
+                include_str!("../../../migrations/008_stage_depends_on.sql"),
+            ),
+            (
+                9,
+                "indexes_and_cascades",
+                include_str!("../../../migrations/009_indexes_and_cascades.sql"),
+            ),
+            (
+                10,
+                "cron_schedules",
+                include_str!("../../../migrations/010_cron_schedules.sql"),
             ),
         ];
 
@@ -1413,11 +1442,214 @@ impl Storage {
             .collect())
     }
 
+    // ── Pipeline variables ────────────────────────────────────────────────
+
+    pub async fn list_variables_for_repo(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<Vec<PipelineVariable>> {
+        let rows = sqlx::query(
+            "SELECT id, repo_id, name, value, is_secret, created_at, updated_at
+             FROM pipeline_variables WHERE repo_id = $1 ORDER BY name",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| PipelineVariable {
+                id: r.get("id"),
+                repo_id: r.get("repo_id"),
+                name: r.get("name"),
+                value: r.get("value"),
+                is_secret: r.get("is_secret"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            })
+            .collect())
+    }
+
+    pub async fn create_variable(
+        &self,
+        repo_id: Uuid,
+        name: &str,
+        value: &str,
+        is_secret: bool,
+    ) -> anyhow::Result<PipelineVariable> {
+        let row = sqlx::query(
+            "INSERT INTO pipeline_variables (id, repo_id, name, value, is_secret)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, repo_id, name, value, is_secret, created_at, updated_at",
+        )
+        .bind(Uuid::new_v4())
+        .bind(repo_id)
+        .bind(name)
+        .bind(value)
+        .bind(is_secret)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(PipelineVariable {
+            id: row.get("id"),
+            repo_id: row.get("repo_id"),
+            name: row.get("name"),
+            value: row.get("value"),
+            is_secret: row.get("is_secret"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+    }
+
+    pub async fn update_variable(
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+        value: Option<&str>,
+        is_secret: Option<bool>,
+    ) -> anyhow::Result<Option<PipelineVariable>> {
+        let row = sqlx::query(
+            "UPDATE pipeline_variables
+             SET name = COALESCE($2, name),
+                 value = COALESCE($3, value),
+                 is_secret = COALESCE($4, is_secret),
+                 updated_at = now()
+             WHERE id = $1
+             RETURNING id, repo_id, name, value, is_secret, created_at, updated_at",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(value)
+        .bind(is_secret)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| PipelineVariable {
+            id: r.get("id"),
+            repo_id: r.get("repo_id"),
+            name: r.get("name"),
+            value: r.get("value"),
+            is_secret: r.get("is_secret"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        }))
+    }
+
+    pub async fn delete_variable(&self, id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM pipeline_variables WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get secret variable values for a repo (for log masking).
+    pub async fn get_secret_values_for_repo(&self, repo_id: Uuid) -> anyhow::Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT value FROM pipeline_variables
+             WHERE repo_id = $1 AND is_secret = true",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.iter().map(|r| r.get::<String, _>("value")).collect())
+    }
+
     pub async fn mark_schedule_triggered(&self, schedule_id: Uuid) -> anyhow::Result<()> {
         sqlx::query("UPDATE cron_schedules SET last_triggered_at = now() WHERE id = $1")
             .bind(schedule_id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    // ── Webhooks ─────────────────────────────────────────────────────────────
+
+    pub async fn get_webhook_by_secret(
+        &self,
+        secret: &str,
+    ) -> anyhow::Result<Option<ci_core::models::stage::Webhook>> {
+        let row = sqlx::query(
+            "SELECT id, repo_id, provider, secret, events, enabled, created_at, updated_at \
+             FROM webhooks WHERE secret = $1",
+        )
+        .bind(secret)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| ci_core::models::stage::Webhook {
+            id: r.get("id"),
+            repo_id: r.get("repo_id"),
+            provider: r.get("provider"),
+            secret: r.get("secret"),
+            events: r.get("events"),
+            enabled: r.get("enabled"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        }))
+    }
+
+    pub async fn list_webhooks_for_repo(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<Vec<ci_core::models::stage::Webhook>> {
+        let rows = sqlx::query(
+            "SELECT id, repo_id, provider, secret, events, enabled, created_at, updated_at \
+             FROM webhooks WHERE repo_id = $1 ORDER BY created_at",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ci_core::models::stage::Webhook {
+                id: r.get("id"),
+                repo_id: r.get("repo_id"),
+                provider: r.get("provider"),
+                secret: r.get("secret"),
+                events: r.get("events"),
+                enabled: r.get("enabled"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            })
+            .collect())
+    }
+
+    pub async fn create_webhook(
+        &self,
+        repo_id: Uuid,
+        provider: &str,
+        secret: &str,
+        events: &[String],
+    ) -> anyhow::Result<ci_core::models::stage::Webhook> {
+        let row = sqlx::query(
+            "INSERT INTO webhooks (repo_id, provider, secret, events) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING id, repo_id, provider, secret, events, enabled, created_at, updated_at",
+        )
+        .bind(repo_id)
+        .bind(provider)
+        .bind(secret)
+        .bind(events)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(ci_core::models::stage::Webhook {
+            id: row.get("id"),
+            repo_id: row.get("repo_id"),
+            provider: row.get("provider"),
+            secret: row.get("secret"),
+            events: row.get("events"),
+            enabled: row.get("enabled"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+    }
+
+    pub async fn delete_webhook(&self, webhook_id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM webhooks WHERE id = $1")
+            .bind(webhook_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
     }
 }

@@ -9,6 +9,7 @@ export { Pagination } from './Pagination';
 export { StatCard } from './StatCard';
 export { Sparkline } from './Sparkline';
 export { StageTimeline } from './StageTimeline';
+export { StageMetadata } from './StageMetadata';
 export { TableSkeleton, DashboardSkeleton } from './PageSkeleton';
 export { SearchDialog } from './SearchDialog';
 export { SearchResult } from './SearchResult';

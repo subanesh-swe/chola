@@ -113,6 +113,8 @@ message JobAssignment {
   string pre_script = 13;
   string post_script = 14;
   int32 max_duration_secs = 15;
+  // Keys in `environment` whose values are secret — worker masks these in logs
+  repeated string secret_env_keys = 16;
 }
 
 message CancelDirective {

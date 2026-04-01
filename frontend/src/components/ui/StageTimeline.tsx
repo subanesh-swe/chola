@@ -1,19 +1,11 @@
 import { clsx } from 'clsx';
 import type { Job } from '../../types';
 import { StatusBadge } from './StatusBadge';
-
-function duration(start: string | null, end: string | null): string {
-  if (!start) return '-';
-  const ms = (end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime();
-  const secs = Math.round(ms / 1000);
-  if (secs < 60) return `${secs}s`;
-  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-}
+import { formatDuration, durationMs } from '../../utils/duration';
 
 function durationBar(start: string | null, end: string | null, maxMs: number): number {
   if (!start) return 0;
-  const ms = (end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime();
-  return Math.min((ms / maxMs) * 100, 100);
+  return Math.min((durationMs(start, end) / maxMs) * 100, 100);
 }
 
 interface Props {
@@ -26,13 +18,7 @@ export function StageTimeline({ jobs, onSelectJob, selectedJobId }: Props) {
   const sorted = [...jobs].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   );
-  const maxMs = sorted.reduce((max, j) => {
-    if (!j.started_at) return max;
-    const ms =
-      (j.completed_at ? new Date(j.completed_at).getTime() : Date.now()) -
-      new Date(j.started_at).getTime();
-    return Math.max(max, ms);
-  }, 1000);
+  const maxMs = sorted.reduce((max, j) => Math.max(max, durationMs(j.started_at, j.completed_at)), 1000);
 
   const stateColor: Record<string, string> = {
     success: 'bg-emerald-500',
@@ -74,14 +60,14 @@ export function StageTimeline({ jobs, onSelectJob, selectedJobId }: Props) {
           {/* Stage info */}
           <div className="w-40 shrink-0">
             <p className="text-sm font-medium text-slate-200">{job.stage_name}</p>
-            <p className="text-xs text-slate-500">{duration(job.started_at, job.completed_at)}</p>
+            <p className="text-xs text-slate-500">{formatDuration(job.started_at, job.completed_at)}</p>
           </div>
 
           {/* Duration bar */}
           <div
             className="flex-1 h-6 bg-slate-800 rounded overflow-hidden relative"
             role="progressbar"
-            aria-label={`Duration: ${duration(job.started_at, job.completed_at)}`}
+            aria-label={`Duration: ${formatDuration(job.started_at, job.completed_at)}`}
             aria-valuenow={durationBar(job.started_at, job.completed_at, maxMs)}
             aria-valuemin={0}
             aria-valuemax={100}

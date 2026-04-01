@@ -7,19 +7,12 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { LogViewer } from '../components/log/LogViewer';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { StageTimeline } from '../components/ui/StageTimeline';
+import { StageMetadata } from '../components/ui/StageMetadata';
 import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
+import { formatDuration } from '../utils/duration';
 import { toast } from 'sonner';
 import type { Job } from '../types';
-
-function duration(start: string | null, end: string | null): string {
-  if (!start) return '-';
-  const s = new Date(start).getTime();
-  const e = end ? new Date(end).getTime() : Date.now();
-  const secs = Math.round((e - s) / 1000);
-  if (secs < 60) return `${secs}s`;
-  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-}
 
 function JobLogPanel({ job }: { job: Job }) {
   const isRunning = job.state === 'running' || job.state === 'assigned';
@@ -34,15 +27,10 @@ function JobLogPanel({ job }: { job: Job }) {
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-400">
           {job.exit_code !== null && <span>exit: {job.exit_code}</span>}
-          <span>{duration(job.started_at, job.completed_at)}</span>
+          <span>{formatDuration(job.started_at, job.completed_at)}</span>
         </div>
       </div>
-      <div className="px-4 pb-2 pt-2 text-xs text-slate-500 space-x-4">
-        <span>Command: <code className="text-slate-300">{job.command}</code></span>
-        {job.pre_exit_code !== null && <span>Pre: {job.pre_exit_code}</span>}
-        {job.post_exit_code !== null && <span>Post: {job.post_exit_code}</span>}
-        {job.worker_id && <span>Worker: <span className="text-slate-400">{job.worker_id}</span></span>}
-      </div>
+      <StageMetadata job={job} />
       <div className="px-4 pb-4">
         <LogViewer
           content={isRunning ? undefined : `Stage: ${job.stage_name}\nState: ${job.state}\n---\n`}
