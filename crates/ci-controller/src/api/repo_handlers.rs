@@ -270,6 +270,20 @@ pub async fn create(
     if let Some(ref scope) = body.global_post_script_scope {
         validate_script_scope(scope)?;
     }
+    if let Some(ref s) = body.global_pre_script {
+        if s.len() > 65536 {
+            return Err(ApiError::BadRequest(
+                "global_pre_script must be under 64KB".into(),
+            ));
+        }
+    }
+    if let Some(ref s) = body.global_post_script {
+        if s.len() > 65536 {
+            return Err(ApiError::BadRequest(
+                "global_post_script must be under 64KB".into(),
+            ));
+        }
+    }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let branch = body.default_branch.as_deref().unwrap_or("main");
     let repo = storage
@@ -323,6 +337,20 @@ pub async fn update(
     }
     if let Some(ref scope) = body.global_post_script_scope {
         validate_script_scope(scope)?;
+    }
+    if let Some(Some(ref s)) = body.global_pre_script {
+        if s.len() > 65536 {
+            return Err(ApiError::BadRequest(
+                "global_pre_script must be under 64KB".into(),
+            ));
+        }
+    }
+    if let Some(Some(ref s)) = body.global_post_script {
+        if s.len() > 65536 {
+            return Err(ApiError::BadRequest(
+                "global_post_script must be under 64KB".into(),
+            ));
+        }
     }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let repo = storage

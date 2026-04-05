@@ -59,114 +59,6 @@ fn auth_interceptor(
 // Helper functions (extracted from RPC handlers)
 // ---------------------------------------------------------------------------
 
-/// Dispatch the repo's global post-script as a cleanup job to the worker.
-///
-/// Called on every group terminal transition (completion, cancel, reaper timeout)
-/// so the cleanup runs regardless of how many stages were actually submitted.
-pub async fn dispatch_global_post_script(
-    state: &Arc<ControllerState>,
-    group_id: &uuid::Uuid,
-    worker_id: &str,
-    repo_id: Option<uuid::Uuid>,
-    branch: Option<String>,
-    commit_sha: Option<String>,
-    group_state: ci_core::models::job_group::JobGroupState,
-) {
-    let rid = match repo_id {
-        Some(r) => r,
-        None => return,
-    };
-    let storage = match &state.storage {
-        Some(s) => s,
-        None => return,
-    };
-    let repo = match storage.get_repo(rid).await {
-        Ok(Some(r)) => r,
-        _ => return,
-    };
-    let global_post = match &repo.global_post_script {
-        Some(s) if !s.is_empty() => s.clone(),
-        _ => return,
-    };
-    let scope = &repo.global_post_script_scope;
-    if scope != "worker" && scope != "both" {
-        return;
-    }
-
-    info!(
-        "Dispatching global post-script for group {} on worker {}",
-        group_id, worker_id
-    );
-
-    let mut env = std::collections::HashMap::new();
-    env.insert("JOB_GROUP_ID".into(), group_id.to_string());
-    env.insert("REPO_NAME".into(), repo.repo_name.clone());
-    env.insert("REPO_URL".into(), repo.repo_url.clone());
-    if let Some(ref b) = branch {
-        env.insert("BRANCH".into(), b.clone());
-    }
-    if let Some(ref c) = commit_sha {
-        env.insert("COMMIT_SHA".into(), c.clone());
-    }
-    env.insert(
-        "STAGE_EXIT_CODE".into(),
-        if group_state == ci_core::models::job_group::JobGroupState::Success {
-            "0"
-        } else {
-            "1"
-        }
-        .into(),
-    );
-    env.insert(
-        "STAGE_WAS_CANCELLED".into(),
-        if group_state == ci_core::models::job_group::JobGroupState::Cancelled {
-            "true"
-        } else {
-            "false"
-        }
-        .into(),
-    );
-    env.insert("GROUP_STATE".into(), group_state.to_string());
-
-    let senders = state.job_stream_senders.read().await;
-    let sender = match senders.get(worker_id) {
-        Some(s) => s,
-        None => {
-            warn!(
-                "No job stream for worker {} -- cannot send cleanup for group {}",
-                worker_id, group_id
-            );
-            return;
-        }
-    };
-
-    let cleanup_id = format!("{}-__cleanup__", group_id);
-    let assignment = JobAssignment {
-        job_id: cleanup_id,
-        command: global_post,
-        job_type: "common".to_string(),
-        required_cpu: 0,
-        required_memory_mb: 0,
-        required_disk_mb: 0,
-        isolation_required: false,
-        branch_id: String::new(),
-        environment: env,
-        cancel: None,
-        job_group_id: group_id.to_string(),
-        stage_name: "__cleanup__".to_string(),
-        pre_script: String::new(),
-        post_script: String::new(),
-        max_duration_secs: 300,
-        secret_env_keys: Vec::new(),
-    };
-    if sender.send(Ok(assignment)).await.is_err() {
-        warn!(
-            "Failed to send cleanup job for group {} to worker {}",
-            group_id, worker_id
-        );
-    }
-}
-
 /// Build a `JobAssignment` proto from a domain `Job`.
 fn build_job_assignment(job: Job) -> JobAssignment {
     JobAssignment {
@@ -444,26 +336,36 @@ pub async fn do_reserve_worker(
         });
     }
 
-    // Allocate resources atomically via WorkerState::allocate() under write lock.
-    // allocate() is the real gating mechanism — it returns false when resources
-    // would be exceeded, handling races between concurrent reservations.
-    let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
-    let worker_id = {
-        let mut registry = state.worker_registry.write().await;
-        let mut selected = None;
-        for wid in &candidate_ids {
-            if let Some(w) = registry.get_mut(wid) {
-                if !has_resource_req || w.allocate(needed_cpu, needed_memory, needed_disk) {
+    // Loop through candidates and try to acquire a Redis lock on each.
+    // Redis key is now per-group (not per-worker) for partial reservation.
+    let mut selected = None;
+    for wid in &candidate_ids {
+        if let Some(redis) = &state.redis_store {
+            match ReservationManager::reserve(
+                redis,
+                wid,
+                &group_id,
+                state.config.workers.reservation_timeout_secs,
+            )
+            .await
+            {
+                Ok(true) => {
                     selected = Some(wid.clone());
                     break;
                 }
+                Ok(false) => continue,
+                Err(e) => {
+                    warn!("Redis error for worker {}: {}", wid, e);
+                    continue;
+                }
             }
+        } else {
+            selected = Some(wid.clone());
+            break;
         }
-        selected
-    };
-    // write lock dropped
+    }
 
-    let worker_id = match worker_id {
+    let worker_id = match selected {
         Some(id) => id,
         None => {
             return Ok(ReserveWorkerResponse {
@@ -471,25 +373,22 @@ pub async fn do_reserve_worker(
                 worker_id: String::new(),
                 stages: Vec::new(),
                 success: false,
-                message: "No workers with sufficient resources available".to_string(),
+                message: "All workers are reserved".to_string(),
             });
         }
     };
 
-    // Record reservation in Redis as non-exclusive per-group tracking key
-    if let Some(redis) = &state.redis_store {
-        if let Err(e) = ReservationManager::reserve(
-            redis,
-            &worker_id,
-            &group_id,
-            state.config.workers.reservation_timeout_secs,
-        )
-        .await
-        {
-            warn!(
-                "Failed to record Redis reservation for worker {}: {}",
-                worker_id, e
-            );
+    // Allocate resources on the selected worker
+    let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
+    if has_resource_req {
+        let mut registry = state.worker_registry.write().await;
+        if let Some(w) = registry.get_mut(&worker_id) {
+            if !w.allocate(needed_cpu, needed_memory, needed_disk) {
+                warn!(
+                    "Worker {} resource allocation race — resources exhausted",
+                    worker_id
+                );
+            }
         }
     }
 
@@ -537,31 +436,6 @@ pub async fn do_reserve_worker(
     } else {
         (uuid::Uuid::new_v4(), 0, false) // no DB — in-memory only
     };
-
-    // Validate requested stages exist in DB
-    if !req.stages.is_empty() {
-        if let Some(storage) = &state.storage {
-            let configs = storage
-                .get_stage_configs_for_repo(repo_id)
-                .await
-                .unwrap_or_default();
-            let known: std::collections::HashSet<&str> =
-                configs.iter().map(|c| c.stage_name.as_str()).collect();
-            let unknown: Vec<&str> = req
-                .stages
-                .iter()
-                .filter(|s| !s.is_empty() && !known.contains(s.as_str()))
-                .map(|s| s.as_str())
-                .collect();
-            if !unknown.is_empty() {
-                return Err(Status::invalid_argument(format!(
-                    "Unknown stages for repo '{}': {}",
-                    req.repo_name,
-                    unknown.join(", ")
-                )));
-            }
-        }
-    }
 
     // Enforce concurrency limits
     if max_concurrent > 0 {
@@ -643,45 +517,25 @@ pub async fn do_reserve_worker(
         }
     };
 
-    // Idempotency: if key provided, return existing group with same key
-    if !req.idempotency_key.is_empty() {
-        if let Some(storage) = &state.storage {
-            if let Ok(Some(existing)) = storage.find_by_idempotency_key(&req.idempotency_key).await
-            {
-                let worker_connected = {
-                    let wr = state.worker_registry.read().await;
-                    existing
-                        .reserved_worker_id
-                        .as_ref()
-                        .and_then(|wid| wr.get(wid))
-                        .map(|w| w.status == ci_core::models::worker::WorkerStatus::Connected)
-                        .unwrap_or(false)
-                };
-
-                if worker_connected {
-                    info!(
-                        "Returning existing group {} for idempotency_key={}",
-                        existing.id, req.idempotency_key
-                    );
-                    let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
-                    return Ok(ReserveWorkerResponse {
-                        job_group_id: existing.id.to_string(),
-                        worker_id: existing.reserved_worker_id.unwrap_or_default(),
-                        stages,
-                        success: true,
-                        message: "Existing active group returned (idempotency key match)"
-                            .to_string(),
-                    });
-                } else {
-                    warn!(
-                        "Existing group {} (key={}) has disconnected worker, creating new reservation",
-                        existing.id, req.idempotency_key
-                    );
-                }
-            }
+    // Dedup: return existing active group for same repo+branch+commit
+    if let Some(storage) = &state.storage {
+        let branch = Some(req.branch.as_str()).filter(|s| !s.is_empty());
+        let commit = Some(req.commit_sha.as_str()).filter(|s| !s.is_empty());
+        if let Ok(Some(existing)) = storage.find_active_job_group(repo_id, branch, commit).await {
+            info!(
+                "Returning existing active group {} for {}@{:?}",
+                existing.id, req.repo_name, branch
+            );
+            let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
+            return Ok(ReserveWorkerResponse {
+                job_group_id: existing.id.to_string(),
+                worker_id: existing.reserved_worker_id.unwrap_or_default(),
+                stages,
+                success: true,
+                message: "Existing active group returned".to_string(),
+            });
         }
     }
-    // No key or no match -- create new group (no implicit dedup)
 
     // Redis lock acquired (or no Redis) -- now create the in-memory group
     let mut group = ci_core::models::job_group::JobGroup::new(
@@ -693,11 +547,6 @@ pub async fn do_reserve_worker(
     group.reserved_worker_id = Some(worker_id.clone());
     group.state = ci_core::models::job_group::JobGroupState::Reserved;
     group.priority = req.priority;
-    group.idempotency_key = if req.idempotency_key.is_empty() {
-        None
-    } else {
-        Some(req.idempotency_key.clone())
-    };
     group.allocated_resources = ci_core::models::job_group::AllocatedResources {
         cpu: needed_cpu,
         memory_mb: needed_memory,
@@ -788,19 +637,20 @@ async fn do_submit_stage(
         }
     }
 
-    // Reject if stage already succeeded in this group
+    // Reject if stage was already submitted in this group (any state).
+    // Retries require a new reservation — workspace is cleaned up on completion.
     {
         let jg = state.job_group_registry.read().await;
         let jobs = jg.get_jobs_for_group(&group_id);
-        if jobs.iter().any(|j| {
-            j.stage_name.as_deref() == Some(&req.stage_name)
-                && j.state == ci_core::models::job::JobState::Success
-        }) {
+        if let Some(existing) = jobs
+            .iter()
+            .find(|j| j.stage_name.as_deref() == Some(&req.stage_name))
+        {
             return Err(Status::new(
                 tonic::Code::AlreadyExists,
                 format!(
-                    "Stage '{}' already completed successfully in group {}",
-                    req.stage_name, group_id
+                    "Stage '{}' is already {} in group {} (retry requires a new reservation)",
+                    req.stage_name, existing.state, group_id
                 ),
             ));
         }
@@ -905,7 +755,7 @@ async fn do_submit_stage(
     };
 
     // Load pre/post scripts from DB for this stage + worker
-    let (mut pre_script, post_script) =
+    let (mut pre_script, mut post_script) =
         if let (Some(storage), Some(sc_id)) = (&state.storage, stage_config_id) {
             let scripts = storage
                 .get_scripts_for_stage(sc_id, Some(&worker_id))
@@ -952,9 +802,33 @@ async fn do_submit_stage(
                     }
                 }
             }
-            // Global post-script is dispatched on group terminal state
-            // (see dispatch_global_post_script), not at submission time.
-            let _ = (g_post, g_post_scope);
+            // Last stage: append global post_script (worker-scope).
+            // Race-safe: uses submitted job count vs total stage count.
+            // Parallel submissions each see their own snapshot of
+            // submitted_count; only the Nth caller (where N == total)
+            // will satisfy the condition.
+            if let Some(ref g_post_body) = g_post {
+                if matches!(g_post_scope.as_str(), "worker" | "both") {
+                    let is_last = {
+                        let jg = state.job_group_registry.read().await;
+                        let total_stages = storage
+                            .get_stage_configs_for_repo(rid)
+                            .await
+                            .map(|s| s.len())
+                            .unwrap_or(0);
+                        let submitted_count = jg.get_jobs_for_group(&group_id).len();
+                        // Current submission not yet added, so +1
+                        total_stages > 0 && submitted_count + 1 >= total_stages
+                    };
+                    if is_last {
+                        if post_script.is_empty() {
+                            post_script = g_post_body.clone();
+                        } else {
+                            post_script = format!("{}\n{}", post_script, g_post_body);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1025,7 +899,6 @@ async fn do_submit_stage(
             }
         }
         jg_registry.add_job_to_group(&group_id, job.clone());
-        jg_registry.touch_activity(&group_id);
     }
     {
         let mut job_registry = state.job_registry.write().await;
@@ -1124,11 +997,7 @@ async fn do_submit_stage(
     // Refresh reservation TTL so long-running pipelines don't expire mid-build
     if let Some(redis) = &state.redis_store {
         let ttl = state.config.workers.reservation_timeout_secs;
-        let gid_str = group_id.to_string();
-        if let Err(e) = redis
-            .refresh_reservation_ttl(&worker_id, &gid_str, ttl)
-            .await
-        {
+        if let Err(e) = redis.refresh_reservation_ttl(&worker_id, ttl).await {
             warn!("Failed to refresh reservation TTL for worker {worker_id}: {e}");
         }
     }
@@ -1167,8 +1036,15 @@ impl Orchestrator for OrchestratorService {
         registry.register(&req);
         drop(registry);
 
-        // Worker availability is determined by in-memory resource tracking,
-        // not a Redis set. No need to manage an "available workers" set.
+        // Add worker to Redis available set
+        if let Some(redis) = &self.state.redis_store {
+            if let Err(e) = redis.add_available_worker(&req.worker_id).await {
+                warn!(
+                    "Failed to add worker {} to Redis available set: {e}",
+                    req.worker_id
+                );
+            }
+        }
 
         Ok(Response::new(RegisterResponse {
             accepted: true,
@@ -1417,7 +1293,6 @@ impl Orchestrator for OrchestratorService {
                         model_state,
                         Some(req.exit_code),
                     );
-                    jg.touch_activity(&group_id);
 
                     jg.check_group_completion(&group_id).map(|new_state| {
                         let worker_id = jg.on_group_completed(&group_id);
@@ -1438,20 +1313,6 @@ impl Orchestrator for OrchestratorService {
                 {
                     info!("Job group {} completed: {}", group_id, new_state);
                     self.state.metrics.dec_active_builds();
-
-                    // Dispatch global post-script before releasing worker resources
-                    if let Some(ref wid) = worker_id {
-                        dispatch_global_post_script(
-                            &self.state,
-                            &group_id,
-                            wid,
-                            repo_id,
-                            branch.clone(),
-                            commit_sha.clone(),
-                            new_state,
-                        )
-                        .await;
-                    }
 
                     if let Some(ref wid) = worker_id {
                         // Release allocated resources on the worker
@@ -1752,12 +1613,10 @@ impl Orchestrator for OrchestratorService {
                 state: ci_core::models::job_group::JobGroupState::Running,
                 priority: 0,
                 pr_number: None,
-                idempotency_key: None,
                 allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
                 created_at: now,
                 updated_at: now,
                 completed_at: None,
-                last_activity_at: now,
             };
             if let Err(e) = storage.create_job_group(&group).await {
                 warn!("Failed to persist ad-hoc job group: {}", e);
@@ -1914,99 +1773,11 @@ impl Orchestrator for OrchestratorService {
     ) -> Result<Response<CancelJobResponse>, Status> {
         let req = request.into_inner();
         info!(
-            "CancelJob request: job_id={}, job_group_id={}, reason={}",
-            req.job_id, req.job_group_id, req.reason
+            "CancelJob request: job_id={}, reason={}",
+            req.job_id, req.reason
         );
 
-        // If job_group_id is provided and job_id is empty, cancel the entire group
-        if !req.job_group_id.is_empty() && req.job_id.is_empty() {
-            let group_id = uuid::Uuid::parse_str(&req.job_group_id)
-                .map_err(|_| Status::invalid_argument("Invalid job_group_id UUID"))?;
-
-            let release_info = {
-                let mut jg = self.state.job_group_registry.write().await;
-                if let Some(group) = jg.get(&group_id) {
-                    if group.state.is_terminal() {
-                        return Ok(Response::new(CancelJobResponse {
-                            accepted: false,
-                            message: "Job group already in terminal state".to_string(),
-                        }));
-                    }
-                } else {
-                    return Err(Status::not_found(format!(
-                        "Job group {} not found",
-                        req.job_group_id
-                    )));
-                }
-                let info = jg.get(&group_id).map(|g| {
-                    (
-                        g.reserved_worker_id.clone(),
-                        g.allocated_resources,
-                        g.repo_id,
-                        g.branch.clone(),
-                        g.commit_sha.clone(),
-                    )
-                });
-                jg.update_state(
-                    &group_id,
-                    ci_core::models::job_group::JobGroupState::Cancelled,
-                );
-                jg.fail_group_jobs(&group_id, &req.reason);
-                info
-            };
-
-            // Dispatch global post-script before releasing worker resources
-            if let Some((Some(ref wid), _, repo_id, ref branch, ref commit_sha)) = release_info {
-                dispatch_global_post_script(
-                    &self.state,
-                    &group_id,
-                    wid,
-                    repo_id,
-                    branch.clone(),
-                    commit_sha.clone(),
-                    ci_core::models::job_group::JobGroupState::Cancelled,
-                )
-                .await;
-            }
-
-            // Release worker resources
-            if let Some((Some(ref wid), alloc, _, _, _)) = release_info {
-                if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
-                    let mut wr = self.state.worker_registry.write().await;
-                    if let Some(w) = wr.get_mut(wid) {
-                        w.release(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
-                    }
-                }
-                // Release Redis reservation
-                if let Some(redis) = &self.state.redis_store {
-                    if let Err(e) =
-                        crate::reservation::ReservationManager::release(redis, wid, &group_id).await
-                    {
-                        warn!("Failed to release Redis reservation for worker {wid}: {e}");
-                    }
-                }
-            }
-
-            // Persist to DB
-            if let Some(storage) = &self.state.storage {
-                if let Err(e) = storage
-                    .update_job_group_state(
-                        group_id,
-                        ci_core::models::job_group::JobGroupState::Cancelled,
-                    )
-                    .await
-                {
-                    warn!("Failed to persist cancel for group {group_id}: {e}");
-                }
-            }
-
-            return Ok(Response::new(CancelJobResponse {
-                accepted: true,
-                message: format!("Job group {} cancelled", req.job_group_id),
-            }));
-        }
-
-        // Cancel individual job by job_id
+        // Cancel the job and get the assigned worker
         let worker_id = {
             let mut registry = self.state.job_registry.write().await;
             registry.cancel_job(&req.job_id, &req.reason)
@@ -2355,7 +2126,6 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                         commit_sha: String::new(), // cron builds use latest
                         stages: schedule.stages.clone(),
                         priority: 0,
-                        idempotency_key: String::new(),
                     };
                     match do_reserve_worker(&state_cron, &req).await {
                         Ok(resp) if resp.success => {
