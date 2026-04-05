@@ -123,6 +123,8 @@ impl StageRunner {
                                 &log_tx,
                                 &secret_values,
                                 environment,
+                                command_exit_code,
+                                false,
                             )
                             .await;
                         return Ok(StageResult {
@@ -150,6 +152,8 @@ impl StageRunner {
                             &log_tx,
                             &secret_values,
                             environment,
+                            -1,
+                            false,
                         )
                         .await;
                     return Ok(StageResult {
@@ -243,6 +247,8 @@ impl StageRunner {
                 &log_tx,
                 &secret_values,
                 environment,
+                command_exit_code,
+                was_cancelled,
             )
             .await;
 
@@ -263,6 +269,8 @@ impl StageRunner {
     }
 
     /// Run post_script. Returns exit code or None if no post_script.
+    /// Injects STAGE_EXIT_CODE and STAGE_WAS_CANCELLED env vars so the
+    /// post-script can behave differently on abort vs success.
     async fn run_post_script(
         &self,
         post_script: &str,
@@ -271,6 +279,8 @@ impl StageRunner {
         log_tx: &mpsc::Sender<LogLine>,
         secret_values: &Arc<Vec<String>>,
         environment: &HashMap<String, String>,
+        command_exit_code: i32,
+        was_cancelled: bool,
     ) -> Option<i32> {
         if post_script.is_empty() {
             return None;
@@ -284,6 +294,14 @@ impl StageRunner {
             })
             .await;
 
+        // Inject stage outcome so post-script can branch on success/failure/cancel
+        let mut post_env = environment.clone();
+        post_env.insert("STAGE_EXIT_CODE".into(), command_exit_code.to_string());
+        post_env.insert(
+            "STAGE_WAS_CANCELLED".into(),
+            if was_cancelled { "true" } else { "false" }.into(),
+        );
+
         let (_dummy_cancel_tx, dummy_cancel_rx) = mpsc::channel(1);
         match self
             .executor
@@ -294,7 +312,7 @@ impl StageRunner {
                 log_tx.clone(),
                 dummy_cancel_rx,
                 secret_values.clone(),
-                environment,
+                &post_env,
             )
             .await
         {

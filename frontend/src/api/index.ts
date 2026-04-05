@@ -10,3 +10,5 @@ export type { SettingsResponse, SettingItem } from './settings';
 export * as auditApi from './audit';
 export type { AuditEntry, AuditLogResponse } from './audit';
 export * as blacklistApi from './blacklist';
+export * as scriptsApi from './scripts';
+export type { CreateScriptRequest, UpdateScriptRequest } from './scripts';

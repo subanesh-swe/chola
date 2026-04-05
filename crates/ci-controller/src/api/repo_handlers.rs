@@ -22,6 +22,10 @@ pub struct CreateRepoRequest {
     pub repo_name: String,
     pub repo_url: String,
     pub default_branch: Option<String>,
+    pub global_pre_script: Option<String>,
+    pub global_pre_script_scope: Option<String>,
+    pub global_post_script: Option<String>,
+    pub global_post_script_scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -32,6 +36,10 @@ pub struct UpdateRepoRequest {
     pub enabled: Option<bool>,
     pub max_concurrent_builds: Option<i32>,
     pub cancel_superseded: Option<bool>,
+    pub global_pre_script: Option<Option<String>>,
+    pub global_pre_script_scope: Option<String>,
+    pub global_post_script: Option<Option<String>>,
+    pub global_post_script_scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -135,6 +143,15 @@ fn validate_command_mode(mode: &str) -> Result<(), ApiError> {
     }
 }
 
+fn validate_script_scope(scope: &str) -> Result<(), ApiError> {
+    match scope {
+        "worker" | "master" | "both" => Ok(()),
+        _ => Err(ApiError::BadRequest(
+            "script scope must be one of: worker, master, both".into(),
+        )),
+    }
+}
+
 fn validate_string(field: &str, value: &str, max_len: usize) -> Result<(), ApiError> {
     if value.is_empty() {
         return Err(ApiError::BadRequest(format!("{} cannot be empty", field)));
@@ -159,6 +176,10 @@ fn repo_to_json(r: &Repo) -> Value {
         "enabled": r.enabled,
         "max_concurrent_builds": r.max_concurrent_builds,
         "cancel_superseded": r.cancel_superseded,
+        "global_pre_script": r.global_pre_script,
+        "global_pre_script_scope": r.global_pre_script_scope,
+        "global_post_script": r.global_post_script,
+        "global_post_script_scope": r.global_post_script_scope,
         "created_at": r.created_at.to_rfc3339(),
         "updated_at": r.updated_at.to_rfc3339(),
     })
@@ -243,10 +264,24 @@ pub async fn create(
     }
     validate_string("repo_name", &body.repo_name, 255)?;
     validate_string("repo_url", &body.repo_url, 2048)?;
+    if let Some(ref scope) = body.global_pre_script_scope {
+        validate_script_scope(scope)?;
+    }
+    if let Some(ref scope) = body.global_post_script_scope {
+        validate_script_scope(scope)?;
+    }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let branch = body.default_branch.as_deref().unwrap_or("main");
     let repo = storage
-        .create_repo(&body.repo_name, &body.repo_url, branch)
+        .create_repo(
+            &body.repo_name,
+            &body.repo_url,
+            branch,
+            body.global_pre_script.as_deref(),
+            body.global_pre_script_scope.as_deref(),
+            body.global_post_script.as_deref(),
+            body.global_post_script_scope.as_deref(),
+        )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(repo_to_json(&repo)))
@@ -283,6 +318,12 @@ pub async fn update(
     if let Some(ref url) = body.repo_url {
         validate_string("repo_url", url, 2048)?;
     }
+    if let Some(ref scope) = body.global_pre_script_scope {
+        validate_script_scope(scope)?;
+    }
+    if let Some(ref scope) = body.global_post_script_scope {
+        validate_script_scope(scope)?;
+    }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let repo = storage
         .update_repo(
@@ -293,6 +334,10 @@ pub async fn update(
             body.enabled,
             body.max_concurrent_builds,
             body.cancel_superseded,
+            body.global_pre_script.as_ref().map(|v| v.as_deref()),
+            body.global_pre_script_scope.as_deref(),
+            body.global_post_script.as_ref().map(|v| v.as_deref()),
+            body.global_post_script_scope.as_deref(),
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?

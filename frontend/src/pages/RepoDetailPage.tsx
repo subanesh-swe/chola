@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -24,11 +24,281 @@ import {
   deleteCommandBlacklist,
   updateCommandBlacklist,
 } from '../api/blacklist';
+import {
+  listScripts,
+  createScript,
+  updateScript,
+  deleteScript,
+} from '../api/scripts';
+import type { CreateScriptRequest } from '../api/scripts';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { usePermission } from '../hooks/usePermission';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { toast } from 'sonner';
-import type { Webhook, MutationError, CommandBlacklistEntry } from '../types';
+import type { Webhook, MutationError, CommandBlacklistEntry, StageScript } from '../types';
+
+// ── Scripts panel ────────────────────────────────────────────────────────────
+
+function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId: string; canManage: boolean }) {
+  const qc = useQueryClient();
+  const [showAdd, setShowAdd] = useState(false);
+  const [scriptType, setScriptType] = useState<'pre' | 'post'>('pre');
+  const [scriptScope, setScriptScope] = useState<'worker' | 'master'>('worker');
+  const [scriptContent, setScriptContent] = useState('');
+  const [workerId, setWorkerId] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editType, setEditType] = useState<'pre' | 'post'>('pre');
+  const [editScope, setEditScope] = useState<'worker' | 'master'>('worker');
+  const [editContent, setEditContent] = useState('');
+  const [editWorkerId, setEditWorkerId] = useState('');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['scripts', repoId, stageId],
+    queryFn: () => listScripts(repoId, stageId),
+  });
+
+  const scripts: StageScript[] = data?.scripts ?? [];
+
+  const inputCls = 'w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+  const resetAddForm = () => {
+    setScriptType('pre');
+    setScriptScope('worker');
+    setScriptContent('');
+    setWorkerId('');
+  };
+
+  const startEdit = (s: StageScript) => {
+    setEditingId(s.id);
+    setEditType(s.script_type);
+    setEditScope(s.script_scope);
+    setEditContent(s.script);
+    setEditWorkerId(s.worker_id ?? '');
+  };
+
+  const cancelEdit = () => setEditingId(null);
+
+  const createMut = useMutation({
+    mutationFn: () => {
+      const req: CreateScriptRequest = {
+        script_type: scriptType,
+        script_scope: scriptScope,
+        script: scriptContent,
+      };
+      if (workerId.trim()) req.worker_id = workerId.trim();
+      return createScript(repoId, stageId, req);
+    },
+    onSuccess: () => {
+      toast.success('Script created');
+      qc.invalidateQueries({ queryKey: ['scripts', repoId, stageId] });
+      setShowAdd(false);
+      resetAddForm();
+    },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to create script'),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (scriptId: string) =>
+      updateScript(repoId, stageId, scriptId, {
+        script_type: editType,
+        script_scope: editScope,
+        script: editContent,
+        worker_id: editWorkerId.trim() || undefined,
+      }),
+    onSuccess: () => {
+      toast.success('Script updated');
+      qc.invalidateQueries({ queryKey: ['scripts', repoId, stageId] });
+      setEditingId(null);
+    },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to update script'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (scriptId: string) => deleteScript(repoId, stageId, scriptId),
+    onSuccess: () => {
+      toast.success('Script deleted');
+      qc.invalidateQueries({ queryKey: ['scripts', repoId, stageId] });
+      setDeleteId(null);
+    },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to delete script'),
+  });
+
+  return (
+    <div className="px-4 py-3 bg-slate-800/40 border-t border-slate-700/50">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Scripts</span>
+        {canManage && (
+          <button
+            onClick={() => setShowAdd(true)}
+            className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Add Script
+          </button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <p className="text-xs text-slate-500 italic">Loading scripts...</p>
+      ) : scripts.length === 0 ? (
+        <p className="text-xs text-slate-500 italic">No scripts configured for this stage.</p>
+      ) : (
+        <div className="space-y-2">
+          {scripts.map((s) => {
+            const isEditing = editingId === s.id;
+            if (isEditing) {
+              return (
+                <div key={s.id} className="bg-slate-900 border border-slate-600 rounded-lg p-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Type</label>
+                      <select value={editType} onChange={(e) => setEditType(e.target.value as 'pre' | 'post')}
+                        className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="pre">pre</option>
+                        <option value="post">post</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Scope</label>
+                      <select value={editScope} onChange={(e) => setEditScope(e.target.value as 'worker' | 'master')}
+                        className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="worker">worker</option>
+                        <option value="master">master</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Worker ID (optional)</label>
+                    <input value={editWorkerId} onChange={(e) => setEditWorkerId(e.target.value)}
+                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Leave blank for all workers" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Script</label>
+                    <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={4}
+                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                      placeholder="#!/bin/bash&#10;echo hello" />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={cancelEdit}
+                      className="px-2 py-1 text-xs text-slate-400 hover:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-500 rounded">
+                      Cancel
+                    </button>
+                    <button onClick={() => updateMut.mutate(s.id)} disabled={!editContent || updateMut.isPending}
+                      className="px-2 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-green-500">
+                      Save
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={s.id} className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                    s.script_type === 'pre'
+                      ? 'bg-blue-900/40 text-blue-300 border border-blue-700/50'
+                      : 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
+                  }`}>
+                    {s.script_type.toUpperCase()}
+                  </span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                    s.script_scope === 'worker'
+                      ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
+                      : 'bg-amber-900/40 text-amber-300 border border-amber-700/50'
+                  }`}>
+                    {s.script_scope.toUpperCase()}
+                  </span>
+                  {s.worker_id && (
+                    <span className="text-xs text-slate-500 font-mono">worker: {s.worker_id}</span>
+                  )}
+                  {canManage && (
+                    <div className="ml-auto flex gap-2">
+                      <button
+                        onClick={() => startEdit(s)}
+                        disabled={editingId !== null}
+                        className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => setDeleteId(s.id)}
+                        disabled={editingId !== null}
+                        className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <pre className="text-xs text-slate-300 font-mono bg-slate-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+                  {s.script}
+                </pre>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full">
+            <h3 className="text-lg font-semibold text-white mb-4">Add Script</h3>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Type</label>
+                  <select value={scriptType} onChange={(e) => setScriptType(e.target.value as 'pre' | 'post')} className={inputCls}>
+                    <option value="pre">pre (runs before stage)</option>
+                    <option value="post">post (runs after stage)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Scope</label>
+                  <select value={scriptScope} onChange={(e) => setScriptScope(e.target.value as 'worker' | 'master')} className={inputCls}>
+                    <option value="worker">worker (runs on worker node)</option>
+                    <option value="master">master (runs on master node)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Worker ID (optional)</label>
+                <input value={workerId} onChange={(e) => setWorkerId(e.target.value)} className={inputCls}
+                  placeholder="Leave blank to target all workers" />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Script</label>
+                <textarea value={scriptContent} onChange={(e) => setScriptContent(e.target.value)} rows={6}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                  placeholder={'#!/bin/bash\necho "pre-stage hook"'} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => { setShowAdd(false); resetAddForm(); }}
+                className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                Cancel
+              </button>
+              <button onClick={() => createMut.mutate()} disabled={!scriptContent || createMut.isPending}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={deleteId !== null}
+        title="Delete Script"
+        message="This script will be permanently removed."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => deleteId && deleteMut.mutate(deleteId)}
+        onCancel={() => setDeleteId(null)}
+      />
+    </div>
+  );
+}
 
 // ── Stage section ─────────────────────────────────────────────────────────────
 
@@ -68,6 +338,7 @@ function ResourceSummary({ stages }: { stages: { required_cpu: number; required_
 function StageSection({ repoId, canManage }: { repoId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [expandedStageId, setExpandedStageId] = useState<string | null>(null);
   const [stageName, setStageName] = useState('');
   const [command, setCommand] = useState('');
   const [commandMode, setCommandMode] = useState('fixed');
@@ -183,6 +454,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Disk</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Timeout</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Scripts</th>
               {canManage && <th className="px-4 py-3 text-xs text-slate-400 uppercase">Actions</th>}
             </tr>
           </thead>
@@ -247,6 +519,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                         className="w-20 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </td>
+                    <td className="px-4 py-2"></td>
                     <td className="px-4 py-2 text-center">
                       <div className="flex items-center justify-center gap-2">
                         <button
@@ -267,42 +540,65 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                   </tr>
                 );
               }
+              const isExpanded = expandedStageId === s.id;
+              const colSpanTotal = canManage ? 11 : 10;
               return (
-                <tr key={s.id}>
-                  <td className="px-4 py-3 text-sm text-slate-400">{s.execution_order}</td>
-                  <td className="px-4 py-3 text-sm text-slate-200 font-medium">{s.stage_name}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs">{s.command || <span className="italic text-slate-600">user-provided</span>}</td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{s.command_mode ?? 'fixed'}</td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{s.required_cpu}c</td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{formatResourceValue(s.required_memory_mb)}</td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{formatResourceValue(s.required_disk_mb)}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400">{s.job_type}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400">{formatDurationSecs(s.max_duration_secs)}</td>
-                  {canManage && (
+                <React.Fragment key={s.id}>
+                  <tr className={isExpanded ? 'bg-slate-800/20' : undefined}>
+                    <td className="px-4 py-3 text-sm text-slate-400">{s.execution_order}</td>
+                    <td className="px-4 py-3 text-sm text-slate-200 font-medium">{s.stage_name}</td>
+                    <td className="px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs">{s.command || <span className="italic text-slate-600">user-provided</span>}</td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{s.command_mode ?? 'fixed'}</td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{s.required_cpu}c</td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{formatResourceValue(s.required_memory_mb)}</td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{formatResourceValue(s.required_disk_mb)}</td>
+                    <td className="px-4 py-3 text-sm text-slate-400">{s.job_type}</td>
+                    <td className="px-4 py-3 text-sm text-slate-400">{formatDurationSecs(s.max_duration_secs)}</td>
                     <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => startEdit(s)}
-                          disabled={editingStageId !== null}
-                          className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => delStage.mutate(s.id)}
-                          disabled={editingStageId !== null}
-                          className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setExpandedStageId(isExpanded ? null : s.id)}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} scripts for ${s.stage_name}`}
+                        className="text-slate-400 hover:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                      >
+                        <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
                     </td>
+                    {canManage && (
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => startEdit(s)}
+                            disabled={editingStageId !== null}
+                            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => delStage.mutate(s.id)}
+                            disabled={editingStageId !== null}
+                            className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={colSpanTotal} className="p-0 border-b border-slate-700/50">
+                        <ScriptsPanel repoId={repoId} stageId={s.id} canManage={canManage} />
+                      </td>
+                    </tr>
                   )}
-                </tr>
+                </React.Fragment>
               );
             })}
             {!stages.length && (
-              <tr><td colSpan={canManage ? 10 : 9} className="px-4 py-8 text-center text-slate-500">No stages configured</td></tr>
+              <tr><td colSpan={canManage ? 11 : 10} className="px-4 py-8 text-center text-slate-500">No stages configured</td></tr>
             )}
           </tbody>
         </table>
@@ -914,6 +1210,176 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
   );
 }
 
+// ── Global Scripts Section ───────────────────────────────────────────────────
+
+function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage: boolean }) {
+  const qc = useQueryClient();
+  const { data: repo } = useQuery({ queryKey: ['repo', repoId], queryFn: () => getRepo(repoId) });
+
+  const [preScript, setPreScript] = useState<string>('');
+  const [preScope, setPreScope] = useState<string>('worker');
+  const [postScript, setPostScript] = useState<string>('');
+  const [postScope, setPostScope] = useState<string>('worker');
+  const [editing, setEditing] = useState(false);
+
+  // Sync local state when repo data loads
+  React.useEffect(() => {
+    if (repo) {
+      setPreScript(repo.global_pre_script ?? '');
+      setPreScope(repo.global_pre_script_scope ?? 'worker');
+      setPostScript(repo.global_post_script ?? '');
+      setPostScope(repo.global_post_script_scope ?? 'worker');
+    }
+  }, [repo]);
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      updateRepo(repoId, {
+        global_pre_script: preScript || null,
+        global_pre_script_scope: preScope,
+        global_post_script: postScript || null,
+        global_post_script_scope: postScope,
+      }),
+    onSuccess: () => {
+      toast.success('Global scripts saved');
+      qc.invalidateQueries({ queryKey: ['repo', repoId] });
+      setEditing(false);
+    },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to save'),
+  });
+
+  const scopeBadge = (scope: string) => {
+    const colors: Record<string, string> = {
+      worker: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+      master: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+      both: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+    };
+    return (
+      <span className={`text-xs px-2 py-0.5 rounded border ${colors[scope] || colors.worker}`}>
+        {scope.toUpperCase()}
+      </span>
+    );
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+        <h3 className="text-sm font-semibold text-slate-200">Global Scripts</h3>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Runs before first stage / after last stage</span>
+          {canManage && !editing && (
+            <button
+              onClick={() => setEditing(true)}
+              className="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Pre-script */}
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs px-2 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/30">PRE</span>
+            {editing ? (
+              <select
+                value={preScope}
+                onChange={(e) => setPreScope(e.target.value)}
+                className="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"
+              >
+                <option value="worker">Worker</option>
+                <option value="master">Controller</option>
+                <option value="both">Both</option>
+              </select>
+            ) : (
+              scopeBadge(preScope)
+            )}
+            <span className="text-xs text-slate-500">Runs before first stage of every build</span>
+          </div>
+          {editing ? (
+            <textarea
+              value={preScript}
+              onChange={(e) => setPreScript(e.target.value)}
+              rows={6}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+              placeholder="#!/bin/bash&#10;set -e&#10;# Workspace setup script..."
+            />
+          ) : preScript ? (
+            <pre className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {preScript}
+            </pre>
+          ) : (
+            <p className="text-xs text-slate-500 italic">No global pre-script configured</p>
+          )}
+        </div>
+
+        {/* Post-script */}
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs px-2 py-0.5 rounded border bg-purple-500/10 text-purple-400 border-purple-500/30">POST</span>
+            {editing ? (
+              <select
+                value={postScope}
+                onChange={(e) => setPostScope(e.target.value)}
+                className="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"
+              >
+                <option value="worker">Worker</option>
+                <option value="master">Controller</option>
+                <option value="both">Both</option>
+              </select>
+            ) : (
+              scopeBadge(postScope)
+            )}
+            <span className="text-xs text-slate-500">Runs after last stage of every build</span>
+          </div>
+          {editing ? (
+            <textarea
+              value={postScript}
+              onChange={(e) => setPostScript(e.target.value)}
+              rows={4}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+              placeholder="#!/bin/bash&#10;# Cleanup, notifications..."
+            />
+          ) : postScript ? (
+            <pre className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {postScript}
+            </pre>
+          ) : (
+            <p className="text-xs text-slate-500 italic">No global post-script configured</p>
+          )}
+        </div>
+
+        {/* Save/Cancel buttons */}
+        {editing && (
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={() => {
+                setEditing(false);
+                setPreScript(repo?.global_pre_script ?? '');
+                setPreScope(repo?.global_pre_script_scope ?? 'worker');
+                setPostScript(repo?.global_post_script ?? '');
+                setPostScope(repo?.global_post_script_scope ?? 'worker');
+              }}
+              className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => saveMut.mutate()}
+              disabled={saveMut.isPending}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700"
+            >
+              {saveMut.isPending ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RepoDetailPage() {
@@ -973,6 +1439,7 @@ export default function RepoDetailPage() {
         </div>
       )}
 
+      {id && <GlobalScriptsSection repoId={id} canManage={canManageRepos} />}
       {id && <StageSection repoId={id} canManage={canManageRepos} />}
       {id && <ScheduleSection repoId={id} canManage={canManageRepos} />}
       {id && <WebhookSection repoId={id} canManage={canManageRepos} />}

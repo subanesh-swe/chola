@@ -4,6 +4,10 @@ export interface Repo {
   repo_url: string;
   default_branch: string;
   enabled: boolean;
+  global_pre_script: string | null;
+  global_pre_script_scope: string;
+  global_post_script: string | null;
+  global_post_script_scope: string;
   created_at: string;
   updated_at: string;
 }
@@ -42,6 +46,10 @@ export interface CreateRepoRequest {
   repo_url: string;
   default_branch?: string;
   enabled?: boolean;
+  global_pre_script?: string | null;
+  global_pre_script_scope?: string;
+  global_post_script?: string | null;
+  global_post_script_scope?: string;
 }
 
 export interface Webhook {

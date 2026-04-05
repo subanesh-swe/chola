@@ -13,6 +13,10 @@ pub struct Repo {
     pub enabled: bool,
     pub max_concurrent_builds: i32,
     pub cancel_superseded: bool,
+    pub global_pre_script: Option<String>,
+    pub global_pre_script_scope: String,
+    pub global_post_script: Option<String>,
+    pub global_post_script_scope: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
