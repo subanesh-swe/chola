@@ -152,6 +152,7 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
         .route("/job-groups/{id}", get(job_group_handlers::get_one))
         .route("/job-groups/{id}/cancel", post(job_group_handlers::cancel))
         .route("/job-groups/{id}/retry", post(job_group_handlers::retry))
+        .route("/job-groups/{id}/stages", get(job_group_handlers::stages))
         .route("/job-groups/{id}/jobs", get(job_handlers::list_by_group))
         // Runs (individual job executions with group+repo context)
         .route("/runs", get(job_handlers::list_runs))

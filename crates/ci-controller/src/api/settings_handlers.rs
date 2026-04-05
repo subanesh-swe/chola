@@ -20,8 +20,12 @@ const EDITABLE_KEYS: &[&str] = &[
     "workers.heartbeat_timeout_secs",
     "workers.reservation_timeout_secs",
     "logging.level",
+    "logging.log_dir",
     "retention.max_age_days",
     "retention.max_builds_per_repo",
+    "execution.work_dir",
+    "execution.log_dir",
+    "execution.repos_dir",
 ];
 
 /// Resolve a value: DB override > config file value.
@@ -84,6 +88,28 @@ pub async fn get_settings(
         &retention.max_builds_per_repo.to_string(),
     );
 
+    // Controller log dir
+    let ctrl_log_default = ci_core::models::config::chola_data_dir("controller/logs");
+    let ctrl_log_dir_default = cfg.logging.log_dir.as_deref().unwrap_or(&ctrl_log_default);
+    let (ctrl_log_dir, ctrl_log_dir_src) =
+        resolve(&db_settings, "logging.log_dir", ctrl_log_dir_default);
+
+    // Worker execution paths (defaults shown — workers override via their own YAML)
+    let (work_dir, work_dir_src) = resolve(
+        &db_settings,
+        "execution.work_dir",
+        &ci_core::models::config::chola_data_dir("worker/jobs"),
+    );
+    let (exec_log_dir, exec_log_dir_src) = resolve(
+        &db_settings,
+        "execution.log_dir",
+        &ci_core::models::config::chola_data_dir("worker/logs"),
+    );
+    let (repos_dir, repos_dir_src) = resolve(
+        &db_settings,
+        "execution.repos_dir",
+        &ci_core::models::config::chola_data_dir("worker/repos"),
+    );
     Ok(Json(json!({
         "settings": [
             { "key": "scheduling.strategy", "value": strategy, "source": strategy_src, "editable": true, "options": ["best-fit", "round-robin"] },
@@ -94,6 +120,10 @@ pub async fn get_settings(
             { "key": "logging.level", "value": log_level, "source": log_src, "editable": true, "options": ["trace", "debug", "info", "warn", "error"] },
             { "key": "retention.max_age_days", "value": ret_age, "source": ret_age_src, "editable": true, "type": "int", "min": 0, "max": 3650 },
             { "key": "retention.max_builds_per_repo", "value": ret_builds, "source": ret_builds_src, "editable": true, "type": "int", "min": 0, "max": 100000 },
+            { "key": "logging.log_dir", "value": ctrl_log_dir, "source": ctrl_log_dir_src, "editable": true, "type": "path", "description": "Controller log directory" },
+            { "key": "execution.work_dir", "value": work_dir, "source": work_dir_src, "editable": true, "type": "path", "description": "Worker job workspace base directory" },
+            { "key": "execution.log_dir", "value": exec_log_dir, "source": exec_log_dir_src, "editable": true, "type": "path", "description": "Worker log directory" },
+            { "key": "execution.repos_dir", "value": repos_dir, "source": repos_dir_src, "editable": true, "type": "path", "description": "Worker bare git repo cache directory" },
             { "key": "server.bind_address", "value": &cfg.bind_address, "source": "config", "editable": false },
             { "key": "server.http_port", "value": cfg.http_port, "source": "config", "editable": false },
             { "key": "auth.enabled", "value": cfg.auth.enabled, "source": "config", "editable": false },
@@ -199,7 +229,29 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), ApiError> {
         "retention.max_builds_per_repo" => {
             validate_int_range(key, value, 0, 100000)?;
         }
+        "logging.log_dir" | "execution.work_dir" | "execution.log_dir" | "execution.repos_dir" => {
+            validate_path(key, value)?;
+        }
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_path(key: &str, value: &str) -> Result<(), ApiError> {
+    if value.is_empty() {
+        return Err(ApiError::BadRequest(format!("{} must not be empty", key)));
+    }
+    if !value.starts_with('/') {
+        return Err(ApiError::BadRequest(format!(
+            "{} must be an absolute path (start with /)",
+            key
+        )));
+    }
+    if value.contains("..") {
+        return Err(ApiError::BadRequest(format!(
+            "{} must not contain '..'",
+            key
+        )));
     }
     Ok(())
 }

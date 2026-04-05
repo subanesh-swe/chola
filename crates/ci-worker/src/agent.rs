@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,7 @@ struct JobContext {
     job_group_id: String,
     stage_name: String,
     secret_values: Arc<Vec<String>>,
+    environment: HashMap<String, String>,
 }
 
 /// Outcome of a job or stage execution, used to build the final status report.
@@ -48,6 +50,7 @@ pub async fn run(
 
     tokio::fs::create_dir_all(&config.execution.work_dir).await?;
     tokio::fs::create_dir_all(&config.execution.log_dir).await?;
+    tokio::fs::create_dir_all(&config.execution.repos_dir).await?;
 
     let reconnect_handler = ReconnectHandler::with_config(crate::reconnect::ReconnectConfig {
         initial_backoff: std::time::Duration::from_millis(config.reconnect.initial_delay_ms),
@@ -372,11 +375,28 @@ async fn handle_job_assignment(
         .cloned()
         .collect();
 
+    // Per-build workspace: {work_dir}/{job_group_id}/ for grouped jobs
+    let work_dir = if !assignment.job_group_id.is_empty() {
+        let sanitized = assignment
+            .job_group_id
+            .replace("..", "")
+            .replace(['/', '\\'], "_");
+        format!("{}/{}", config.execution.work_dir, sanitized)
+    } else {
+        config.execution.work_dir.clone()
+    };
+
+    // Build environment: assignment env + worker-local paths
+    let mut environment: HashMap<String, String> =
+        assignment.environment.clone().into_iter().collect();
+    environment.insert("CHOLA_REPOS_DIR".into(), config.execution.repos_dir.clone());
+    environment.insert("CHOLA_WORK_DIR".into(), work_dir.clone());
+
     let ctx = JobContext {
         worker_id: config.worker_id.clone(),
         job_id: job_id.clone(),
         command: assignment.command.clone(),
-        work_dir: config.execution.work_dir.clone(),
+        work_dir,
         log_dir: config.execution.log_dir.clone(),
         pre_script: assignment.pre_script.clone(),
         post_script: assignment.post_script.clone(),
@@ -384,6 +404,7 @@ async fn handle_job_assignment(
         job_group_id: assignment.job_group_id.clone(),
         stage_name: assignment.stage_name.clone(),
         secret_values: Arc::new(secret_values),
+        environment,
     };
 
     let job_client = client.clone();
@@ -592,9 +613,14 @@ async fn run_job_with_streaming(
     cancel_rx: mpsc::Receiver<i32>,
 ) -> ci_core::proto::orchestrator::JobState {
     info!(
-        "run_job_with_streaming: job_id={}, command={}",
-        ctx.job_id, ctx.command
+        "run_job_with_streaming: job_id={}, command={}, work_dir={}",
+        ctx.job_id, ctx.command, ctx.work_dir
     );
+
+    // Ensure per-build workspace directory exists
+    if let Err(e) = tokio::fs::create_dir_all(&ctx.work_dir).await {
+        warn!("Failed to create workspace dir {}: {}", ctx.work_dir, e);
+    }
 
     let has_stage_scripts = !ctx.pre_script.is_empty() || !ctx.post_script.is_empty();
 
@@ -663,6 +689,7 @@ async fn run_job_with_streaming(
                 cancel_rx,
                 ctx.max_duration_secs,
                 ctx.secret_values.clone(),
+                &ctx.environment,
             )
             .await;
 
@@ -687,6 +714,7 @@ async fn run_job_with_streaming(
                 log_tx,
                 cancel_rx,
                 ctx.secret_values.clone(),
+                &ctx.environment,
             )
             .await;
         determine_final_state_from_executor(&result)

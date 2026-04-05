@@ -22,9 +22,8 @@ capabilities:
 heartbeat:
   interval_secs: 3
 
-execution:
-  work_dir: "/tmp/ci-worker/jobs"
-  log_dir: "/tmp/ci-worker/logs"
+# Path resolution: $CHOLA_HOME > $XDG_DATA_HOME/chola > ~/.local/share/chola
+execution: {}
 
 logging:
   level: "info"
