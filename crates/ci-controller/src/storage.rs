@@ -18,6 +18,10 @@ use ci_core::models::variable::PipelineVariable;
 const REPO_COLUMNS: &str = "id, repo_name, repo_url, default_branch, enabled, \
      COALESCE(max_concurrent_builds, 0) AS max_concurrent_builds, \
      COALESCE(cancel_superseded, false) AS cancel_superseded, \
+     global_pre_script, \
+     COALESCE(global_pre_script_scope, 'worker') AS global_pre_script_scope, \
+     global_post_script, \
+     COALESCE(global_post_script_scope, 'worker') AS global_post_script_scope, \
      created_at, updated_at";
 
 const STAGE_CONFIG_COLUMNS: &str =
@@ -64,6 +68,10 @@ fn map_repo(r: sqlx::postgres::PgRow) -> Repo {
         enabled: r.get("enabled"),
         max_concurrent_builds: r.get("max_concurrent_builds"),
         cancel_superseded: r.get("cancel_superseded"),
+        global_pre_script: r.get("global_pre_script"),
+        global_pre_script_scope: r.get("global_pre_script_scope"),
+        global_post_script: r.get("global_post_script"),
+        global_post_script_scope: r.get("global_post_script_scope"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -590,6 +598,11 @@ impl Storage {
                 "command_mode",
                 include_str!("../../../migrations/024_command_mode.sql"),
             ),
+            (
+                25,
+                "global_scripts",
+                include_str!("../../../migrations/025_global_scripts.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
@@ -645,21 +658,32 @@ impl Storage {
         Ok(row.map(map_repo))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_repo(
         &self,
         repo_name: &str,
         repo_url: &str,
         default_branch: &str,
+        global_pre_script: Option<&str>,
+        global_pre_script_scope: Option<&str>,
+        global_post_script: Option<&str>,
+        global_post_script_scope: Option<&str>,
     ) -> anyhow::Result<Repo> {
         let q = format!(
-            "INSERT INTO repos (repo_name, repo_url, default_branch) \
-             VALUES ($1, $2, $3) \
+            "INSERT INTO repos (repo_name, repo_url, default_branch, \
+             global_pre_script, global_pre_script_scope, \
+             global_post_script, global_post_script_scope) \
+             VALUES ($1, $2, $3, $4, COALESCE($5, 'worker'), $6, COALESCE($7, 'worker')) \
              RETURNING {REPO_COLUMNS}"
         );
         let row = sqlx::query(&q)
             .bind(repo_name)
             .bind(repo_url)
             .bind(default_branch)
+            .bind(global_pre_script)
+            .bind(global_pre_script_scope)
+            .bind(global_post_script)
+            .bind(global_post_script_scope)
             .fetch_one(&self.pool)
             .await?;
 
@@ -1439,6 +1463,10 @@ impl Storage {
         enabled: Option<bool>,
         max_concurrent_builds: Option<i32>,
         cancel_superseded: Option<bool>,
+        global_pre_script: Option<Option<&str>>,
+        global_pre_script_scope: Option<&str>,
+        global_post_script: Option<Option<&str>>,
+        global_post_script_scope: Option<&str>,
     ) -> anyhow::Result<Option<Repo>> {
         let q = format!(
             "UPDATE repos \
@@ -1448,10 +1476,23 @@ impl Storage {
                  enabled = COALESCE($5, enabled), \
                  max_concurrent_builds = COALESCE($6, max_concurrent_builds), \
                  cancel_superseded = COALESCE($7, cancel_superseded), \
+                 global_pre_script = CASE WHEN $8 THEN $9 ELSE global_pre_script END, \
+                 global_pre_script_scope = COALESCE($10, global_pre_script_scope), \
+                 global_post_script = CASE WHEN $11 THEN $12 ELSE global_post_script END, \
+                 global_post_script_scope = COALESCE($13, global_post_script_scope), \
                  updated_at = now() \
              WHERE id = $1 \
              RETURNING {REPO_COLUMNS}"
         );
+        // For global scripts, we use a bool flag to distinguish "not provided" from "set to null"
+        let (pre_provided, pre_val) = match global_pre_script {
+            Some(v) => (true, v),
+            None => (false, None),
+        };
+        let (post_provided, post_val) = match global_post_script {
+            Some(v) => (true, v),
+            None => (false, None),
+        };
         let row = sqlx::query(&q)
             .bind(id)
             .bind(repo_name)
@@ -1460,6 +1501,12 @@ impl Storage {
             .bind(enabled)
             .bind(max_concurrent_builds)
             .bind(cancel_superseded)
+            .bind(pre_provided)
+            .bind(pre_val)
+            .bind(global_pre_script_scope)
+            .bind(post_provided)
+            .bind(post_val)
+            .bind(global_post_script_scope)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_repo))
@@ -1469,6 +1516,33 @@ impl Storage {
         let q = "DELETE FROM repos WHERE id = $1";
         let result = sqlx::query(q).bind(id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Returns (pre_script, pre_scope, post_script, post_scope) for a repo.
+    pub async fn get_global_scripts(
+        &self,
+        repo_id: Uuid,
+    ) -> anyhow::Result<(Option<String>, String, Option<String>, String)> {
+        let row = sqlx::query(
+            "SELECT global_pre_script, \
+                    COALESCE(global_pre_script_scope, 'worker') AS global_pre_script_scope, \
+                    global_post_script, \
+                    COALESCE(global_post_script_scope, 'worker') AS global_post_script_scope \
+             FROM repos WHERE id = $1",
+        )
+        .bind(repo_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(r) => Ok((
+                r.get("global_pre_script"),
+                r.get("global_pre_script_scope"),
+                r.get("global_post_script"),
+                r.get("global_post_script_scope"),
+            )),
+            None => Ok((None, "worker".to_string(), None, "worker".to_string())),
+        }
     }
 
     // ========================================================================

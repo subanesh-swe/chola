@@ -209,6 +209,65 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => warn!("Failed to recover job groups: {}", e),
         }
 
+        // Expire stale reservations recovered from DB.
+        // Groups stuck in Reserved for longer than reservation_timeout_secs
+        // are dead weight — the worker never submitted stages.
+        {
+            let timeout =
+                std::time::Duration::from_secs(state.config.workers.reservation_timeout_secs);
+            let chrono_timeout =
+                chrono::Duration::from_std(timeout).unwrap_or(chrono::Duration::hours(4));
+            let now = chrono::Utc::now();
+
+            let stale_ids: Vec<(uuid::Uuid, Option<String>)>;
+            {
+                let mut jgr = state.job_group_registry.write().await;
+                stale_ids = jgr
+                    .active_groups()
+                    .iter()
+                    .filter(|g| {
+                        g.state == ci_core::models::job_group::JobGroupState::Reserved
+                            && (now - g.created_at) > chrono_timeout
+                    })
+                    .map(|g| (g.id, g.reserved_worker_id.clone()))
+                    .collect();
+
+                for (gid, _) in &stale_ids {
+                    jgr.update_state(gid, ci_core::models::job_group::JobGroupState::Failed);
+                }
+            }
+
+            if !stale_ids.is_empty() {
+                for (gid, worker_id) in &stale_ids {
+                    if let Err(e) = storage
+                        .update_job_group_state(
+                            *gid,
+                            ci_core::models::job_group::JobGroupState::Failed,
+                        )
+                        .await
+                    {
+                        warn!("Failed to expire stale group {} in DB: {}", gid, e);
+                    }
+                    // Release the per-group Redis reservation key
+                    if let (Some(redis), Some(wid)) = (&state.redis_store, worker_id.as_deref()) {
+                        if let Err(e) = redis
+                            .release_worker_reservation(wid, &gid.to_string())
+                            .await
+                        {
+                            warn!(
+                                "Failed to release Redis reservation for stale group {} worker {}: {}",
+                                gid, wid, e
+                            );
+                        }
+                    }
+                }
+                info!(
+                    "Expired {} stale reserved groups on startup",
+                    stale_ids.len()
+                );
+            }
+        }
+
         // Recover jobs
         match storage.load_active_jobs().await {
             Ok(db_jobs) => {
@@ -271,15 +330,16 @@ async fn main() -> anyhow::Result<()> {
             let active_groups = state.job_group_registry.read().await;
             let active = active_groups.active_groups();
             let mut orphaned = 0usize;
+
+            // Check each active group has a matching per-group reservation key
             for group in active {
                 if let Some(worker_id) = &group.reserved_worker_id {
-                    match redis.get_worker_reservation(worker_id).await {
+                    let gid_str = group.id.to_string();
+                    match redis.get_reservation_ttl(worker_id, &gid_str).await {
                         Ok(Some(_)) => {
-                            // Lock exists — consistent, nothing to do
+                            // Key exists — consistent
                         }
                         Ok(None) => {
-                            // Redis lock missing but DB says reserved — log only,
-                            // worker will re-acquire on reconnect
                             warn!(
                                 "Redis reservation missing for worker {} group {} — will re-acquire on worker reconnect",
                                 worker_id, group.id
@@ -289,12 +349,11 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            // Scan for orphaned Redis locks whose groups are no longer active
-            let wr = state.worker_registry.read().await;
-            for ws in wr.all_workers() {
-                let wid = &ws.info.worker_id;
-                match redis.get_worker_reservation(wid).await {
-                    Ok(Some(group_id_str)) => {
+
+            // Scan ALL Redis reservation keys for orphaned per-group locks
+            match redis.scan_all_reservations().await {
+                Ok(reservations) => {
+                    for (wid, group_id_str) in &reservations {
                         let group_uuid = group_id_str.parse::<uuid::Uuid>().ok();
                         let still_active = group_uuid.is_some_and(|gid| {
                             active_groups
@@ -306,16 +365,17 @@ async fn main() -> anyhow::Result<()> {
                                 "Orphaned Redis reservation for worker {} (group {}), releasing",
                                 wid, group_id_str
                             );
-                            if let Err(e) = redis.release_worker_force(wid).await {
+                            if let Err(e) =
+                                redis.release_worker_reservation(wid, group_id_str).await
+                            {
                                 warn!("Failed to release orphaned reservation for {}: {}", wid, e);
                             } else {
                                 orphaned += 1;
                             }
                         }
                     }
-                    Ok(None) => {}
-                    Err(e) => warn!("Redis scan failed for worker {}: {}", wid, e),
                 }
+                Err(e) => warn!("Failed to scan Redis reservations: {}", e),
             }
             if orphaned > 0 {
                 info!("Released {} orphaned Redis reservations", orphaned);
@@ -336,6 +396,28 @@ async fn main() -> anyhow::Result<()> {
             );
             info!("Retention cleanup task started");
         }
+    }
+
+    // Reservation timeout reaper
+    {
+        let reaper_state = state.clone();
+        let idle_timeout = config.workers.idle_timeout_secs;
+        let stall_timeout = config.workers.stall_timeout_secs;
+        let cancel_token_clone = cancel_token.clone();
+        tokio::spawn(async move {
+            info!(
+                "Reservation reaper started (idle={}s, stall={}s)",
+                idle_timeout, stall_timeout
+            );
+            loop {
+                tokio::select! {
+                    _ = cancel_token_clone.cancelled() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                }
+                reap_stale_reservations(&reaper_state, idle_timeout, stall_timeout).await;
+            }
+            info!("Reservation reaper stopped");
+        });
     }
 
     // Start HTTP sidecar in background
@@ -422,6 +504,115 @@ fn worker_row_to_state(row: &storage::WorkerRow) -> WorkerState {
         allocated_memory_mb: 0,
         allocated_disk_mb: 0,
     }
+}
+
+/// Reap job groups whose reservations have gone idle (no stage submitted)
+/// or stalled (no activity while running). Releases worker resources and
+/// Redis keys, then persists the failed state to the database.
+async fn reap_stale_reservations(
+    state: &Arc<ControllerState>,
+    idle_timeout: u64,
+    stall_timeout: u64,
+) {
+    let now = chrono::Utc::now();
+
+    // Collect stale groups under read lock first
+    let stale: Vec<(
+        uuid::Uuid,
+        Option<String>,
+        ci_core::models::job_group::AllocatedResources,
+        Option<uuid::Uuid>,
+        Option<String>,
+        Option<String>,
+    )> = {
+        let jg = state.job_group_registry.read().await;
+        jg.active_groups()
+            .iter()
+            .filter(|g| {
+                let idle_secs = (now - g.last_activity_at).num_seconds().max(0) as u64;
+                match g.state {
+                    ci_core::models::job_group::JobGroupState::Reserved => idle_secs > idle_timeout,
+                    ci_core::models::job_group::JobGroupState::Running => idle_secs > stall_timeout,
+                    _ => false,
+                }
+            })
+            .map(|g| {
+                (
+                    g.id,
+                    g.reserved_worker_id.clone(),
+                    g.allocated_resources,
+                    g.repo_id,
+                    g.branch.clone(),
+                    g.commit_sha.clone(),
+                )
+            })
+            .collect()
+    };
+
+    if stale.is_empty() {
+        return;
+    }
+
+    for (group_id, worker_id, alloc, repo_id, branch, commit_sha) in &stale {
+        warn!(
+            "Reaping stale reservation: group={} worker={:?} (inactivity timeout)",
+            group_id, worker_id
+        );
+
+        {
+            let mut jg = state.job_group_registry.write().await;
+            jg.update_state(group_id, ci_core::models::job_group::JobGroupState::Failed);
+            jg.fail_group_jobs(group_id, "Reservation timed out (inactivity)");
+        }
+
+        // Dispatch global post-script (best-effort; worker may be disconnected)
+        if let Some(wid) = worker_id {
+            grpc_server::dispatch_global_post_script(
+                state,
+                group_id,
+                wid,
+                *repo_id,
+                branch.clone(),
+                commit_sha.clone(),
+                ci_core::models::job_group::JobGroupState::Failed,
+            )
+            .await;
+        }
+
+        if let Some(wid) = worker_id {
+            if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+                let mut wr = state.worker_registry.write().await;
+                if let Some(w) = wr.get_mut(wid) {
+                    w.release(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+                }
+            }
+            if let Some(redis) = &state.redis_store {
+                if let Err(e) = reservation::ReservationManager::release(redis, wid, group_id).await
+                {
+                    warn!(
+                        "Failed to release Redis for reaped group {}: {}",
+                        group_id, e
+                    );
+                }
+            }
+        }
+
+        if let Some(storage) = &state.storage {
+            if let Err(e) = storage
+                .update_job_group_state(
+                    *group_id,
+                    ci_core::models::job_group::JobGroupState::Failed,
+                )
+                .await
+            {
+                warn!("Failed to persist reaped group {} to DB: {}", group_id, e);
+            }
+        }
+
+        state.metrics.dec_active_builds();
+    }
+
+    info!("Reaped {} stale reservations", stale.len());
 }
 
 /// Wait for SIGINT (Ctrl+C) or SIGTERM
