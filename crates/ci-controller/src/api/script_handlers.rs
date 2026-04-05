@@ -101,6 +101,9 @@ pub async fn create(
     if body.script.is_empty() {
         return Err(ApiError::BadRequest("script cannot be empty".into()));
     }
+    if body.script.len() > 65536 {
+        return Err(ApiError::BadRequest("script must be under 64KB".into()));
+    }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let script = storage
         .create_stage_script(
@@ -134,6 +137,9 @@ pub async fn update(
     if let Some(ref s) = body.script {
         if s.is_empty() {
             return Err(ApiError::BadRequest("script cannot be empty".into()));
+        }
+        if s.len() > 65536 {
+            return Err(ApiError::BadRequest("script must be under 64KB".into()));
         }
     }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;

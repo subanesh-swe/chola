@@ -377,10 +377,17 @@ async fn handle_job_assignment(
 
     // Per-build workspace: {work_dir}/{job_group_id}/ for grouped jobs
     let work_dir = if !assignment.job_group_id.is_empty() {
-        let sanitized = assignment
+        let sanitized: String = assignment
             .job_group_id
-            .replace("..", "")
-            .replace(['/', '\\'], "_");
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         format!("{}/{}", config.execution.work_dir, sanitized)
     } else {
         config.execution.work_dir.clone()

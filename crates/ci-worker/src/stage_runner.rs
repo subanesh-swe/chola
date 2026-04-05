@@ -6,6 +6,17 @@ use tracing::{error, info, warn};
 
 use crate::executor::{Executor, LogLine};
 
+/// Mask secret values in a command string for safe logging.
+fn mask_command_secrets(command: &str, secrets: &[String]) -> String {
+    let mut masked = command.to_string();
+    for secret in secrets {
+        if !secret.is_empty() {
+            masked = masked.replace(secret.as_str(), "****");
+        }
+    }
+    masked
+}
+
 /// Result of a stage execution
 #[derive(Debug)]
 pub struct StageResult {
@@ -80,7 +91,10 @@ impl StageRunner {
             info!("Running pre_script");
             let _ = log_tx
                 .send(LogLine {
-                    line: "[PRE] Running pre-script...".to_string(),
+                    line: format!(
+                        "[PRE] Running pre-script ({} lines)...",
+                        pre_script.lines().count()
+                    ),
                     is_stderr: false,
                 })
                 .await;
@@ -168,6 +182,15 @@ impl StageRunner {
 
         // -- Phase 2: Main command --
         info!("Running main command");
+
+        // Log the command (with secrets masked)
+        let masked_cmd = mask_command_secrets(command, &secret_values);
+        let _ = log_tx
+            .send(LogLine {
+                line: format!("[CMD] Running: {}", masked_cmd),
+                is_stderr: false,
+            })
+            .await;
 
         // If there is a timeout, we merge the external cancel signal and a
         // timeout-generated signal into a single channel so that the executor's
@@ -289,7 +312,10 @@ impl StageRunner {
         info!("Running post_script (MUST complete)");
         let _ = log_tx
             .send(LogLine {
-                line: "[POST] Running post-script...".to_string(),
+                line: format!(
+                    "[POST] Running post-script ({} lines)...",
+                    post_script.lines().count()
+                ),
                 is_stderr: false,
             })
             .await;
