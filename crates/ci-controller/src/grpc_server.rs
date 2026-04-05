@@ -726,10 +726,60 @@ async fn do_submit_stage(
         }
     }
 
-    // Load required_labels from stage config (already fetched above)
-    let required_labels = stage_config
-        .map(|sc| sc.required_labels)
-        .unwrap_or_default();
+    // Extract fields from stage_config before consuming it
+    let (required_labels, max_duration_secs_cfg) = match &stage_config {
+        Some(sc) => (sc.required_labels.clone(), sc.max_duration_secs),
+        None => (Vec::new(), 0),
+    };
+
+    // Load pre/post scripts from DB for this stage + worker
+    let (pre_script, post_script) =
+        if let (Some(storage), Some(sc_id)) = (&state.storage, stage_config_id) {
+            let scripts = storage
+                .get_scripts_for_stage(sc_id, Some(&worker_id))
+                .await
+                .unwrap_or_default();
+            let pre = scripts
+                .iter()
+                .find(|s| s.script_type == "pre" && s.script_scope == "worker")
+                .map(|s| s.script.clone())
+                .unwrap_or_default();
+            let post = scripts
+                .iter()
+                .find(|s| s.script_type == "post" && s.script_scope == "worker")
+                .map(|s| s.script.clone())
+                .unwrap_or_default();
+            (pre, post)
+        } else {
+            (String::new(), String::new())
+        };
+
+    // Inject build context env vars for pre/post scripts
+    environment.insert("JOB_GROUP_ID".into(), group_id.to_string());
+    environment.insert("STAGE_NAME".into(), req.stage_name.clone());
+    {
+        let jg_registry = state.job_group_registry.read().await;
+        if let Some(group) = jg_registry.get(&group_id) {
+            if let Some(ref sha) = group.commit_sha {
+                environment
+                    .entry("COMMIT_SHA".into())
+                    .or_insert(sha.clone());
+            }
+            if let Some(ref branch) = group.branch {
+                environment.entry("BRANCH".into()).or_insert(branch.clone());
+            }
+        }
+    }
+    if let (Some(storage), Some(rid)) = (&state.storage, repo_id) {
+        if let Ok(Some(repo)) = storage.get_repo(rid).await {
+            environment
+                .entry("REPO_URL".into())
+                .or_insert(repo.repo_url);
+            environment
+                .entry("REPO_NAME".into())
+                .or_insert(repo.repo_name);
+        }
+    }
 
     // Create the job
     let mut job = Job::new(
@@ -742,11 +792,27 @@ async fn do_submit_stage(
     );
     job.job_group_id = Some(group_id);
     job.stage_name = Some(req.stage_name.clone());
+    job.stage_config_id = stage_config_id;
     job.assigned_worker = Some(worker_id.clone());
     job.environment = environment.clone();
     job.state = ci_core::models::job::JobState::Queued;
     job.priority = group_priority;
     job.required_labels = required_labels;
+    job.pre_script = if pre_script.is_empty() {
+        None
+    } else {
+        Some(pre_script.clone())
+    };
+    job.post_script = if post_script.is_empty() {
+        None
+    } else {
+        Some(post_script.clone())
+    };
+    job.max_duration_secs = if max_duration_secs_cfg > 0 {
+        Some(max_duration_secs_cfg)
+    } else {
+        None
+    };
 
     // Add to both registries
     {
@@ -780,8 +846,16 @@ async fn do_submit_stage(
             stage_config_id,
             stage_name: req.stage_name.clone(),
             command: command.clone(),
-            pre_script: None,
-            post_script: None,
+            pre_script: if pre_script.is_empty() {
+                None
+            } else {
+                Some(pre_script.clone())
+            },
+            post_script: if post_script.is_empty() {
+                None
+            } else {
+                Some(post_script.clone())
+            },
             worker_id: Some(worker_id.clone()),
             state: "queued".to_string(),
             exit_code: None,
@@ -827,9 +901,9 @@ async fn do_submit_stage(
                 cancel: None,
                 job_group_id: group_id.to_string(),
                 stage_name: req.stage_name.clone(),
-                pre_script: String::new(),
-                post_script: String::new(),
-                max_duration_secs: 0,
+                pre_script,
+                post_script,
+                max_duration_secs: max_duration_secs_cfg,
                 secret_env_keys,
             };
             if sender.send(Ok(assignment)).await.is_err() {

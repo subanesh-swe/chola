@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -65,6 +66,7 @@ impl StageRunner {
         cancel_rx: mpsc::Receiver<i32>,
         max_duration_secs: i32,
         secret_values: Arc<Vec<String>>,
+        environment: &HashMap<String, String>,
     ) -> anyhow::Result<StageResult> {
         let mut pre_exit_code: Option<i32> = None;
         #[allow(unused_assignments)]
@@ -94,6 +96,7 @@ impl StageRunner {
                     log_tx.clone(),
                     dummy_cancel_rx,
                     secret_values.clone(),
+                    environment,
                 )
                 .await
             {
@@ -119,6 +122,7 @@ impl StageRunner {
                                 log_path,
                                 &log_tx,
                                 &secret_values,
+                                environment,
                             )
                             .await;
                         return Ok(StageResult {
@@ -139,7 +143,14 @@ impl StageRunner {
                     error!("Pre-script execution error: {}", e);
                     pre_exit_code = Some(-1);
                     post_exit_code = self
-                        .run_post_script(post_script, work_dir, log_path, &log_tx, &secret_values)
+                        .run_post_script(
+                            post_script,
+                            work_dir,
+                            log_path,
+                            &log_tx,
+                            &secret_values,
+                            environment,
+                        )
                         .await;
                     return Ok(StageResult {
                         pre_exit_code,
@@ -188,6 +199,7 @@ impl StageRunner {
                     log_tx.clone(),
                     merged_rx,
                     secret_values.clone(),
+                    environment,
                 )
                 .await;
 
@@ -204,6 +216,7 @@ impl StageRunner {
                     log_tx.clone(),
                     cancel_rx,
                     secret_values.clone(),
+                    environment,
                 )
                 .await
         };
@@ -223,7 +236,14 @@ impl StageRunner {
 
         // -- Phase 3: Post-script (ALWAYS runs) --
         post_exit_code = self
-            .run_post_script(post_script, work_dir, log_path, &log_tx, &secret_values)
+            .run_post_script(
+                post_script,
+                work_dir,
+                log_path,
+                &log_tx,
+                &secret_values,
+                environment,
+            )
             .await;
 
         let final_state = if was_cancelled {
@@ -250,6 +270,7 @@ impl StageRunner {
         log_path: &str,
         log_tx: &mpsc::Sender<LogLine>,
         secret_values: &Arc<Vec<String>>,
+        environment: &HashMap<String, String>,
     ) -> Option<i32> {
         if post_script.is_empty() {
             return None;
@@ -273,6 +294,7 @@ impl StageRunner {
                 log_tx.clone(),
                 dummy_cancel_rx,
                 secret_values.clone(),
+                environment,
             )
             .await
         {

@@ -379,20 +379,38 @@ pub struct ExecutionConfig {
     pub work_dir: String,
     #[serde(default = "default_log_dir")]
     pub log_dir: String,
+    #[serde(default = "default_repos_dir")]
+    pub repos_dir: String,
 }
 
+/// Resolve chola data directory: $CHOLA_HOME > $XDG_DATA_HOME/chola > ~/.local/share/chola
+pub fn chola_data_dir(sub: &str) -> String {
+    if let Ok(chola_home) = std::env::var("CHOLA_HOME") {
+        return format!("{chola_home}/{sub}");
+    }
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return format!("{xdg}/chola/{sub}");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return format!("{home}/.local/share/chola/{sub}");
+    }
+    format!("/var/lib/chola/{sub}")
+}
 fn default_work_dir() -> String {
-    "/var/lib/ci-worker/jobs".to_string()
+    chola_data_dir("worker/jobs")
 }
 fn default_log_dir() -> String {
-    "/var/lib/ci-worker/logs".to_string()
+    chola_data_dir("worker/logs")
 }
-
+fn default_repos_dir() -> String {
+    chola_data_dir("worker/repos")
+}
 impl Default for ExecutionConfig {
     fn default() -> Self {
         Self {
             work_dir: default_work_dir(),
             log_dir: default_log_dir(),
+            repos_dir: default_repos_dir(),
         }
     }
 }

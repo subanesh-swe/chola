@@ -22,9 +22,10 @@ capabilities:
 heartbeat:
   interval_secs: 3
 
-execution:
-  work_dir: "/tmp/ci-worker/jobs"
-  log_dir: "/tmp/ci-worker/logs"
+# Path resolution: $CHOLA_HOME > $XDG_DATA_HOME/chola > ~/.local/share/chola
+# All execution paths default to $CHOLA_HOME/worker/* if omitted
+# For production systemd: set Environment=CHOLA_HOME=/var/lib/chola
+execution: {}
 
 logging:
   level: "info"

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -200,13 +201,19 @@ impl Executor {
     /// Simple execution — waits for completion and returns all output.
     /// Used when log streaming is not wired up.
     #[allow(dead_code)]
-    pub async fn execute(&self, command: &str, work_dir: &str) -> anyhow::Result<ExecutionResult> {
+    pub async fn execute(
+        &self,
+        command: &str,
+        work_dir: &str,
+        environment: &HashMap<String, String>,
+    ) -> anyhow::Result<ExecutionResult> {
         info!("Executing command: {}", command);
 
         let output = Command::new("sh")
             .arg("-c")
             .arg(command)
             .current_dir(work_dir)
+            .envs(environment)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?
@@ -280,6 +287,7 @@ impl Executor {
         log_tx: mpsc::Sender<LogLine>,
         mut cancel_rx: mpsc::Receiver<i32>,
         secret_values: Arc<Vec<String>>,
+        environment: &HashMap<String, String>,
     ) -> anyhow::Result<ExecutionResult> {
         info!(
             "Executing command (streaming): {}",
@@ -294,6 +302,7 @@ impl Executor {
             .arg("-c")
             .arg(command)
             .current_dir(work_dir)
+            .envs(environment)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0) // Create new process group

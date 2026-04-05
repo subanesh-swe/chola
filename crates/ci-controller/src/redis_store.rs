@@ -142,6 +142,14 @@ impl RedisStore {
         Ok(())
     }
 
+    /// Get remaining TTL (seconds) on a worker reservation. Returns None if key absent.
+    pub async fn get_reservation_ttl(&self, worker_id: &str) -> anyhow::Result<Option<i64>> {
+        let key = self.key(&["worker", "reservation", worker_id]);
+        let mut conn = self.pool.get().await?;
+        let ttl: i64 = redis::cmd("TTL").arg(&key).query_async(&mut conn).await?;
+        Ok(if ttl >= 0 { Some(ttl) } else { None })
+    }
+
     /// Unconditionally delete a worker reservation.
     /// Use only when the worker is dead and we must reclaim regardless of owner
     /// (e.g., heartbeat timeout cleanup).

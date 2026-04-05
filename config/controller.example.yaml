@@ -49,6 +49,8 @@ retention:
   max_builds_per_repo: 500
   cleanup_interval_secs: 3600
 
+# Path resolution: $CHOLA_HOME > $XDG_DATA_HOME/chola > ~/.local/share/chola
+# For production systemd: set Environment=CHOLA_HOME=/var/lib/chola
 logging:
   level: "info"
-  log_dir: "logs/"
+  # log_dir defaults to $CHOLA_HOME/controller/logs if omitted

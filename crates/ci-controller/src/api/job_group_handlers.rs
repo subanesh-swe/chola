@@ -414,3 +414,115 @@ pub async fn retry(
         "message": "Build re-triggered successfully",
     })))
 }
+
+/// GET /api/v1/job-groups/:id/stages — stages with config + execution status + reservation info
+pub async fn stages(
+    State(state): State<Arc<ControllerState>>,
+    _auth_user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    let (group, jobs) = storage
+        .get_job_group_with_jobs(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Job group not found".into()))?;
+
+    // Repo name
+    let repo_name = if let Some(rid) = group.repo_id {
+        storage
+            .get_repo(rid)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.repo_name)
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Stage configs for this repo
+    let stage_configs = if let Some(rid) = group.repo_id {
+        storage
+            .get_stage_configs_for_repo(rid)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Allocated resources from in-memory registry
+    let alloc = {
+        let jg = state.job_group_registry.read().await;
+        jg.get(&id)
+            .map(|g| g.allocated_resources)
+            .unwrap_or_default()
+    };
+
+    // Reservation TTL from Redis
+    let reservation_ttl =
+        if let (Some(redis), Some(ref wid)) = (&state.redis_store, &group.reserved_worker_id) {
+            redis.get_reservation_ttl(wid).await.unwrap_or(None)
+        } else {
+            None
+        };
+
+    // Index jobs by stage_name for O(1) lookup
+    let jobs_by_stage: HashMap<String, &crate::storage::DbJob> = jobs
+        .iter()
+        .filter_map(|j| Some((j.stage_name.clone(), j)))
+        .collect();
+
+    // Merge stage configs with job execution status
+    let stage_list: Vec<Value> = stage_configs
+        .iter()
+        .map(|sc| {
+            let job = jobs_by_stage.get(&sc.stage_name);
+            let mut stage = json!({
+                "stage_name": sc.stage_name,
+                "command": sc.command,
+                "command_mode": sc.command_mode,
+                "required_cpu": sc.required_cpu,
+                "required_memory_mb": sc.required_memory_mb,
+                "required_disk_mb": sc.required_disk_mb,
+                "max_duration_secs": sc.max_duration_secs,
+                "execution_order": sc.execution_order,
+                "parallel_group": sc.parallel_group,
+                "depends_on": sc.depends_on,
+                "job_type": sc.job_type,
+                "required_labels": sc.required_labels,
+                "max_retries": sc.max_retries,
+            });
+            if let Some(j) = job {
+                stage["status"] = json!(j.state);
+                stage["job_id"] = json!(j.id.to_string());
+                stage["exit_code"] = json!(j.exit_code);
+                stage["pre_exit_code"] = json!(j.pre_exit_code);
+                stage["post_exit_code"] = json!(j.post_exit_code);
+                stage["started_at"] = json!(j.started_at.map(|t| t.to_rfc3339()));
+                stage["completed_at"] = json!(j.completed_at.map(|t| t.to_rfc3339()));
+            } else {
+                stage["status"] = json!("pending");
+                stage["job_id"] = json!(null);
+            }
+            stage
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "job_group_id": id.to_string(),
+        "repo_name": repo_name,
+        "branch": group.branch,
+        "commit_sha": group.commit_sha,
+        "worker_id": group.reserved_worker_id,
+        "state": group.state,
+        "reservation_expires_in_secs": reservation_ttl,
+        "allocated_resources": {
+            "cpu": alloc.cpu,
+            "memory_mb": alloc.memory_mb,
+            "disk_mb": alloc.disk_mb,
+        },
+        "stages": stage_list,
+    })))
+}
