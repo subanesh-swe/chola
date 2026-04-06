@@ -55,6 +55,47 @@ impl WorkerRegistry {
         info!("Worker registered: {}", req.worker_id);
     }
 
+    /// Register a worker using a controller-assigned ID instead of the ID in the request.
+    ///
+    /// Used in Flow B (reconnect with permanent token) to prevent a compromised request
+    /// from impersonating a different worker by overriding the worker_id field.
+    pub fn register_with_id(&mut self, worker_id: &str, req: &RegisterRequest) {
+        let disk_type = match req.disk_type.as_str() {
+            "nvme" => DiskType::Nvme,
+            _ => DiskType::Sata,
+        };
+
+        let disk_details: Vec<DiskDetailInfo> = req
+            .disk_details
+            .iter()
+            .map(|d| DiskDetailInfo {
+                mount_point: d.mount_point.clone(),
+                device: d.device.clone(),
+                fs_type: d.fs_type.clone(),
+                total_mb: d.total_mb,
+                used_mb: d.used_mb,
+                available_mb: d.available_mb,
+            })
+            .collect();
+
+        let info = WorkerInfo {
+            worker_id: worker_id.to_string(),
+            hostname: req.hostname.clone(),
+            total_cpu: req.total_cpu,
+            total_memory_mb: req.total_memory_mb,
+            total_disk_mb: req.total_disk_mb,
+            disk_type,
+            supported_job_types: req.supported_job_types.clone(),
+            docker_enabled: req.docker_enabled,
+            labels: req.labels.clone(),
+            disk_details,
+        };
+
+        let state = WorkerState::new(info);
+        self.workers.insert(worker_id.to_string(), state);
+        info!("Worker authenticated and registered: {}", worker_id);
+    }
+
     pub fn update_heartbeat(&mut self, msg: &HeartbeatMessage) {
         if let Some(worker) = self.workers.get_mut(&msg.worker_id) {
             worker.status = WorkerStatus::Connected;
