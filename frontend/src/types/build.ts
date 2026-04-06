@@ -17,6 +17,10 @@ export interface JobGroup {
   reserved_worker_id: string | null;
   state: JobGroupState;
   allocated_resources?: AllocatedResources;
+  last_activity_at?: string | null;
+  time_until_timeout_secs?: number | null;
+  idle_timeout_secs?: number | null;
+  stall_timeout_secs?: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

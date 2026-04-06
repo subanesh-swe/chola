@@ -43,25 +43,16 @@ watch-worker name='worker-1':
 # ─── Job Runner (new subcommand-based CLI) ────────────────────────────────────
 
 # Reserve a worker for a multi-stage build pipeline
-# Usage: just reserve my-service "build,test,push-docker-image"
-reserve repo stages:
+# Usage: just reserve euler-api-txns f1e3109e "gitleaks"
+#        just reserve euler-api-txns f1e3109e "gitleaks" main
+reserve repo commit stages branch="":
     cargo run -p ci-job-runner -- \
         --controller {{controller_addr}} \
         reserve \
         --repo {{repo}} \
-        --stages {{stages}}
-
-# Reserve with full options
-# Usage: just reserve-full my-service "git@github.com:org/repo.git" main abc123 "build,test"
-reserve-full repo repo_url branch commit stages:
-    cargo run -p ci-job-runner -- \
-        --controller {{controller_addr}} \
-        reserve \
-        --repo {{repo}} \
-        --repo-url {{repo_url}} \
-        --branch {{branch}} \
         --commit {{commit}} \
-        --stages {{stages}}
+        --stages {{stages}} \
+        {{ if branch != "" { "--branch " + branch } else { "" } }}
 
 # Run a stage within a reserved job group
 # Usage: just run-stage <job_group_id> build

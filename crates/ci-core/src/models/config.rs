@@ -251,6 +251,12 @@ pub struct WorkersConfig {
     pub max_reconnect_attempts: u32,
     #[serde(default = "default_reservation_timeout")]
     pub reservation_timeout_secs: u64,
+    /// Seconds a group can stay in `Reserved` with no stage submitted before reaping.
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout_secs: u64,
+    /// Seconds a group can stay in `Running` with no activity before reaping.
+    #[serde(default = "default_stall_timeout")]
+    pub stall_timeout_secs: u64,
 }
 
 fn default_heartbeat_interval() -> u32 {
@@ -264,6 +270,12 @@ fn default_max_reconnect() -> u32 {
 }
 fn default_reservation_timeout() -> u64 {
     14400 // 4 hours
+}
+fn default_idle_timeout() -> u64 {
+    300 // 5 minutes — reserved but no stage submitted
+}
+fn default_stall_timeout() -> u64 {
+    1800 // 30 minutes — running but no activity
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

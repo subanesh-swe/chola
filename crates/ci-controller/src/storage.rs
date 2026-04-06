@@ -36,7 +36,7 @@ const STAGE_SCRIPT_COLUMNS: &str =
 
 const JOB_GROUP_COLUMNS: &str =
     "id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
-     state, priority, pr_number, created_at, updated_at, completed_at";
+     state, priority, pr_number, idempotency_key, created_at, updated_at, completed_at";
 
 const JOB_COLUMNS: &str = "id, job_group_id, stage_config_id, stage_name, command, pre_script, \
      post_script, worker_id, state, exit_code, pre_exit_code, post_exit_code, \
@@ -129,6 +129,7 @@ fn map_reservation(r: sqlx::postgres::PgRow) -> WorkerReservation {
 
 fn map_job_group(r: sqlx::postgres::PgRow) -> JobGroup {
     let state_str: String = r.get("state");
+    let updated_at: chrono::DateTime<chrono::Utc> = r.get("updated_at");
     JobGroup {
         id: r.get("id"),
         repo_id: r.get("repo_id"),
@@ -139,10 +140,13 @@ fn map_job_group(r: sqlx::postgres::PgRow) -> JobGroup {
         state: JobGroupState::from_str(&state_str),
         priority: r.get("priority"),
         pr_number: r.try_get("pr_number").ok().flatten(),
+        idempotency_key: r.try_get("idempotency_key").ok().flatten(),
         allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
         created_at: r.get("created_at"),
-        updated_at: r.get("updated_at"),
+        updated_at,
         completed_at: r.get("completed_at"),
+        // Not persisted — use updated_at as best approximation on recovery
+        last_activity_at: updated_at,
     }
 }
 
@@ -603,6 +607,11 @@ impl Storage {
                 "global_scripts",
                 include_str!("../../../migrations/025_global_scripts.sql"),
             ),
+            (
+                26,
+                "idempotency_key",
+                include_str!("../../../migrations/026_idempotency_key.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
@@ -779,8 +788,9 @@ impl Storage {
     pub async fn create_job_group(&self, group: &JobGroup) -> anyhow::Result<JobGroup> {
         let q = format!(
             "INSERT INTO job_groups (id, repo_id, branch, commit_sha, trigger_source, \
-             reserved_worker_id, state, priority, pr_number, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             reserved_worker_id, state, priority, pr_number, idempotency_key, \
+             created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              RETURNING {JOB_GROUP_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -793,6 +803,7 @@ impl Storage {
             .bind(group.state.to_string())
             .bind(group.priority)
             .bind(group.pr_number)
+            .bind(&group.idempotency_key)
             .bind(group.created_at)
             .bind(group.updated_at)
             .fetch_one(&self.pool)
@@ -833,27 +844,15 @@ impl Storage {
         Ok(row.map(map_job_group))
     }
 
-    /// Find an active (pending/reserved/running) job group for a repo+branch+commit combo.
-    pub async fn find_active_job_group(
-        &self,
-        repo_id: Uuid,
-        branch: Option<&str>,
-        commit_sha: Option<&str>,
-    ) -> anyhow::Result<Option<JobGroup>> {
+    /// Find a non-terminal job group by idempotency key (dedup).
+    pub async fn find_by_idempotency_key(&self, key: &str) -> anyhow::Result<Option<JobGroup>> {
         let q = format!(
             "SELECT {JOB_GROUP_COLUMNS} FROM job_groups \
-             WHERE repo_id = $1 \
-             AND branch IS NOT DISTINCT FROM $2 \
-             AND commit_sha IS NOT DISTINCT FROM $3 \
-             AND state IN ('pending', 'reserved', 'running') \
+             WHERE idempotency_key = $1 \
+             AND state NOT IN ('success', 'failed', 'cancelled') \
              ORDER BY created_at DESC LIMIT 1"
         );
-        let row = sqlx::query(&q)
-            .bind(repo_id)
-            .bind(branch)
-            .bind(commit_sha)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(&q).bind(key).fetch_optional(&self.pool).await?;
 
         Ok(row.map(map_job_group))
     }

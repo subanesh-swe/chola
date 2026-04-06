@@ -113,11 +113,9 @@ async fn trigger_build(
 ) -> Result<Value, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
 
-    // Dedup: return existing active group
-    if let Ok(Some(existing)) = storage
-        .find_active_job_group(repo_id, Some(branch), Some(commit_sha))
-        .await
-    {
+    // Dedup: derive idempotency key from webhook inputs
+    let idemp_key = format!("webhook:{repo_id}:{branch}:{commit_sha}");
+    if let Ok(Some(existing)) = storage.find_by_idempotency_key(&idemp_key).await {
         return Ok(json!({
             "job_group_id": existing.id.to_string(),
             "state": existing.state.to_string(),
@@ -145,6 +143,7 @@ async fn trigger_build(
     );
     group.trigger_source = trigger_source.to_string();
     group.pr_number = pr_number;
+    group.idempotency_key = Some(idemp_key);
 
     // Try to reserve a worker
     let worker_id = pick_worker(state).await?;

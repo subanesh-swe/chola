@@ -8,6 +8,7 @@ pub async fn execute(
     branch: Option<String>,
     commit: Option<String>,
     stages: Vec<String>,
+    idempotency_key: Option<String>,
 ) -> anyhow::Result<()> {
     info!("Reserving worker for repo={} stages={:?}", repo, stages);
 
@@ -18,6 +19,7 @@ pub async fn execute(
         commit_sha: commit.unwrap_or_default(),
         stages,
         priority: 0,
+        idempotency_key: idempotency_key.unwrap_or_default(),
     });
 
     let response = client.reserve_worker(request).await?;

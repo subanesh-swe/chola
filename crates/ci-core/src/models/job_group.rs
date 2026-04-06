@@ -67,12 +67,17 @@ pub struct JobGroup {
     pub state: JobGroupState,
     pub priority: i32,
     pub pr_number: Option<i32>,
+    pub idempotency_key: Option<String>,
     /// Resources allocated on the worker for this group
     #[serde(default)]
     pub allocated_resources: AllocatedResources,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// Tracks last meaningful event (stage submit, job status report) for reaper timeouts.
+    /// Not persisted to DB — set to `now()` on creation, `updated_at` on recovery.
+    #[serde(default = "chrono::Utc::now")]
+    pub last_activity_at: DateTime<Utc>,
 }
 
 impl JobGroup {
@@ -88,10 +93,12 @@ impl JobGroup {
             state: JobGroupState::Pending,
             priority: 0,
             pr_number: None,
+            idempotency_key: None,
             allocated_resources: AllocatedResources::default(),
             created_at: now,
             updated_at: now,
             completed_at: None,
+            last_activity_at: now,
         }
     }
 
@@ -113,10 +120,12 @@ impl JobGroup {
             state: JobGroupState::Running,
             priority: 0,
             pr_number: None,
+            idempotency_key: None,
             allocated_resources: AllocatedResources::default(),
             created_at: now,
             updated_at: now,
             completed_at: None,
+            last_activity_at: now,
         }
     }
 }

@@ -34,6 +34,8 @@ enum Commands {
         commit: Option<String>,
         #[arg(long, value_delimiter = ',')]
         stages: Vec<String>,
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
     /// Run a stage within a reserved job group
     Run {
@@ -103,7 +105,19 @@ async fn run() -> anyhow::Result<()> {
             branch,
             commit,
             stages,
-        } => commands::reserve::execute(&mut client, repo, repo_url, branch, commit, stages).await,
+            idempotency_key,
+        } => {
+            commands::reserve::execute(
+                &mut client,
+                repo,
+                repo_url,
+                branch,
+                commit,
+                stages,
+                idempotency_key,
+            )
+            .await
+        }
 
         Commands::Run {
             job_group_id,

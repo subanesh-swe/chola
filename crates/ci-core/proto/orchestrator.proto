@@ -292,6 +292,7 @@ message ReserveWorkerRequest {
     string commit_sha = 4;
     repeated string stages = 5;
     int32 priority = 6;            // scheduling priority (higher = more urgent)
+    string idempotency_key = 7;    // optional dedup key — same key returns same group
 }
 
 message StageInfo {
