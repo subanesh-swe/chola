@@ -46,9 +46,10 @@ impl JobGroupRegistry {
     pub fn update_state(&mut self, group_id: &Uuid, new_state: JobGroupState) -> bool {
         if let Some(group) = self.groups.get_mut(group_id) {
             let valid = match (&group.state, &new_state) {
-                // Can always cancel or fail
+                // Can always cancel, fail, or expire
                 (_, JobGroupState::Cancelled) => true,
                 (_, JobGroupState::Failed) => true,
+                (_, JobGroupState::Expired) => true,
                 (JobGroupState::Pending, JobGroupState::Reserved) => true,
                 (JobGroupState::Reserved, JobGroupState::Running) => true,
                 (JobGroupState::Running, JobGroupState::Success) => true,

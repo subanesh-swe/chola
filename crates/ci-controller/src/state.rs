@@ -36,6 +36,8 @@ pub struct ControllerState {
     pub storage: Option<Arc<crate::storage::Storage>>,
     /// Redis store (None if unavailable)
     pub redis_store: Option<Arc<crate::redis_store::RedisStore>>,
+    /// Directory where logs are persisted on disk (always set)
+    pub log_dir: String,
 }
 
 /// Allow the axum auth middleware extractor to pull `AuthConfig` from `Arc<ControllerState>`.

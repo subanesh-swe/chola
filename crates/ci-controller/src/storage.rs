@@ -36,7 +36,9 @@ const STAGE_SCRIPT_COLUMNS: &str =
 
 const JOB_GROUP_COLUMNS: &str =
     "id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
-     state, priority, pr_number, idempotency_key, created_at, updated_at, completed_at";
+     state, priority, pr_number, idempotency_key, \
+     allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
+     created_at, updated_at, completed_at";
 
 const JOB_COLUMNS: &str = "id, job_group_id, stage_config_id, stage_name, command, pre_script, \
      post_script, worker_id, state, exit_code, pre_exit_code, post_exit_code, \
@@ -45,7 +47,7 @@ const JOB_COLUMNS: &str = "id, job_group_id, stage_config_id, stage_name, comman
 const WORKER_COLUMNS: &str =
     "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
      supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at, labels, \
-     system_info";
+     system_info, worker_token_hash, registration_token_id, approved, description";
 
 const RESERVATION_COLUMNS: &str =
     "id, worker_id, job_group_id, reserved_at, expires_at, released_at, release_reason";
@@ -141,7 +143,11 @@ fn map_job_group(r: sqlx::postgres::PgRow) -> JobGroup {
         priority: r.get("priority"),
         pr_number: r.try_get("pr_number").ok().flatten(),
         idempotency_key: r.try_get("idempotency_key").ok().flatten(),
-        allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
+        allocated_resources: ci_core::models::job_group::AllocatedResources {
+            cpu: r.try_get::<i32, _>("allocated_cpu").unwrap_or(0) as u32,
+            memory_mb: r.try_get::<i64, _>("allocated_memory_mb").unwrap_or(0) as u64,
+            disk_mb: r.try_get::<i64, _>("allocated_disk_mb").unwrap_or(0) as u64,
+        },
         created_at: r.get("created_at"),
         updated_at,
         completed_at: r.get("completed_at"),
@@ -215,6 +221,10 @@ impl From<sqlx::postgres::PgRow> for WorkerRow {
             registered_at: r.get("registered_at"),
             labels: r.get("labels"),
             system_info: r.get("system_info"),
+            worker_token_hash: r.get("worker_token_hash"),
+            registration_token_id: r.get("registration_token_id"),
+            approved: r.try_get("approved").unwrap_or(true),
+            description: r.get("description"),
         }
     }
 }
@@ -280,6 +290,10 @@ pub struct WorkerRow {
     pub registered_at: DateTime<Utc>,
     pub labels: Option<Vec<String>>,
     pub system_info: Option<serde_json::Value>,
+    pub worker_token_hash: Option<String>,
+    pub registration_token_id: Option<Uuid>,
+    pub approved: bool,
+    pub description: Option<String>,
 }
 
 /// Job row from the jobs table (database-level job, not the in-memory Job struct)
@@ -404,6 +418,81 @@ pub struct QueueWaitPoint {
     pub date: String,
     pub avg_wait_secs: i64,
 }
+
+/// Worker registration token (DB row)
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DbWorkerToken {
+    pub id: Uuid,
+    pub name: String,
+    pub token_hash: String,
+    pub scope: String,
+    pub created_by: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub max_uses: i32,
+    pub uses: i32,
+    pub active: bool,
+    pub created_at: DateTime<Utc>,
+    pub worker_id: Option<String>,
+}
+
+impl From<sqlx::postgres::PgRow> for DbWorkerToken {
+    fn from(r: sqlx::postgres::PgRow) -> Self {
+        Self {
+            id: r.get("id"),
+            name: r.get("name"),
+            token_hash: r.get("token_hash"),
+            scope: r.try_get("scope").unwrap_or_else(|_| "shared".to_string()),
+            created_by: r.get("created_by"),
+            expires_at: r.get("expires_at"),
+            max_uses: r.try_get("max_uses").unwrap_or(0),
+            uses: r.try_get("uses").unwrap_or(0),
+            active: r.try_get("active").unwrap_or(true),
+            created_at: r.get("created_at"),
+            worker_id: r.try_get("worker_id").ok().flatten(),
+        }
+    }
+}
+
+/// Label group config (DB row)
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DbLabelGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub match_labels: Vec<String>,
+    pub env_vars: serde_json::Value,
+    pub pre_script: Option<String>,
+    pub max_concurrent_jobs: i32,
+    pub capabilities: Vec<String>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<sqlx::postgres::PgRow> for DbLabelGroup {
+    fn from(r: sqlx::postgres::PgRow) -> Self {
+        Self {
+            id: r.get("id"),
+            name: r.get("name"),
+            match_labels: r.try_get("match_labels").unwrap_or_default(),
+            env_vars: r
+                .try_get("env_vars")
+                .unwrap_or_else(|_| serde_json::json!({})),
+            pre_script: r.get("pre_script"),
+            max_concurrent_jobs: r.try_get("max_concurrent_jobs").unwrap_or(0),
+            capabilities: r.try_get("capabilities").unwrap_or_default(),
+            enabled: r.try_get("enabled").unwrap_or(true),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        }
+    }
+}
+
+const WORKER_TOKEN_COLUMNS: &str =
+    "id, name, token_hash, scope, created_by, expires_at, max_uses, uses, active, created_at, worker_id";
+
+const LABEL_GROUP_COLUMNS: &str =
+    "id, name, match_labels, env_vars, pre_script, max_concurrent_jobs, \
+     capabilities, enabled, created_at, updated_at";
 
 impl Storage {
     /// Create a new Storage with a connection pool.
@@ -612,6 +701,21 @@ impl Storage {
                 "idempotency_key",
                 include_str!("../../../migrations/026_idempotency_key.sql"),
             ),
+            (
+                27,
+                "expired_state_and_resources",
+                include_str!("../../../migrations/027_expired_state_and_resources.sql"),
+            ),
+            (
+                28,
+                "worker_management",
+                include_str!("../../../migrations/028_worker_management.sql"),
+            ),
+            (
+                29,
+                "token_worker_binding",
+                include_str!("../../../migrations/029_token_worker_binding.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
@@ -789,8 +893,9 @@ impl Storage {
         let q = format!(
             "INSERT INTO job_groups (id, repo_id, branch, commit_sha, trigger_source, \
              reserved_worker_id, state, priority, pr_number, idempotency_key, \
+             allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
              created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
              RETURNING {JOB_GROUP_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -804,6 +909,9 @@ impl Storage {
             .bind(group.priority)
             .bind(group.pr_number)
             .bind(&group.idempotency_key)
+            .bind(group.allocated_resources.cpu as i32)
+            .bind(group.allocated_resources.memory_mb as i64)
+            .bind(group.allocated_resources.disk_mb as i64)
             .bind(group.created_at)
             .bind(group.updated_at)
             .fetch_one(&self.pool)
@@ -1026,7 +1134,7 @@ impl Storage {
     pub async fn upsert_worker(&self, worker: &WorkerRow) -> anyhow::Result<WorkerRow> {
         let q = format!(
             "INSERT INTO workers ({WORKER_COLUMNS}) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
              ON CONFLICT (worker_id) DO UPDATE \
              SET hostname = EXCLUDED.hostname, \
                  total_cpu = EXCLUDED.total_cpu, \
@@ -1037,7 +1145,10 @@ impl Storage {
                  docker_enabled = EXCLUDED.docker_enabled, \
                  status = EXCLUDED.status, \
                  last_heartbeat_at = EXCLUDED.last_heartbeat_at, \
-                 labels = EXCLUDED.labels \
+                 labels = EXCLUDED.labels, \
+                 worker_token_hash = COALESCE(EXCLUDED.worker_token_hash, workers.worker_token_hash), \
+                 registration_token_id = COALESCE(EXCLUDED.registration_token_id, workers.registration_token_id), \
+                 description = COALESCE(EXCLUDED.description, workers.description) \
              RETURNING {WORKER_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1054,6 +1165,10 @@ impl Storage {
             .bind(worker.registered_at)
             .bind(&worker.labels)
             .bind(&worker.system_info)
+            .bind(&worker.worker_token_hash)
+            .bind(worker.registration_token_id)
+            .bind(worker.approved)
+            .bind(&worker.description)
             .fetch_one(&self.pool)
             .await?;
 
@@ -1109,6 +1224,20 @@ impl Storage {
         let q = format!("SELECT {WORKER_COLUMNS} FROM workers WHERE worker_id = $1");
         let row = sqlx::query(&q)
             .bind(worker_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(WorkerRow::from))
+    }
+
+    /// Look up a worker by its hashed permanent token (for Flow B: reconnect auth).
+    pub async fn get_worker_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> anyhow::Result<Option<WorkerRow>> {
+        let q = format!("SELECT {WORKER_COLUMNS} FROM workers WHERE worker_token_hash = $1");
+        let row = sqlx::query(&q)
+            .bind(token_hash)
             .fetch_optional(&self.pool)
             .await?;
 
@@ -1348,7 +1477,7 @@ impl Storage {
     pub async fn load_active_job_groups(&self) -> anyhow::Result<Vec<JobGroup>> {
         let q = format!(
             "SELECT {JOB_GROUP_COLUMNS} FROM job_groups \
-             WHERE state NOT IN ('success', 'failed', 'cancelled') \
+             WHERE state NOT IN ('success', 'failed', 'cancelled', 'expired') \
              ORDER BY created_at"
         );
         let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
@@ -3320,5 +3449,345 @@ impl Storage {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // ========================================================================
+    // Worker Tokens
+    // ========================================================================
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_worker_token(
+        &self,
+        name: &str,
+        token_hash: &str,
+        scope: &str,
+        created_by: Option<&str>,
+        expires_at: Option<DateTime<Utc>>,
+        max_uses: i32,
+        worker_id: Option<&str>,
+    ) -> anyhow::Result<DbWorkerToken> {
+        let q = format!(
+            "INSERT INTO worker_tokens (name, token_hash, scope, created_by, expires_at, max_uses, worker_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             RETURNING {WORKER_TOKEN_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(name)
+            .bind(token_hash)
+            .bind(scope)
+            .bind(created_by)
+            .bind(expires_at)
+            .bind(max_uses)
+            .bind(worker_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(DbWorkerToken::from(row))
+    }
+
+    pub async fn get_worker_token_by_hash(
+        &self,
+        hash: &str,
+    ) -> anyhow::Result<Option<DbWorkerToken>> {
+        let q = format!("SELECT {WORKER_TOKEN_COLUMNS} FROM worker_tokens WHERE token_hash = $1");
+        let row = sqlx::query(&q)
+            .bind(hash)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(DbWorkerToken::from))
+    }
+
+    /// Return the bound worker_id for a token (if any).
+    pub async fn get_token_worker_id(&self, hash: &str) -> anyhow::Result<Option<String>> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT worker_id FROM worker_tokens WHERE token_hash = $1")
+                .bind(hash)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.and_then(|(wid,)| wid))
+    }
+
+    pub async fn list_worker_tokens(&self) -> anyhow::Result<Vec<DbWorkerToken>> {
+        let q =
+            format!("SELECT {WORKER_TOKEN_COLUMNS} FROM worker_tokens ORDER BY created_at DESC");
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(DbWorkerToken::from).collect())
+    }
+
+    pub async fn increment_worker_token_uses(&self, id: Uuid) -> anyhow::Result<()> {
+        sqlx::query("UPDATE worker_tokens SET uses = uses + 1 WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_worker_token_active(&self, id: Uuid, active: bool) -> anyhow::Result<()> {
+        sqlx::query("UPDATE worker_tokens SET active = $2 WHERE id = $1")
+            .bind(id)
+            .bind(active)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_worker_token(&self, id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM worker_tokens WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Deactivate all active tokens bound to a specific worker_id.
+    /// Returns the number of rows updated.
+    pub async fn deactivate_tokens_for_worker(&self, worker_id: &str) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE worker_tokens SET active = false WHERE worker_id = $1 AND active = true",
+        )
+        .bind(worker_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Validate a registration token: must be active, not expired, and under
+    /// the max_uses limit (max_uses=0 means unlimited).
+    pub async fn validate_registration_token(&self, hash: &str) -> anyhow::Result<DbWorkerToken> {
+        let token = self
+            .get_worker_token_by_hash(hash)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Registration token not found"))?;
+
+        if !token.active {
+            anyhow::bail!("Registration token is inactive");
+        }
+        if let Some(exp) = token.expires_at {
+            if exp < Utc::now() {
+                anyhow::bail!("Registration token has expired");
+            }
+        }
+        if token.max_uses > 0 && token.uses >= token.max_uses {
+            anyhow::bail!("Registration token has reached max uses");
+        }
+        Ok(token)
+    }
+
+    /// Register a worker: create worker row + generate token, return token plaintext.
+    /// This is the admin flow -- pre-registers a worker and generates its token.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_worker(
+        &self,
+        worker_id: &str,
+        hostname: &str,
+        labels: &[String],
+        description: Option<&str>,
+        token_name: &str,
+        token_hash: &str,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        // 1. Upsert worker row
+        sqlx::query(
+            "INSERT INTO workers (worker_id, hostname, status, registered_at, docker_enabled, labels, description, approved) \
+             VALUES ($1, $2, 'offline', now(), false, $3, $4, true) \
+             ON CONFLICT (worker_id) DO UPDATE \
+             SET hostname = EXCLUDED.hostname, \
+                 labels = EXCLUDED.labels, \
+                 description = COALESCE(EXCLUDED.description, workers.description)"
+        )
+        .bind(worker_id)
+        .bind(hostname)
+        .bind(labels)
+        .bind(description)
+        .execute(&mut *tx)
+        .await?;
+
+        // 2. Create worker_token row with worker_id binding
+        sqlx::query(
+            "INSERT INTO worker_tokens (name, token_hash, scope, created_by, worker_id) \
+             VALUES ($1, $2, 'dedicated', $3, $4)",
+        )
+        .bind(token_name)
+        .bind(token_hash)
+        .bind(created_by)
+        .bind(worker_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    // ========================================================================
+    // Label Groups
+    // ========================================================================
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_label_group(
+        &self,
+        name: &str,
+        match_labels: &[String],
+        env_vars: Option<&serde_json::Value>,
+        pre_script: Option<&str>,
+        max_concurrent_jobs: Option<i32>,
+        capabilities: &[String],
+        enabled: bool,
+    ) -> anyhow::Result<DbLabelGroup> {
+        let default_env = serde_json::json!({});
+        let ev = env_vars.unwrap_or(&default_env);
+        let mcj = max_concurrent_jobs.unwrap_or(0);
+        let q = format!(
+            "INSERT INTO label_groups (name, match_labels, env_vars, pre_script, \
+             max_concurrent_jobs, capabilities, enabled) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             RETURNING {LABEL_GROUP_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(name)
+            .bind(match_labels)
+            .bind(ev)
+            .bind(pre_script)
+            .bind(mcj)
+            .bind(capabilities)
+            .bind(enabled)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(DbLabelGroup::from(row))
+    }
+
+    pub async fn list_label_groups(&self) -> anyhow::Result<Vec<DbLabelGroup>> {
+        let q = format!("SELECT {LABEL_GROUP_COLUMNS} FROM label_groups ORDER BY name");
+        let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(DbLabelGroup::from).collect())
+    }
+
+    pub async fn get_label_group(&self, id: Uuid) -> anyhow::Result<Option<DbLabelGroup>> {
+        let q = format!("SELECT {LABEL_GROUP_COLUMNS} FROM label_groups WHERE id = $1");
+        let row = sqlx::query(&q).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.map(DbLabelGroup::from))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_label_group(
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+        match_labels: Option<&[String]>,
+        env_vars: Option<&serde_json::Value>,
+        pre_script: Option<&str>,
+        max_concurrent_jobs: Option<i32>,
+        capabilities: Option<&[String]>,
+        enabled: Option<bool>,
+    ) -> anyhow::Result<Option<DbLabelGroup>> {
+        let q = format!(
+            "UPDATE label_groups SET \
+             name = COALESCE($2, name), \
+             match_labels = COALESCE($3, match_labels), \
+             env_vars = COALESCE($4, env_vars), \
+             pre_script = COALESCE($5, pre_script), \
+             max_concurrent_jobs = COALESCE($6, max_concurrent_jobs), \
+             capabilities = COALESCE($7, capabilities), \
+             enabled = COALESCE($8, enabled), \
+             updated_at = now() \
+             WHERE id = $1 \
+             RETURNING {LABEL_GROUP_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(id)
+            .bind(name)
+            .bind(match_labels)
+            .bind(env_vars)
+            .bind(pre_script)
+            .bind(max_concurrent_jobs)
+            .bind(capabilities)
+            .bind(enabled)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(DbLabelGroup::from))
+    }
+
+    pub async fn delete_label_group(&self, id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM label_groups WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Returns label groups where ALL match_labels are a subset of the given
+    /// worker_labels. Only returns enabled groups.
+    pub async fn get_matching_label_groups(
+        &self,
+        worker_labels: &[String],
+    ) -> anyhow::Result<Vec<DbLabelGroup>> {
+        let q = format!(
+            "SELECT {LABEL_GROUP_COLUMNS} FROM label_groups \
+             WHERE enabled = true AND match_labels <@ $1 \
+             ORDER BY name"
+        );
+        let rows = sqlx::query(&q)
+            .bind(worker_labels)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(DbLabelGroup::from).collect())
+    }
+
+    // ========================================================================
+    // Enhanced worker persistence
+    // ========================================================================
+
+    pub async fn update_worker_approved(
+        &self,
+        worker_id: &str,
+        approved: bool,
+    ) -> anyhow::Result<()> {
+        sqlx::query("UPDATE workers SET approved = $2 WHERE worker_id = $1")
+            .bind(worker_id)
+            .bind(approved)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_worker(&self, worker_id: &str) -> anyhow::Result<bool> {
+        let result = sqlx::query("DELETE FROM workers WHERE worker_id = $1")
+            .bind(worker_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Cancel all non-terminal jobs belonging to a group.
+    /// Called when the group transitions to a terminal state.
+    pub async fn cancel_jobs_for_group(&self, group_id: Uuid) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE jobs SET state = 'cancelled', updated_at = now() \
+             WHERE job_group_id = $1 AND state NOT IN ('success', 'failed', 'cancelled')",
+        )
+        .bind(group_id)
+        .execute(&self.pool)
+        .await?;
+        let count = result.rows_affected();
+        if count > 0 {
+            info!("Cancelled {} orphaned jobs for group {}", count, group_id);
+        }
+        Ok(count)
+    }
+
+    /// Cancel jobs that are in non-terminal state but their group is terminal.
+    /// Runs on startup to catch any missed updates from previous crashes.
+    pub async fn cleanup_orphaned_jobs(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE jobs SET state = 'cancelled', updated_at = now() \
+             WHERE state NOT IN ('success', 'failed', 'cancelled') \
+             AND job_group_id IN (\
+                 SELECT id FROM job_groups \
+                 WHERE state IN ('success', 'failed', 'cancelled', 'expired')\
+             )",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }

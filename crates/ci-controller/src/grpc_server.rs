@@ -1093,10 +1093,20 @@ impl Orchestrator for OrchestratorService {
 
         let mut registry = self.state.worker_registry.write().await;
         registry.register(&req);
-        drop(registry);
 
-        // Worker availability is determined by in-memory resource tracking,
-        // not a Redis set. No need to manage an "available workers" set.
+        // Restore resource allocations from active groups assigned to this worker
+        {
+            let jgr = self.state.job_group_registry.read().await;
+            for group in jgr.get_groups_for_worker(&req.worker_id) {
+                let alloc = &group.allocated_resources;
+                if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+                    if let Some(w) = registry.get_mut(&req.worker_id) {
+                        w.allocate(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+                    }
+                }
+            }
+        }
+        drop(registry);
 
         Ok(Response::new(RegisterResponse {
             accepted: true,
@@ -1870,6 +1880,10 @@ impl Orchestrator for OrchestratorService {
                 {
                     warn!("Failed to persist cancel for group {group_id}: {e}");
                 }
+                // Persist job cancellations so they survive restarts
+                if let Err(e) = storage.cancel_jobs_for_group(group_id).await {
+                    warn!("Failed to cancel orphaned jobs in DB for group {group_id}: {e}");
+                }
             }
 
             return Ok(Response::new(CancelJobResponse {
@@ -2085,6 +2099,12 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                     .await
                                 {
                                     error!("Failed to mark group {gid} as failed after worker death: {e}");
+                                }
+                                // Persist job failures so they survive restarts
+                                if let Err(e) = storage.cancel_jobs_for_group(gid).await {
+                                    warn!(
+                                        "Failed to cancel orphaned jobs in DB for group {gid}: {e}"
+                                    );
                                 }
                             }
                         }

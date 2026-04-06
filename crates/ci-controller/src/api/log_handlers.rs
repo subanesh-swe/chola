@@ -20,21 +20,62 @@ pub struct LogParams {
 }
 
 /// GET /api/v1/jobs/:id/logs -- return accumulated log data.
+///
+/// Resolution order:
+/// 1. In-memory LogAggregator (fast path for running/recent jobs)
+/// 2. Disk file at `{log_dir}/{group_id}/{stage_name}.log` (survives restarts)
+/// 3. Empty response with `source: "not_found"`
 pub async fn get_logs(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
     Path(job_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let aggregator = state.log_aggregator.read().await;
-    let data = aggregator.get_log_string(&job_id);
-    let offset = aggregator.last_offset(&job_id);
-    let complete = aggregator.is_complete(&job_id);
+    // 1. Try in-memory first (includes UUID alias resolution + disk fallback)
+    {
+        let aggregator = state.log_aggregator.read().await;
+        let data = aggregator.get_log_string(&job_id);
+        if !data.is_empty() {
+            let offset = aggregator.last_offset(&job_id);
+            let complete = aggregator.is_complete(&job_id);
+            return Ok(Json(json!({
+                "job_id": job_id,
+                "data": data,
+                "last_offset": offset,
+                "complete": complete,
+            })));
+        }
+    }
 
+    // 2. Look up job in DB to resolve group_id + stage_name for disk path
+    if let Some(storage) = &state.storage {
+        if let Ok(uuid) = job_id.parse::<uuid::Uuid>() {
+            if let Ok(Some(db_job)) = storage.get_job(uuid).await {
+                let path = format!(
+                    "{}/{}/{}.log",
+                    state.log_dir, db_job.job_group_id, db_job.stage_name
+                );
+                if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                    if !content.is_empty() {
+                        return Ok(Json(json!({
+                            "job_id": job_id,
+                            "data": content,
+                            "last_offset": content.len(),
+                            "complete": true,
+                            "source": "disk",
+                        })));
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Nothing found
     Ok(Json(json!({
         "job_id": job_id,
-        "data": data,
-        "last_offset": offset,
-        "complete": complete,
+        "data": "",
+        "last_offset": 0,
+        "complete": true,
+        "source": "not_found",
     })))
 }
 
