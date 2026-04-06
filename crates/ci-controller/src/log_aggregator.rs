@@ -71,6 +71,11 @@ impl LogAggregator {
         }
     }
 
+    /// Return the log directory path, if configured.
+    pub fn log_dir(&self) -> Option<&str> {
+        self.log_dir.as_deref()
+    }
+
     /// Register a UUID alias for a job_id so logs can be looked up by either.
     pub fn register_alias(&mut self, uuid: String, job_id: String) {
         self.uuid_aliases.insert(uuid, job_id);

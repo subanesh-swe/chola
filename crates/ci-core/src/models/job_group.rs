@@ -13,6 +13,7 @@ pub enum JobGroupState {
     Success,
     Failed,
     Cancelled,
+    Expired,
 }
 
 impl std::fmt::Display for JobGroupState {
@@ -24,6 +25,7 @@ impl std::fmt::Display for JobGroupState {
             Self::Success => write!(f, "success"),
             Self::Failed => write!(f, "failed"),
             Self::Cancelled => write!(f, "cancelled"),
+            Self::Expired => write!(f, "expired"),
         }
     }
 }
@@ -38,12 +40,16 @@ impl JobGroupState {
             "success" => Self::Success,
             "failed" => Self::Failed,
             "cancelled" => Self::Cancelled,
+            "expired" => Self::Expired,
             _ => Self::Pending,
         }
     }
 
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Success | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Success | Self::Failed | Self::Cancelled | Self::Expired
+        )
     }
 }
 

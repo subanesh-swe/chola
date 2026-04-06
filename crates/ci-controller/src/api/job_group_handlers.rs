@@ -333,6 +333,10 @@ pub async fn cancel(
         {
             warn!("Failed to persist cancel state for group {id}: {e}");
         }
+        // Persist job cancellations so they survive restarts
+        if let Err(e) = storage.cancel_jobs_for_group(id).await {
+            warn!("Failed to cancel orphaned jobs in DB for group {id}: {e}");
+        }
     }
 
     if let Some(storage) = &state.storage {

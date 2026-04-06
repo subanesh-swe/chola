@@ -168,11 +168,15 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Build log aggregator
-    let log_agg = match &config.logging.log_dir {
-        Some(dir) => LogAggregator::with_log_dir(dir.clone()),
-        None => LogAggregator::new(),
-    };
+    // Build log aggregator — always use disk so logs survive restarts
+    let log_dir = config
+        .logging
+        .log_dir
+        .clone()
+        .unwrap_or_else(|| ci_core::models::config::chola_data_dir("controller/logs"));
+    tokio::fs::create_dir_all(&log_dir).await?;
+    let log_agg = LogAggregator::with_log_dir(log_dir.clone());
+    info!("Log directory: {}", log_agg.log_dir().unwrap_or("none"));
 
     // Build auth config for middleware
     let mut auth_config = AuthConfig::from_controller_config(&config.auth);
@@ -191,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
         metrics: Metrics::new(),
         storage,
         redis_store,
+        log_dir,
     });
 
     // ── State recovery ────────────────────────────────────────────────────────
@@ -233,7 +238,7 @@ async fn main() -> anyhow::Result<()> {
                     .collect();
 
                 for (gid, _) in &stale_ids {
-                    jgr.update_state(gid, ci_core::models::job_group::JobGroupState::Failed);
+                    jgr.update_state(gid, ci_core::models::job_group::JobGroupState::Expired);
                 }
             }
 
@@ -242,11 +247,18 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = storage
                         .update_job_group_state(
                             *gid,
-                            ci_core::models::job_group::JobGroupState::Failed,
+                            ci_core::models::job_group::JobGroupState::Expired,
                         )
                         .await
                     {
                         warn!("Failed to expire stale group {} in DB: {}", gid, e);
+                    }
+                    // Persist job cancellations for the expired group
+                    if let Err(e) = storage.cancel_jobs_for_group(*gid).await {
+                        warn!(
+                            "Failed to cancel orphaned jobs in DB for stale group {}: {}",
+                            gid, e
+                        );
                     }
                     // Release the per-group Redis reservation key
                     if let (Some(redis), Some(wid)) = (&state.redis_store, worker_id.as_deref()) {
@@ -325,6 +337,30 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => warn!("Failed to recover workers: {}", e),
         }
 
+        // Restore worker resource allocations from active groups
+        {
+            let jgr = state.job_group_registry.read().await;
+            let mut wr = state.worker_registry.write().await;
+            let mut restored = 0usize;
+            for group in jgr.active_groups() {
+                if let Some(wid) = &group.reserved_worker_id {
+                    let alloc = &group.allocated_resources;
+                    if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+                        if let Some(w) = wr.get_mut(wid) {
+                            w.allocate(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+                            restored += 1;
+                        }
+                    }
+                }
+            }
+            if restored > 0 {
+                info!(
+                    "Restored resource allocations for {} active groups",
+                    restored
+                );
+            }
+        }
+
         // Reconcile Redis reservations against DB active groups
         if let Some(redis) = &state.redis_store {
             let active_groups = state.job_group_registry.read().await;
@@ -381,6 +417,13 @@ async fn main() -> anyhow::Result<()> {
                 info!("Released {} orphaned Redis reservations", orphaned);
             }
             info!("Redis reconciliation complete");
+        }
+
+        // Clean up orphaned jobs whose groups are already terminal.
+        // Catches any missed DB updates from previous crashes.
+        let cleaned = storage.cleanup_orphaned_jobs().await.unwrap_or(0);
+        if cleaned > 0 {
+            info!("Cleaned up {} orphaned jobs with terminal groups", cleaned);
         }
     }
     // ── End state recovery ────────────────────────────────────────────────────
@@ -521,6 +564,9 @@ async fn reap_stale_reservations(
         uuid::Uuid,
         Option<String>,
         ci_core::models::job_group::AllocatedResources,
+        Option<uuid::Uuid>,
+        Option<String>,
+        Option<String>,
     )> = {
         let jg = state.job_group_registry.read().await;
         jg.active_groups()
@@ -533,7 +579,16 @@ async fn reap_stale_reservations(
                     _ => false,
                 }
             })
-            .map(|g| (g.id, g.reserved_worker_id.clone(), g.allocated_resources))
+            .map(|g| {
+                (
+                    g.id,
+                    g.reserved_worker_id.clone(),
+                    g.allocated_resources,
+                    g.repo_id,
+                    g.branch.clone(),
+                    g.commit_sha.clone(),
+                )
+            })
             .collect()
     };
 
@@ -541,7 +596,7 @@ async fn reap_stale_reservations(
         return;
     }
 
-    for (group_id, worker_id, alloc) in &stale {
+    for (group_id, worker_id, alloc, repo_id, branch, commit_sha) in &stale {
         warn!(
             "Reaping stale reservation: group={} worker={:?} (inactivity timeout)",
             group_id, worker_id
@@ -549,8 +604,22 @@ async fn reap_stale_reservations(
 
         {
             let mut jg = state.job_group_registry.write().await;
-            jg.update_state(group_id, ci_core::models::job_group::JobGroupState::Failed);
+            jg.update_state(group_id, ci_core::models::job_group::JobGroupState::Expired);
             jg.fail_group_jobs(group_id, "Reservation timed out (inactivity)");
+        }
+
+        // Dispatch global post-script (best-effort; worker may be disconnected)
+        if let Some(wid) = worker_id {
+            grpc_server::dispatch_global_post_script(
+                state,
+                group_id,
+                wid,
+                *repo_id,
+                branch.clone(),
+                commit_sha.clone(),
+                ci_core::models::job_group::JobGroupState::Expired,
+            )
+            .await;
         }
 
         if let Some(wid) = worker_id {
@@ -575,11 +644,18 @@ async fn reap_stale_reservations(
             if let Err(e) = storage
                 .update_job_group_state(
                     *group_id,
-                    ci_core::models::job_group::JobGroupState::Failed,
+                    ci_core::models::job_group::JobGroupState::Expired,
                 )
                 .await
             {
                 warn!("Failed to persist reaped group {} to DB: {}", group_id, e);
+            }
+            // Persist job cancellations so they survive restarts
+            if let Err(e) = storage.cancel_jobs_for_group(*group_id).await {
+                warn!(
+                    "Failed to cancel orphaned jobs in DB for reaped group {}: {}",
+                    group_id, e
+                );
             }
         }
 
