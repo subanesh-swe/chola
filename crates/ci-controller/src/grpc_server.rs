@@ -295,7 +295,7 @@ pub async fn do_reserve_worker(
     let (needed_cpu, needed_memory, needed_disk) = compute_resource_needs(state, req).await;
 
     // Snapshot candidate worker IDs that have enough resources, then drop lock.
-    let candidate_ids: Vec<String> = {
+    let mut candidate_ids: Vec<String> = {
         let registry = state.worker_registry.read().await;
         let connected = registry.connected_workers();
 
@@ -336,36 +336,37 @@ pub async fn do_reserve_worker(
         });
     }
 
-    // Loop through candidates and try to acquire a Redis lock on each.
-    // Redis key is now per-group (not per-worker) for partial reservation.
-    let mut selected = None;
-    for wid in &candidate_ids {
-        if let Some(redis) = &state.redis_store {
-            match ReservationManager::reserve(
-                redis,
-                wid,
-                &group_id,
-                state.config.workers.reservation_timeout_secs,
-            )
-            .await
-            {
-                Ok(true) => {
+    // Allocate resources atomically via WorkerState::allocate() under write lock.
+    // Sort by most available resources first (least-loaded scheduling).
+    let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
+    let worker_id = {
+        let mut registry = state.worker_registry.write().await;
+        // Sort candidates: most free resources first
+        candidate_ids.sort_by(|a, b| {
+            let free_a = registry
+                .get(a)
+                .map(|w| w.available_cpu() as u64 + w.available_memory_mb())
+                .unwrap_or(0);
+            let free_b = registry
+                .get(b)
+                .map(|w| w.available_cpu() as u64 + w.available_memory_mb())
+                .unwrap_or(0);
+            free_b.cmp(&free_a) // descending: most free first
+        });
+        let mut selected = None;
+        for wid in &candidate_ids {
+            if let Some(w) = registry.get_mut(wid) {
+                if !has_resource_req || w.allocate(needed_cpu, needed_memory, needed_disk) {
                     selected = Some(wid.clone());
                     break;
                 }
-                Ok(false) => continue,
-                Err(e) => {
-                    warn!("Redis error for worker {}: {}", wid, e);
-                    continue;
-                }
             }
-        } else {
-            selected = Some(wid.clone());
-            break;
         }
-    }
+        selected
+    };
+    // write lock dropped
 
-    let worker_id = match selected {
+    let worker_id = match worker_id {
         Some(id) => id,
         None => {
             return Ok(ReserveWorkerResponse {
@@ -373,22 +374,25 @@ pub async fn do_reserve_worker(
                 worker_id: String::new(),
                 stages: Vec::new(),
                 success: false,
-                message: "All workers are reserved".to_string(),
+                message: "No workers with sufficient resources available".to_string(),
             });
         }
     };
 
-    // Allocate resources on the selected worker
-    let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
-    if has_resource_req {
-        let mut registry = state.worker_registry.write().await;
-        if let Some(w) = registry.get_mut(&worker_id) {
-            if !w.allocate(needed_cpu, needed_memory, needed_disk) {
-                warn!(
-                    "Worker {} resource allocation race — resources exhausted",
-                    worker_id
-                );
-            }
+    // Record reservation in Redis as non-exclusive per-group tracking key
+    if let Some(redis) = &state.redis_store {
+        if let Err(e) = ReservationManager::reserve(
+            redis,
+            &worker_id,
+            &group_id,
+            state.config.workers.reservation_timeout_secs,
+        )
+        .await
+        {
+            warn!(
+                "Failed to record Redis reservation for worker {}: {}",
+                worker_id, e
+            );
         }
     }
 
@@ -436,6 +440,31 @@ pub async fn do_reserve_worker(
     } else {
         (uuid::Uuid::new_v4(), 0, false) // no DB — in-memory only
     };
+
+    // Validate requested stages exist in DB
+    if !req.stages.is_empty() {
+        if let Some(storage) = &state.storage {
+            let configs = storage
+                .get_stage_configs_for_repo(repo_id)
+                .await
+                .unwrap_or_default();
+            let known: std::collections::HashSet<&str> =
+                configs.iter().map(|c| c.stage_name.as_str()).collect();
+            let unknown: Vec<&str> = req
+                .stages
+                .iter()
+                .filter(|s| !s.is_empty() && !known.contains(s.as_str()))
+                .map(|s| s.as_str())
+                .collect();
+            if !unknown.is_empty() {
+                return Err(Status::invalid_argument(format!(
+                    "Unknown stages for repo '{}': {}",
+                    req.repo_name,
+                    unknown.join(", ")
+                )));
+            }
+        }
+    }
 
     // Enforce concurrency limits
     if max_concurrent > 0 {
@@ -522,18 +551,36 @@ pub async fn do_reserve_worker(
         let branch = Some(req.branch.as_str()).filter(|s| !s.is_empty());
         let commit = Some(req.commit_sha.as_str()).filter(|s| !s.is_empty());
         if let Ok(Some(existing)) = storage.find_active_job_group(repo_id, branch, commit).await {
-            info!(
-                "Returning existing active group {} for {}@{:?}",
-                existing.id, req.repo_name, branch
-            );
-            let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
-            return Ok(ReserveWorkerResponse {
-                job_group_id: existing.id.to_string(),
-                worker_id: existing.reserved_worker_id.unwrap_or_default(),
-                stages,
-                success: true,
-                message: "Existing active group returned".to_string(),
-            });
+            // Before returning existing group, verify worker is still connected
+            let worker_connected = {
+                let wr = state.worker_registry.read().await;
+                existing
+                    .reserved_worker_id
+                    .as_ref()
+                    .and_then(|wid| wr.get(wid))
+                    .map(|w| w.status == ci_core::models::worker::WorkerStatus::Connected)
+                    .unwrap_or(false)
+            };
+
+            if worker_connected {
+                info!(
+                    "Returning existing active group {} for {}@{:?}",
+                    existing.id, req.repo_name, branch
+                );
+                let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
+                return Ok(ReserveWorkerResponse {
+                    job_group_id: existing.id.to_string(),
+                    worker_id: existing.reserved_worker_id.unwrap_or_default(),
+                    stages,
+                    success: true,
+                    message: "Existing active group returned".to_string(),
+                });
+            } else {
+                warn!(
+                    "Existing group {} has disconnected worker, creating new reservation",
+                    existing.id
+                );
+            }
         }
     }
 
@@ -997,7 +1044,11 @@ async fn do_submit_stage(
     // Refresh reservation TTL so long-running pipelines don't expire mid-build
     if let Some(redis) = &state.redis_store {
         let ttl = state.config.workers.reservation_timeout_secs;
-        if let Err(e) = redis.refresh_reservation_ttl(&worker_id, ttl).await {
+        let gid_str = group_id.to_string();
+        if let Err(e) = redis
+            .refresh_reservation_ttl(&worker_id, &gid_str, ttl)
+            .await
+        {
             warn!("Failed to refresh reservation TTL for worker {worker_id}: {e}");
         }
     }
@@ -1036,15 +1087,8 @@ impl Orchestrator for OrchestratorService {
         registry.register(&req);
         drop(registry);
 
-        // Add worker to Redis available set
-        if let Some(redis) = &self.state.redis_store {
-            if let Err(e) = redis.add_available_worker(&req.worker_id).await {
-                warn!(
-                    "Failed to add worker {} to Redis available set: {e}",
-                    req.worker_id
-                );
-            }
-        }
+        // Worker availability is determined by in-memory resource tracking,
+        // not a Redis set. No need to manage an "available workers" set.
 
         Ok(Response::new(RegisterResponse {
             accepted: true,
@@ -1773,11 +1817,79 @@ impl Orchestrator for OrchestratorService {
     ) -> Result<Response<CancelJobResponse>, Status> {
         let req = request.into_inner();
         info!(
-            "CancelJob request: job_id={}, reason={}",
-            req.job_id, req.reason
+            "CancelJob request: job_id={}, job_group_id={}, reason={}",
+            req.job_id, req.job_group_id, req.reason
         );
 
-        // Cancel the job and get the assigned worker
+        // If job_group_id is provided and job_id is empty, cancel the entire group
+        if !req.job_group_id.is_empty() && req.job_id.is_empty() {
+            let group_id = uuid::Uuid::parse_str(&req.job_group_id)
+                .map_err(|_| Status::invalid_argument("Invalid job_group_id UUID"))?;
+
+            let release_info = {
+                let mut jg = self.state.job_group_registry.write().await;
+                if let Some(group) = jg.get(&group_id) {
+                    if group.state.is_terminal() {
+                        return Ok(Response::new(CancelJobResponse {
+                            accepted: false,
+                            message: "Job group already in terminal state".to_string(),
+                        }));
+                    }
+                } else {
+                    return Err(Status::not_found(format!(
+                        "Job group {} not found",
+                        req.job_group_id
+                    )));
+                }
+                let info = jg
+                    .get(&group_id)
+                    .map(|g| (g.reserved_worker_id.clone(), g.allocated_resources));
+                jg.update_state(
+                    &group_id,
+                    ci_core::models::job_group::JobGroupState::Cancelled,
+                );
+                jg.fail_group_jobs(&group_id, &req.reason);
+                info
+            };
+
+            // Release worker resources
+            if let Some((Some(ref wid), alloc)) = release_info {
+                if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+                    let mut wr = self.state.worker_registry.write().await;
+                    if let Some(w) = wr.get_mut(wid) {
+                        w.release(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+                    }
+                }
+                // Release Redis reservation
+                if let Some(redis) = &self.state.redis_store {
+                    if let Err(e) =
+                        crate::reservation::ReservationManager::release(redis, wid, &group_id).await
+                    {
+                        warn!("Failed to release Redis reservation for worker {wid}: {e}");
+                    }
+                }
+            }
+
+            // Persist to DB
+            if let Some(storage) = &self.state.storage {
+                if let Err(e) = storage
+                    .update_job_group_state(
+                        group_id,
+                        ci_core::models::job_group::JobGroupState::Cancelled,
+                    )
+                    .await
+                {
+                    warn!("Failed to persist cancel for group {group_id}: {e}");
+                }
+            }
+
+            return Ok(Response::new(CancelJobResponse {
+                accepted: true,
+                message: format!("Job group {} cancelled", req.job_group_id),
+            }));
+        }
+
+        // Cancel individual job by job_id
         let worker_id = {
             let mut registry = self.state.job_registry.write().await;
             registry.cancel_job(&req.job_id, &req.reason)
