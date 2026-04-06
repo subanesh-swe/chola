@@ -61,12 +61,16 @@ message RegisterRequest {
   bool docker_enabled = 8;
   repeated string labels = 9;      // worker capability labels for routing
   repeated DiskInfo disk_details = 10;
+  string registration_token = 11;  // one-time reg token (first connect)
+  string worker_token = 12;        // permanent token (subsequent connects)
 }
 
 message RegisterResponse {
   bool accepted = 1;
   string message = 2;
   uint32 heartbeat_interval_secs = 3;
+  string worker_token = 4;         // returned on first registration
+  string assigned_worker_id = 5;   // controller-assigned ID
 }
 
 // ============================================================================

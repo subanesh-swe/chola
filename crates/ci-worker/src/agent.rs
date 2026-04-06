@@ -162,9 +162,16 @@ async fn run_session(
             docker_enabled: config.capabilities.docker_enabled,
             labels: Vec::new(),
             disk_details,
+            registration_token: config.registration_token.clone().unwrap_or_default(),
+            worker_token: config.worker_token.clone().unwrap_or_default(),
         };
         let resp = client.register(register_req).await?;
         info!("Registration response: {}", resp.message);
+        if !resp.worker_token.is_empty() {
+            info!("=== SAVE THIS TOKEN TO YOUR WORKER CONFIG ===");
+            info!("worker_token: \"{}\"", resp.worker_token);
+            info!("=============================================");
+        }
 
         // Report system metadata to controller REST API
         report_system_metadata(config).await;

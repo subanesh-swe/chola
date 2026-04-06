@@ -9,6 +9,7 @@ pub mod dashboard_handlers;
 pub mod error;
 pub mod job_group_handlers;
 pub mod job_handlers;
+pub mod label_group_handlers;
 pub mod log_handlers;
 pub mod notification_handlers;
 pub mod repo_handlers;
@@ -20,6 +21,7 @@ pub mod user_handlers;
 pub mod variable_handlers;
 pub mod webhook_handlers;
 pub mod worker_handlers;
+pub mod worker_token_handlers;
 
 use std::{sync::Arc, time::Duration};
 
@@ -164,9 +166,12 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
         .route("/jobs/{id}/logs/stream", get(log_handlers::stream_logs))
         // Workers
         .route("/workers", get(worker_handlers::list))
+        .route("/workers/register", post(worker_handlers::register_worker))
         .route("/workers/{id}", get(worker_handlers::get_one))
         .route("/workers/{id}/drain", post(worker_handlers::drain))
         .route("/workers/{id}/undrain", post(worker_handlers::undrain))
+        .route("/workers/{id}/approve", put(worker_handlers::approve))
+        .route("/workers/{id}/reject", put(worker_handlers::reject))
         .route(
             "/workers/{id}/labels",
             get(worker_handlers::get_labels).put(worker_handlers::update_labels),
@@ -174,6 +179,34 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
         .route(
             "/workers/{id}/metadata",
             put(worker_handlers::update_metadata),
+        )
+        // Worker tokens
+        .route(
+            "/worker-tokens",
+            get(worker_token_handlers::list).post(worker_token_handlers::create),
+        )
+        .route(
+            "/worker-tokens/{id}/activate",
+            put(worker_token_handlers::activate),
+        )
+        .route(
+            "/worker-tokens/{id}/deactivate",
+            put(worker_token_handlers::deactivate),
+        )
+        .route(
+            "/worker-tokens/{id}",
+            delete(worker_token_handlers::delete_one),
+        )
+        // Label groups
+        .route(
+            "/label-groups",
+            get(label_group_handlers::list).post(label_group_handlers::create),
+        )
+        .route(
+            "/label-groups/{id}",
+            get(label_group_handlers::get_one)
+                .put(label_group_handlers::update)
+                .delete(label_group_handlers::delete_one),
         )
         // Dashboard
         .route("/dashboard/summary", get(dashboard_handlers::summary))

@@ -25,16 +25,17 @@ use crate::state::ControllerState;
 // Auth interceptor
 // ---------------------------------------------------------------------------
 
+fn sha256_hex_grpc(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(input.as_bytes()))
+}
+
 fn auth_interceptor(
     config: ci_core::models::config::AuthConfig,
+    token_hashes: std::sync::Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
 ) -> impl Fn(tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> + Clone {
     move |req: tonic::Request<()>| -> Result<tonic::Request<()>, tonic::Status> {
         if !config.enabled {
-            return Ok(req);
-        }
-
-        let token = config.token.as_deref().unwrap_or("");
-        if token.is_empty() {
             return Ok(req);
         }
 
@@ -43,6 +44,25 @@ fn auth_interceptor(
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
+
+        let bearer = auth.strip_prefix("Bearer ").unwrap_or("");
+
+        // Token with known prefix: validate against in-memory hash set
+        if bearer.starts_with("chola_svc_") || bearer.starts_with("chola_wkr_") {
+            let hash = sha256_hex_grpc(bearer);
+            let hashes = token_hashes.read().unwrap_or_else(|e| e.into_inner());
+            return if hashes.contains(&hash) {
+                Ok(req)
+            } else {
+                Err(tonic::Status::unauthenticated("Invalid token"))
+            };
+        }
+
+        // Static bearer token check (worker registration tokens / legacy)
+        let token = config.token.as_deref().unwrap_or("");
+        if token.is_empty() {
+            return Ok(req);
+        }
 
         let expected = format!("Bearer {}", token);
         if auth != expected {
@@ -58,6 +78,114 @@ fn auth_interceptor(
 // ---------------------------------------------------------------------------
 // Helper functions (extracted from RPC handlers)
 // ---------------------------------------------------------------------------
+
+/// Dispatch the repo's global post-script as a cleanup job to the worker.
+///
+/// Called on every group terminal transition (completion, cancel, reaper timeout)
+/// so the cleanup runs regardless of how many stages were actually submitted.
+pub async fn dispatch_global_post_script(
+    state: &Arc<ControllerState>,
+    group_id: &uuid::Uuid,
+    worker_id: &str,
+    repo_id: Option<uuid::Uuid>,
+    branch: Option<String>,
+    commit_sha: Option<String>,
+    group_state: ci_core::models::job_group::JobGroupState,
+) {
+    let rid = match repo_id {
+        Some(r) => r,
+        None => return,
+    };
+    let storage = match &state.storage {
+        Some(s) => s,
+        None => return,
+    };
+    let repo = match storage.get_repo(rid).await {
+        Ok(Some(r)) => r,
+        _ => return,
+    };
+    let global_post = match &repo.global_post_script {
+        Some(s) if !s.is_empty() => s.clone(),
+        _ => return,
+    };
+    let scope = &repo.global_post_script_scope;
+    if scope != "worker" && scope != "both" {
+        return;
+    }
+
+    info!(
+        "Dispatching global post-script for group {} on worker {}",
+        group_id, worker_id
+    );
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("JOB_GROUP_ID".into(), group_id.to_string());
+    env.insert("REPO_NAME".into(), repo.repo_name.clone());
+    env.insert("REPO_URL".into(), repo.repo_url.clone());
+    if let Some(ref b) = branch {
+        env.insert("BRANCH".into(), b.clone());
+    }
+    if let Some(ref c) = commit_sha {
+        env.insert("COMMIT_SHA".into(), c.clone());
+    }
+    env.insert(
+        "STAGE_EXIT_CODE".into(),
+        if group_state == ci_core::models::job_group::JobGroupState::Success {
+            "0"
+        } else {
+            "1"
+        }
+        .into(),
+    );
+    env.insert(
+        "STAGE_WAS_CANCELLED".into(),
+        if group_state == ci_core::models::job_group::JobGroupState::Cancelled {
+            "true"
+        } else {
+            "false"
+        }
+        .into(),
+    );
+    env.insert("GROUP_STATE".into(), group_state.to_string());
+
+    let senders = state.job_stream_senders.read().await;
+    let sender = match senders.get(worker_id) {
+        Some(s) => s,
+        None => {
+            warn!(
+                "No job stream for worker {} -- cannot send cleanup for group {}",
+                worker_id, group_id
+            );
+            return;
+        }
+    };
+
+    let cleanup_id = format!("{}-__cleanup__", group_id);
+    let assignment = JobAssignment {
+        job_id: cleanup_id,
+        command: global_post,
+        job_type: "common".to_string(),
+        required_cpu: 0,
+        required_memory_mb: 0,
+        required_disk_mb: 0,
+        isolation_required: false,
+        branch_id: String::new(),
+        environment: env,
+        cancel: None,
+        job_group_id: group_id.to_string(),
+        stage_name: "__cleanup__".to_string(),
+        pre_script: String::new(),
+        post_script: String::new(),
+        max_duration_secs: 300,
+        secret_env_keys: Vec::new(),
+    };
+    if sender.send(Ok(assignment)).await.is_err() {
+        warn!(
+            "Failed to send cleanup job for group {} to worker {}",
+            group_id, worker_id
+        );
+    }
+}
 
 /// Build a `JobAssignment` proto from a domain `Job`.
 fn build_job_assignment(job: Job) -> JobAssignment {
@@ -809,7 +937,7 @@ async fn do_submit_stage(
     };
 
     // Load pre/post scripts from DB for this stage + worker
-    let (mut pre_script, mut post_script) =
+    let (mut pre_script, post_script) =
         if let (Some(storage), Some(sc_id)) = (&state.storage, stage_config_id) {
             let scripts = storage
                 .get_scripts_for_stage(sc_id, Some(&worker_id))
@@ -856,33 +984,9 @@ async fn do_submit_stage(
                     }
                 }
             }
-            // Last stage: append global post_script (worker-scope).
-            // Race-safe: uses submitted job count vs total stage count.
-            // Parallel submissions each see their own snapshot of
-            // submitted_count; only the Nth caller (where N == total)
-            // will satisfy the condition.
-            if let Some(ref g_post_body) = g_post {
-                if matches!(g_post_scope.as_str(), "worker" | "both") {
-                    let is_last = {
-                        let jg = state.job_group_registry.read().await;
-                        let total_stages = storage
-                            .get_stage_configs_for_repo(rid)
-                            .await
-                            .map(|s| s.len())
-                            .unwrap_or(0);
-                        let submitted_count = jg.get_jobs_for_group(&group_id).len();
-                        // Current submission not yet added, so +1
-                        total_stages > 0 && submitted_count + 1 >= total_stages
-                    };
-                    if is_last {
-                        if post_script.is_empty() {
-                            post_script = g_post_body.clone();
-                        } else {
-                            post_script = format!("{}\n{}", post_script, g_post_body);
-                        }
-                    }
-                }
-            }
+            // Global post-script is dispatched on group terminal state
+            // (see dispatch_global_post_script), not at submission time.
+            let _ = (g_post, g_post_scope);
         }
     }
 
@@ -1079,6 +1183,48 @@ pub struct OrchestratorService {
 }
 
 // ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
+
+fn sha256_hex(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn generate_worker_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!("chola_wkr_{}", hex::encode(bytes))
+}
+
+// ---------------------------------------------------------------------------
+// Registration helpers
+// ---------------------------------------------------------------------------
+
+/// Restore resource allocations for active groups assigned to a worker.
+///
+/// Called after in-memory registration so the worker's available capacity
+/// reflects any groups that were already assigned before this (re)connect.
+async fn restore_allocations(
+    state: &Arc<ControllerState>,
+    registry: &mut crate::worker_registry::WorkerRegistry,
+    worker_id: &str,
+) {
+    let jgr = state.job_group_registry.read().await;
+    for group in jgr.get_groups_for_worker(worker_id) {
+        let alloc = &group.allocated_resources;
+        if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+            if let Some(w) = registry.get_mut(worker_id) {
+                w.allocate(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator trait implementation
 // ---------------------------------------------------------------------------
 
@@ -1091,27 +1237,172 @@ impl Orchestrator for OrchestratorService {
         let req = request.into_inner();
         info!("Worker registration request from: {}", req.worker_id);
 
-        let mut registry = self.state.worker_registry.write().await;
-        registry.register(&req);
+        let storage = self.state.storage.as_ref();
+        let hb_interval = self.state.config.workers.heartbeat_interval_secs;
 
-        // Restore resource allocations from active groups assigned to this worker
-        {
-            let jgr = self.state.job_group_registry.read().await;
-            for group in jgr.get_groups_for_worker(&req.worker_id) {
-                let alloc = &group.allocated_resources;
-                if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
-                    if let Some(w) = registry.get_mut(&req.worker_id) {
-                        w.allocate(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+        // Flow B: reconnect with permanent worker token
+        if !req.worker_token.is_empty() {
+            let hash = sha256_hex(&req.worker_token);
+            if let Some(st) = storage {
+                // Resolve worker_id from the token table (authoritative binding).
+                // Falls back to req.worker_id only if no binding exists (legacy token).
+                let bound_worker_id = match st.get_token_worker_id(&hash).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        return Err(Status::internal(format!("Token lookup failed: {}", e)));
+                    }
+                };
+
+                let worker_id = match bound_worker_id {
+                    Some(id) => id,
+                    None => {
+                        // Legacy path: token exists in hash set but has no binding.
+                        // Validate via workers table to ensure token is known.
+                        match st.get_worker_by_token_hash(&hash).await {
+                            Ok(Some(row)) => row.worker_id.clone(),
+                            Ok(None) => {
+                                return Err(Status::unauthenticated("Invalid worker token"));
+                            }
+                            Err(e) => {
+                                return Err(Status::internal(format!(
+                                    "Worker lookup failed: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+                };
+
+                // Check worker approval status.
+                match st.get_worker(&worker_id).await {
+                    Ok(Some(row)) if !row.approved => {
+                        return Err(Status::permission_denied("Worker is not approved"));
+                    }
+                    Err(e) => {
+                        return Err(Status::internal(format!(
+                            "Worker approval check failed: {}",
+                            e
+                        )));
+                    }
+                    _ => {}
+                }
+
+                // Cache token hash so the interceptor accepts subsequent RPCs.
+                if let Ok(mut guard) = self.state.token_hashes.write() {
+                    guard.insert(hash.clone());
+                }
+
+                let mut registry = self.state.worker_registry.write().await;
+                registry.register_with_id(&worker_id, &req);
+                restore_allocations(&self.state, &mut registry, &worker_id).await;
+                drop(registry);
+
+                return Ok(Response::new(RegisterResponse {
+                    accepted: true,
+                    message: "Worker authenticated".to_string(),
+                    heartbeat_interval_secs: hb_interval,
+                    worker_token: String::new(),
+                    assigned_worker_id: worker_id,
+                }));
+            }
+        }
+
+        // Flow A: first registration with a one-time registration token
+        if !req.registration_token.is_empty() {
+            let hash = sha256_hex(&req.registration_token);
+            if let Some(st) = storage {
+                match st.validate_registration_token(&hash).await {
+                    Ok(token) => {
+                        let worker_token = generate_worker_token();
+                        let worker_token_hash = sha256_hex(&worker_token);
+                        let worker_token_hash_for_cache = worker_token_hash.clone();
+
+                        let worker_row = crate::storage::WorkerRow {
+                            worker_id: req.worker_id.clone(),
+                            hostname: Some(req.hostname.clone()),
+                            total_cpu: Some(req.total_cpu as i32),
+                            total_memory_mb: Some(req.total_memory_mb as i64),
+                            total_disk_mb: Some(req.total_disk_mb as i64),
+                            disk_type: Some(req.disk_type.clone()),
+                            supported_job_types: Some(req.supported_job_types.clone()),
+                            docker_enabled: req.docker_enabled,
+                            status: "connected".to_string(),
+                            last_heartbeat_at: Some(chrono::Utc::now()),
+                            registered_at: chrono::Utc::now(),
+                            labels: Some(req.labels.clone()),
+                            system_info: None,
+                            worker_token_hash: Some(worker_token_hash),
+                            registration_token_id: Some(token.id),
+                            approved: true,
+                            description: None,
+                        };
+
+                        st.upsert_worker(&worker_row).await.map_err(|e| {
+                            Status::internal(format!("Failed to persist worker: {}", e))
+                        })?;
+
+                        // Cache worker token hash so the interceptor accepts it
+                        if let Ok(mut guard) = self.state.token_hashes.write() {
+                            guard.insert(worker_token_hash_for_cache);
+                        }
+
+                        if let Err(e) = st.increment_worker_token_uses(token.id).await {
+                            warn!("Failed to increment token uses for {}: {}", token.id, e);
+                        }
+
+                        let worker_id = req.worker_id.clone();
+                        let mut registry = self.state.worker_registry.write().await;
+                        registry.register(&req);
+                        restore_allocations(&self.state, &mut registry, &worker_id).await;
+                        drop(registry);
+
+                        info!(
+                            "Worker {} registered via registration token {}",
+                            worker_id, token.id
+                        );
+                        return Ok(Response::new(RegisterResponse {
+                            accepted: true,
+                            message: "Worker registered successfully".to_string(),
+                            heartbeat_interval_secs: hb_interval,
+                            worker_token,
+                            assigned_worker_id: worker_id,
+                        }));
+                    }
+                    Err(e) => {
+                        return Err(Status::unauthenticated(format!(
+                            "Invalid or expired registration token: {}",
+                            e
+                        )));
                     }
                 }
             }
         }
+
+        // Flow C: legacy (no tokens)
+        if self.state.config.auth.enabled {
+            warn!(
+                "Worker {} attempted registration without token (auth enabled)",
+                req.worker_id
+            );
+            return Err(Status::unauthenticated("Registration token required"));
+        }
+
+        warn!(
+            "Worker {} registered without token (auth disabled)",
+            req.worker_id
+        );
+        let worker_id = req.worker_id.clone();
+        let mut registry = self.state.worker_registry.write().await;
+        registry.register(&req);
+        restore_allocations(&self.state, &mut registry, &worker_id).await;
         drop(registry);
 
         Ok(Response::new(RegisterResponse {
             accepted: true,
-            message: "Worker registered successfully".to_string(),
-            heartbeat_interval_secs: self.state.config.workers.heartbeat_interval_secs,
+            message: "Worker registered (no auth)".to_string(),
+            heartbeat_interval_secs: hb_interval,
+            worker_token: String::new(),
+            assigned_worker_id: worker_id,
         }))
     }
 
@@ -1158,9 +1449,22 @@ impl Orchestrator for OrchestratorService {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         let state = self.state.clone();
 
-        // Register this worker's channel for job assignments (including cancel directives)
+        // Register this worker's channel for job assignments (including cancel directives).
+        // Reject if an active stream already exists to prevent hijacking.
         {
             let mut senders = self.state.job_stream_senders.write().await;
+            if let Some(existing) = senders.get(&worker_id) {
+                if !existing.is_closed() {
+                    warn!(
+                        "Worker {} already has active job stream, rejecting duplicate",
+                        worker_id
+                    );
+                    return Err(Status::already_exists(format!(
+                        "Worker {} already has an active connection",
+                        worker_id
+                    )));
+                }
+            }
             senders.insert(worker_id.clone(), tx.clone());
             info!("Registered job stream channel for worker {}", worker_id);
         }
@@ -1355,6 +1659,20 @@ impl Orchestrator for OrchestratorService {
                     info!("Job group {} completed: {}", group_id, new_state);
                     self.state.metrics.dec_active_builds();
 
+                    // Dispatch global post-script before releasing worker resources
+                    if let Some(ref wid) = worker_id {
+                        dispatch_global_post_script(
+                            &self.state,
+                            &group_id,
+                            wid,
+                            repo_id,
+                            branch.clone(),
+                            commit_sha.clone(),
+                            new_state,
+                        )
+                        .await;
+                    }
+
                     if let Some(ref wid) = worker_id {
                         // Release allocated resources on the worker
                         if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
@@ -1462,12 +1780,48 @@ impl Orchestrator for OrchestratorService {
         &self,
         request: Request<ReconnectRequest>,
     ) -> Result<Response<ReconnectResponse>, Status> {
+        // Extract bearer token from metadata before consuming the request.
+        let bearer_token: Option<String> = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|s| s.to_owned());
+
         let req = request.into_inner();
         warn!(
             "Worker {} reconnecting with {} running jobs",
             req.worker_id,
             req.running_jobs.len()
         );
+
+        // Validate that the bearer token is bound to the claimed worker_id.
+        if let Some(token) = &bearer_token {
+            if token.starts_with("chola_wkr_") || token.starts_with("chola_svc_") {
+                let hash = sha256_hex(token);
+                if let Some(st) = self.state.storage.as_ref() {
+                    match st.get_token_worker_id(&hash).await {
+                        Ok(Some(bound_id)) if bound_id != req.worker_id => {
+                            warn!(
+                                "Reconnect identity mismatch: token bound to '{}', claimed '{}'",
+                                bound_id, req.worker_id
+                            );
+                            return Err(Status::permission_denied(format!(
+                                "Token is bound to worker '{}', not '{}'",
+                                bound_id, req.worker_id
+                            )));
+                        }
+                        Err(e) => {
+                            return Err(Status::internal(format!(
+                                "Token identity check failed: {}",
+                                e
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         // Re-register the worker (update heartbeat and mark as active)
         {
@@ -1840,9 +2194,15 @@ impl Orchestrator for OrchestratorService {
                         req.job_group_id
                     )));
                 }
-                let info = jg
-                    .get(&group_id)
-                    .map(|g| (g.reserved_worker_id.clone(), g.allocated_resources));
+                let info = jg.get(&group_id).map(|g| {
+                    (
+                        g.reserved_worker_id.clone(),
+                        g.allocated_resources,
+                        g.repo_id,
+                        g.branch.clone(),
+                        g.commit_sha.clone(),
+                    )
+                });
                 jg.update_state(
                     &group_id,
                     ci_core::models::job_group::JobGroupState::Cancelled,
@@ -1851,8 +2211,22 @@ impl Orchestrator for OrchestratorService {
                 info
             };
 
+            // Dispatch global post-script before releasing worker resources
+            if let Some((Some(ref wid), _, repo_id, ref branch, ref commit_sha)) = release_info {
+                dispatch_global_post_script(
+                    &self.state,
+                    &group_id,
+                    wid,
+                    repo_id,
+                    branch.clone(),
+                    commit_sha.clone(),
+                    ci_core::models::job_group::JobGroupState::Cancelled,
+                )
+                .await;
+            }
+
             // Release worker resources
-            if let Some((Some(ref wid), alloc)) = release_info {
+            if let Some((Some(ref wid), alloc, _, _, _)) = release_info {
                 if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
                     let mut wr = self.state.worker_registry.write().await;
                     if let Some(w) = wr.get_mut(wid) {
@@ -1879,10 +2253,6 @@ impl Orchestrator for OrchestratorService {
                     .await
                 {
                     warn!("Failed to persist cancel for group {group_id}: {e}");
-                }
-                // Persist job cancellations so they survive restarts
-                if let Err(e) = storage.cancel_jobs_for_group(group_id).await {
-                    warn!("Failed to cancel orphaned jobs in DB for group {group_id}: {e}");
                 }
             }
 
@@ -2100,12 +2470,6 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                 {
                                     error!("Failed to mark group {gid} as failed after worker death: {e}");
                                 }
-                                // Persist job failures so they survive restarts
-                                if let Err(e) = storage.cancel_jobs_for_group(gid).await {
-                                    warn!(
-                                        "Failed to cancel orphaned jobs in DB for group {gid}: {e}"
-                                    );
-                                }
                             }
                         }
 
@@ -2280,8 +2644,9 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
 
     let tls_config = state.config.tls.clone();
     let auth_config = state.config.auth.clone();
+    let token_hashes = state.token_hashes.clone();
     let service = OrchestratorService { state };
-    let interceptor = auth_interceptor(auth_config);
+    let interceptor = auth_interceptor(auth_config, token_hashes);
     let grpc_service = OrchestratorServer::new(service)
         .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
         .send_compressed(tonic::codec::CompressionEncoding::Gzip);

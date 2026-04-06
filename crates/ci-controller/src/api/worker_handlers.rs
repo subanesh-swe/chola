@@ -4,8 +4,10 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::auth::middleware::AuthUser;
@@ -224,6 +226,119 @@ pub async fn update_labels(
         }
     }
     Ok(Json(json!({ "worker_id": id, "labels": body.labels })))
+}
+
+/// PUT /api/v1/workers/:id/approve
+pub async fn approve(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    set_approved(&state, auth_user, &id, true).await
+}
+
+/// PUT /api/v1/workers/:id/reject
+pub async fn reject(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    set_approved(&state, auth_user, &id, false).await
+}
+
+async fn set_approved(
+    state: &Arc<ControllerState>,
+    auth_user: AuthUser,
+    id: &str,
+    approved: bool,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_workers() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    storage
+        .update_worker_approved(id, approved)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let status = if approved { "approved" } else { "rejected" };
+    info!("Worker {} {} via REST API", id, status);
+    Ok(Json(json!({ "worker_id": id, "approved": approved })))
+}
+
+/// POST /api/v1/workers/register
+#[derive(Deserialize)]
+pub struct RegisterWorkerRequest {
+    pub worker_id: String,
+    pub hostname: String,
+    pub labels: Option<Vec<String>>,
+    pub description: Option<String>,
+}
+
+pub async fn register_worker(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Json(body): Json<RegisterWorkerRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_workers() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    if body.worker_id.trim().is_empty() {
+        return Err(ApiError::BadRequest("worker_id is required".into()));
+    }
+    if body.hostname.trim().is_empty() {
+        return Err(ApiError::BadRequest("hostname is required".into()));
+    }
+
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let token = format!(
+        "chola_wkr_{}",
+        bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let token_name = format!("worker-{}", body.worker_id);
+    let labels = body.labels.unwrap_or_default();
+
+    storage
+        .register_worker(
+            &body.worker_id,
+            &body.hostname,
+            &labels,
+            body.description.as_deref(),
+            &token_name,
+            &token_hash,
+            &auth_user.username,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Refresh in-memory token hash cache
+    if let Ok(tokens) = storage.list_worker_tokens().await {
+        let hashes: std::collections::HashSet<String> = tokens
+            .into_iter()
+            .filter(|t| t.active)
+            .map(|t| t.token_hash.clone())
+            .collect();
+        if let Ok(mut guard) = state.token_hashes.write() {
+            *guard = hashes;
+        }
+    }
+
+    info!(
+        "Worker {} registered by {}",
+        body.worker_id, auth_user.username
+    );
+    Ok(Json(json!({
+        "worker_id": body.worker_id,
+        "token": token,
+    })))
 }
 
 /// POST /api/v1/workers/:id/undrain
