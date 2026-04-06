@@ -546,43 +546,45 @@ pub async fn do_reserve_worker(
         }
     };
 
-    // Dedup: return existing active group for same repo+branch+commit
-    if let Some(storage) = &state.storage {
-        let branch = Some(req.branch.as_str()).filter(|s| !s.is_empty());
-        let commit = Some(req.commit_sha.as_str()).filter(|s| !s.is_empty());
-        if let Ok(Some(existing)) = storage.find_active_job_group(repo_id, branch, commit).await {
-            // Before returning existing group, verify worker is still connected
-            let worker_connected = {
-                let wr = state.worker_registry.read().await;
-                existing
-                    .reserved_worker_id
-                    .as_ref()
-                    .and_then(|wid| wr.get(wid))
-                    .map(|w| w.status == ci_core::models::worker::WorkerStatus::Connected)
-                    .unwrap_or(false)
-            };
+    // Idempotency: if key provided, return existing group with same key
+    if !req.idempotency_key.is_empty() {
+        if let Some(storage) = &state.storage {
+            if let Ok(Some(existing)) = storage.find_by_idempotency_key(&req.idempotency_key).await
+            {
+                let worker_connected = {
+                    let wr = state.worker_registry.read().await;
+                    existing
+                        .reserved_worker_id
+                        .as_ref()
+                        .and_then(|wid| wr.get(wid))
+                        .map(|w| w.status == ci_core::models::worker::WorkerStatus::Connected)
+                        .unwrap_or(false)
+                };
 
-            if worker_connected {
-                info!(
-                    "Returning existing active group {} for {}@{:?}",
-                    existing.id, req.repo_name, branch
-                );
-                let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
-                return Ok(ReserveWorkerResponse {
-                    job_group_id: existing.id.to_string(),
-                    worker_id: existing.reserved_worker_id.unwrap_or_default(),
-                    stages,
-                    success: true,
-                    message: "Existing active group returned".to_string(),
-                });
-            } else {
-                warn!(
-                    "Existing group {} has disconnected worker, creating new reservation",
-                    existing.id
-                );
+                if worker_connected {
+                    info!(
+                        "Returning existing group {} for idempotency_key={}",
+                        existing.id, req.idempotency_key
+                    );
+                    let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
+                    return Ok(ReserveWorkerResponse {
+                        job_group_id: existing.id.to_string(),
+                        worker_id: existing.reserved_worker_id.unwrap_or_default(),
+                        stages,
+                        success: true,
+                        message: "Existing active group returned (idempotency key match)"
+                            .to_string(),
+                    });
+                } else {
+                    warn!(
+                        "Existing group {} (key={}) has disconnected worker, creating new reservation",
+                        existing.id, req.idempotency_key
+                    );
+                }
             }
         }
     }
+    // No key or no match -- create new group (no implicit dedup)
 
     // Redis lock acquired (or no Redis) -- now create the in-memory group
     let mut group = ci_core::models::job_group::JobGroup::new(
@@ -594,6 +596,11 @@ pub async fn do_reserve_worker(
     group.reserved_worker_id = Some(worker_id.clone());
     group.state = ci_core::models::job_group::JobGroupState::Reserved;
     group.priority = req.priority;
+    group.idempotency_key = if req.idempotency_key.is_empty() {
+        None
+    } else {
+        Some(req.idempotency_key.clone())
+    };
     group.allocated_resources = ci_core::models::job_group::AllocatedResources {
         cpu: needed_cpu,
         memory_mb: needed_memory,
@@ -946,6 +953,7 @@ async fn do_submit_stage(
             }
         }
         jg_registry.add_job_to_group(&group_id, job.clone());
+        jg_registry.touch_activity(&group_id);
     }
     {
         let mut job_registry = state.job_registry.write().await;
@@ -1315,6 +1323,7 @@ impl Orchestrator for OrchestratorService {
                         model_state,
                         Some(req.exit_code),
                     );
+                    jg.touch_activity(&group_id);
 
                     jg.check_group_completion(&group_id).map(|new_state| {
                         let worker_id = jg.on_group_completed(&group_id);
@@ -1635,10 +1644,12 @@ impl Orchestrator for OrchestratorService {
                 state: ci_core::models::job_group::JobGroupState::Running,
                 priority: 0,
                 pr_number: None,
+                idempotency_key: None,
                 allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
                 created_at: now,
                 updated_at: now,
                 completed_at: None,
+                last_activity_at: now,
             };
             if let Err(e) = storage.create_job_group(&group).await {
                 warn!("Failed to persist ad-hoc job group: {}", e);
@@ -2216,6 +2227,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                         commit_sha: String::new(), // cron builds use latest
                         stages: schedule.stages.clone(),
                         priority: 0,
+                        idempotency_key: String::new(),
                     };
                     match do_reserve_worker(&state_cron, &req).await {
                         Ok(resp) if resp.success => {

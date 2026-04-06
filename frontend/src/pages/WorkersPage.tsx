@@ -383,8 +383,20 @@ export default function WorkersPage() {
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <ResourceBar label="CPU" used={w.last_heartbeat?.used_cpu_percent ?? 0} total={100} unit="%" />
-                <ResourceBar label="Memory" used={w.last_heartbeat?.used_memory_mb ?? 0} total={w.total_memory_mb} unit=" MB" />
+                <ResourceBar
+                  label="CPU"
+                  used={w.last_heartbeat?.used_cpu_percent ?? 0}
+                  total={100}
+                  unit="%"
+                  allocated={w.total_cpu > 0 ? Math.min((w.allocated_cpu / w.total_cpu) * 100, 100) : 0}
+                />
+                <ResourceBar
+                  label="Memory"
+                  used={w.last_heartbeat?.used_memory_mb ?? 0}
+                  total={w.total_memory_mb}
+                  unit=" MB"
+                  allocated={w.allocated_memory_mb}
+                />
                 <DiskSection
                   usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
                   totalDiskMb={w.total_disk_mb}
@@ -398,6 +410,29 @@ export default function WorkersPage() {
                   })}
                 />
               </div>
+              {(w.allocated_cpu > 0 || w.allocated_memory_mb > 0 || w.allocated_disk_mb > 0) && (
+                <div className="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between">
+                  <p className="text-xs text-slate-500">
+                    <span className="text-indigo-400 font-medium">Active reservations</span>
+                    {' — '}
+                    {w.allocated_cpu > 0 && (
+                      <span className="mr-2">{w.allocated_cpu} CPU</span>
+                    )}
+                    {w.allocated_memory_mb > 0 && (
+                      <span className="mr-2">{w.allocated_memory_mb.toLocaleString()} MB RAM</span>
+                    )}
+                    {w.allocated_disk_mb > 0 && (
+                      <span>{w.allocated_disk_mb.toLocaleString()} MB disk</span>
+                    )}
+                  </p>
+                  <a
+                    href={`/builds?worker=${encodeURIComponent(w.worker_id)}&state=running,reserved`}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 underline shrink-0 ml-4"
+                  >
+                    View active builds &rarr;
+                  </a>
+                </div>
+              )}
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
                 <span>Types: {w.supported_job_types.join(', ')}</span>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>

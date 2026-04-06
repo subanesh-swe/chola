@@ -38,6 +38,7 @@ pub struct TriggerRequest {
     pub commit_sha: Option<String>,
     pub stages: Option<Vec<String>>,
     pub priority: Option<i32>,
+    pub idempotency_key: Option<String>,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -216,6 +217,44 @@ pub async fn get_one(
         })
         .collect();
 
+    // Compute timeout info from in-memory state
+    let (last_activity_at, time_until_timeout) = {
+        let jg = state.job_group_registry.read().await;
+        if let Some(g) = jg.get(&id) {
+            let idle_secs = (chrono::Utc::now() - g.last_activity_at)
+                .num_seconds()
+                .max(0) as u64;
+            let timeout = match g.state {
+                ci_core::models::job_group::JobGroupState::Reserved => {
+                    state.config.workers.idle_timeout_secs
+                }
+                ci_core::models::job_group::JobGroupState::Running => {
+                    state.config.workers.stall_timeout_secs
+                }
+                _ => 0,
+            };
+            let remaining = if timeout > 0 {
+                timeout.saturating_sub(idle_secs) as i64
+            } else {
+                -1i64
+            };
+            (Some(g.last_activity_at.to_rfc3339()), remaining)
+        } else {
+            (None, -1i64)
+        }
+    };
+
+    // Reservation TTL from Redis
+    let reservation_ttl =
+        if let (Some(redis), Some(ref wid)) = (&state.redis_store, &group.reserved_worker_id) {
+            redis
+                .get_reservation_ttl(wid, &id.to_string())
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
+
     Ok(Json(json!({
         "id": group.id.to_string(),
         "repo_id": group.repo_id.map(|r| r.to_string()),
@@ -231,6 +270,11 @@ pub async fn get_one(
         "updated_at": group.updated_at.to_rfc3339(),
         "completed_at": group.completed_at.map(|t| t.to_rfc3339()),
         "jobs": job_list,
+        "last_activity_at": last_activity_at,
+        "time_until_timeout_secs": time_until_timeout,
+        "reservation_expires_in_secs": reservation_ttl,
+        "idle_timeout_secs": state.config.workers.idle_timeout_secs,
+        "stall_timeout_secs": state.config.workers.stall_timeout_secs,
     })))
 }
 
@@ -336,6 +380,7 @@ pub async fn trigger(
         commit_sha: body.commit_sha.unwrap_or_default(),
         stages: body.stages.unwrap_or_default(),
         priority: body.priority.unwrap_or(0),
+        idempotency_key: body.idempotency_key.clone().unwrap_or_default(),
     };
 
     let resp = do_reserve_worker(&state, &req)
@@ -405,6 +450,7 @@ pub async fn retry(
         commit_sha: original.commit_sha.unwrap_or_default(),
         stages,
         priority: 0,
+        idempotency_key: String::new(),
     };
 
     let resp = do_reserve_worker(&state, &req)
@@ -480,6 +526,30 @@ pub async fn stages(
             None
         };
 
+    // Compute time until inactivity timeout using last_activity_at
+    let idle_cfg = state.config.workers.idle_timeout_secs;
+    let stall_cfg = state.config.workers.stall_timeout_secs;
+    let time_until_timeout = {
+        let jg = state.job_group_registry.read().await;
+        jg.get(&id)
+            .map(|g| {
+                let idle_secs = (chrono::Utc::now() - g.last_activity_at)
+                    .num_seconds()
+                    .max(0) as u64;
+                let timeout: u64 = match g.state {
+                    ci_core::models::job_group::JobGroupState::Reserved => idle_cfg,
+                    ci_core::models::job_group::JobGroupState::Running => stall_cfg,
+                    _ => 0,
+                };
+                if timeout > 0 {
+                    timeout.saturating_sub(idle_secs) as i64
+                } else {
+                    -1i64
+                }
+            })
+            .unwrap_or(-1)
+    };
+
     // Index jobs by stage_name for O(1) lookup
     let jobs_by_stage: HashMap<String, &crate::storage::DbJob> = jobs
         .iter()
@@ -530,6 +600,10 @@ pub async fn stages(
         "worker_id": group.reserved_worker_id,
         "state": group.state,
         "reservation_expires_in_secs": reservation_ttl,
+        "last_activity_at": group.last_activity_at.to_rfc3339(),
+        "time_until_timeout_secs": time_until_timeout,
+        "idle_timeout_secs": idle_cfg,
+        "stall_timeout_secs": stall_cfg,
         "allocated_resources": {
             "cpu": alloc.cpu,
             "memory_mb": alloc.memory_mb,

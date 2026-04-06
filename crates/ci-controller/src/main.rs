@@ -398,6 +398,28 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Reservation timeout reaper
+    {
+        let reaper_state = state.clone();
+        let idle_timeout = config.workers.idle_timeout_secs;
+        let stall_timeout = config.workers.stall_timeout_secs;
+        let cancel_token_clone = cancel_token.clone();
+        tokio::spawn(async move {
+            info!(
+                "Reservation reaper started (idle={}s, stall={}s)",
+                idle_timeout, stall_timeout
+            );
+            loop {
+                tokio::select! {
+                    _ = cancel_token_clone.cancelled() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                }
+                reap_stale_reservations(&reaper_state, idle_timeout, stall_timeout).await;
+            }
+            info!("Reservation reaper stopped");
+        });
+    }
+
     // Start HTTP sidecar in background
     let http_addr: std::net::SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
     {
@@ -482,6 +504,89 @@ fn worker_row_to_state(row: &storage::WorkerRow) -> WorkerState {
         allocated_memory_mb: 0,
         allocated_disk_mb: 0,
     }
+}
+
+/// Reap job groups whose reservations have gone idle (no stage submitted)
+/// or stalled (no activity while running). Releases worker resources and
+/// Redis keys, then persists the failed state to the database.
+async fn reap_stale_reservations(
+    state: &Arc<ControllerState>,
+    idle_timeout: u64,
+    stall_timeout: u64,
+) {
+    let now = chrono::Utc::now();
+
+    // Collect stale groups under read lock first
+    let stale: Vec<(
+        uuid::Uuid,
+        Option<String>,
+        ci_core::models::job_group::AllocatedResources,
+    )> = {
+        let jg = state.job_group_registry.read().await;
+        jg.active_groups()
+            .iter()
+            .filter(|g| {
+                let idle_secs = (now - g.last_activity_at).num_seconds().max(0) as u64;
+                match g.state {
+                    ci_core::models::job_group::JobGroupState::Reserved => idle_secs > idle_timeout,
+                    ci_core::models::job_group::JobGroupState::Running => idle_secs > stall_timeout,
+                    _ => false,
+                }
+            })
+            .map(|g| (g.id, g.reserved_worker_id.clone(), g.allocated_resources))
+            .collect()
+    };
+
+    if stale.is_empty() {
+        return;
+    }
+
+    for (group_id, worker_id, alloc) in &stale {
+        warn!(
+            "Reaping stale reservation: group={} worker={:?} (inactivity timeout)",
+            group_id, worker_id
+        );
+
+        {
+            let mut jg = state.job_group_registry.write().await;
+            jg.update_state(group_id, ci_core::models::job_group::JobGroupState::Failed);
+            jg.fail_group_jobs(group_id, "Reservation timed out (inactivity)");
+        }
+
+        if let Some(wid) = worker_id {
+            if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
+                let mut wr = state.worker_registry.write().await;
+                if let Some(w) = wr.get_mut(wid) {
+                    w.release(alloc.cpu, alloc.memory_mb, alloc.disk_mb);
+                }
+            }
+            if let Some(redis) = &state.redis_store {
+                if let Err(e) = reservation::ReservationManager::release(redis, wid, group_id).await
+                {
+                    warn!(
+                        "Failed to release Redis for reaped group {}: {}",
+                        group_id, e
+                    );
+                }
+            }
+        }
+
+        if let Some(storage) = &state.storage {
+            if let Err(e) = storage
+                .update_job_group_state(
+                    *group_id,
+                    ci_core::models::job_group::JobGroupState::Failed,
+                )
+                .await
+            {
+                warn!("Failed to persist reaped group {} to DB: {}", group_id, e);
+            }
+        }
+
+        state.metrics.dec_active_builds();
+    }
+
+    info!("Reaped {} stale reservations", stale.len());
 }
 
 /// Wait for SIGINT (Ctrl+C) or SIGTERM

@@ -36,6 +36,13 @@ impl JobGroupRegistry {
         self.groups.get_mut(group_id)
     }
 
+    /// Bump `last_activity_at` to now for reaper timeout tracking.
+    pub fn touch_activity(&mut self, group_id: &Uuid) {
+        if let Some(g) = self.groups.get_mut(group_id) {
+            g.last_activity_at = chrono::Utc::now();
+        }
+    }
+
     pub fn update_state(&mut self, group_id: &Uuid, new_state: JobGroupState) -> bool {
         if let Some(group) = self.groups.get_mut(group_id) {
             let valid = match (&group.state, &new_state) {

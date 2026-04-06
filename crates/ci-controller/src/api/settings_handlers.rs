@@ -19,6 +19,8 @@ const EDITABLE_KEYS: &[&str] = &[
     "scheduling.branch_affinity",
     "workers.heartbeat_timeout_secs",
     "workers.reservation_timeout_secs",
+    "workers.idle_timeout_secs",
+    "workers.stall_timeout_secs",
     "logging.level",
     "logging.log_dir",
     "retention.max_age_days",
@@ -76,6 +78,16 @@ pub async fn get_settings(
         "workers.reservation_timeout_secs",
         &cfg.workers.reservation_timeout_secs.to_string(),
     );
+    let (idle_timeout, idle_src) = resolve(
+        &db_settings,
+        "workers.idle_timeout_secs",
+        &cfg.workers.idle_timeout_secs.to_string(),
+    );
+    let (stall_timeout, stall_src) = resolve(
+        &db_settings,
+        "workers.stall_timeout_secs",
+        &cfg.workers.stall_timeout_secs.to_string(),
+    );
     let (log_level, log_src) = resolve(&db_settings, "logging.level", &cfg.logging.level);
     let (ret_age, ret_age_src) = resolve(
         &db_settings,
@@ -117,6 +129,8 @@ pub async fn get_settings(
             { "key": "scheduling.branch_affinity", "value": affinity, "source": affinity_src, "editable": true, "type": "bool" },
             { "key": "workers.heartbeat_timeout_secs", "value": hb_timeout, "source": hb_src, "editable": true, "type": "int", "min": 5, "max": 300 },
             { "key": "workers.reservation_timeout_secs", "value": res_timeout, "source": res_src, "editable": true, "type": "int", "min": 60, "max": 86400 },
+            { "key": "workers.idle_timeout_secs", "value": idle_timeout, "source": idle_src, "editable": true, "type": "int", "min": 60, "max": 86400, "description": "Fail reserved groups with no stage submitted after this many seconds" },
+            { "key": "workers.stall_timeout_secs", "value": stall_timeout, "source": stall_src, "editable": true, "type": "int", "min": 60, "max": 86400, "description": "Fail running groups with no activity after this many seconds" },
             { "key": "logging.level", "value": log_level, "source": log_src, "editable": true, "options": ["trace", "debug", "info", "warn", "error"] },
             { "key": "retention.max_age_days", "value": ret_age, "source": ret_age_src, "editable": true, "type": "int", "min": 0, "max": 3650 },
             { "key": "retention.max_builds_per_repo", "value": ret_builds, "source": ret_builds_src, "editable": true, "type": "int", "min": 0, "max": 100000 },
@@ -214,6 +228,12 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), ApiError> {
             validate_int_range(key, value, 5, 300)?;
         }
         "workers.reservation_timeout_secs" => {
+            validate_int_range(key, value, 60, 86400)?;
+        }
+        "workers.idle_timeout_secs" => {
+            validate_int_range(key, value, 60, 86400)?;
+        }
+        "workers.stall_timeout_secs" => {
             validate_int_range(key, value, 60, 86400)?;
         }
         "logging.level" => {

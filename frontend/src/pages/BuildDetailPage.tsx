@@ -65,6 +65,29 @@ function JobLogPanel({ job, onRetry }: JobLogPanelProps) {
   );
 }
 
+function TimeoutBadge({ timeUntilTimeout, state, idleTimeout, stallTimeout }: {
+  timeUntilTimeout: number;
+  state: string;
+  idleTimeout: number;
+  stallTimeout: number;
+}) {
+  if (timeUntilTimeout < 0 || !['reserved', 'running'].includes(state)) return null;
+
+  const totalTimeout = state === 'reserved' ? idleTimeout : stallTimeout;
+  const pct = totalTimeout > 0 ? timeUntilTimeout / totalTimeout : 1;
+  const color = pct > 0.6 ? 'emerald' : pct > 0.2 ? 'yellow' : 'red';
+
+  const mins = Math.floor(timeUntilTimeout / 60);
+  const secs = timeUntilTimeout % 60;
+  const label = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded border bg-${color}-500/10 text-${color}-400 border-${color}-500/30`}>
+      Timeout in {label}
+    </span>
+  );
+}
+
 type DialogKind = 'cancel' | 'retry-build' | 'retry-job' | null;
 
 export default function BuildDetailPage() {
@@ -154,6 +177,14 @@ export default function BuildDetailPage() {
         </button>
         <h2 className="text-2xl font-bold text-white font-mono">{group.job_group_id.slice(0, 8)}</h2>
         <StatusBadge status={group.state} size="md" />
+        {group.time_until_timeout_secs != null && group.idle_timeout_secs != null && group.stall_timeout_secs != null && (
+          <TimeoutBadge
+            timeUntilTimeout={group.time_until_timeout_secs}
+            state={group.state}
+            idleTimeout={group.idle_timeout_secs}
+            stallTimeout={group.stall_timeout_secs}
+          />
+        )}
         <div className="ml-auto flex items-center gap-2">
           {canCancelJobs && group.state === 'failed' && (
             <button
