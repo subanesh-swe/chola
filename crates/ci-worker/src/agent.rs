@@ -521,29 +521,43 @@ async fn report_status(
         .await
 }
 
-/// Determine the final status report from a successful StageResult.
+/// Determine the final status report from a StageResult.
+///
+/// The command's exit code is the sole determinant of success/failure.
+/// Post-script is cleanup — its exit code is reported for visibility but
+/// MUST NOT change the job's success/failure determination.
 fn determine_final_state_from_stage(result: &StageResult) -> StatusReport {
     let pre_exit_code = result.pre_exit_code.unwrap_or(0);
     let post_exit_code = result.post_exit_code.unwrap_or(0);
 
+    // Phase indicates where the failure occurred (pre_script or command).
+    // Post-script failures do NOT set the phase — they are cleanup.
     let phase = if result.pre_exit_code.is_some() && result.pre_exit_code != Some(0) {
         "pre_script".to_string()
-    } else if result.command_exit_code != 0 {
-        "command".to_string()
-    } else if result.post_exit_code.is_some() && result.post_exit_code != Some(0) {
-        "post_script".to_string()
     } else {
         "command".to_string()
     };
 
+    // Map StageState -> JobState. The StageState was already determined by
+    // command_exit_code (and pre_exit_code) in stage_runner — post_exit_code
+    // never influences this.
     let (state, message) = match result.final_state {
-        StageState::Success => (
-            JobState::Success,
-            "Stage completed successfully".to_string(),
-        ),
+        StageState::Success => {
+            let mut msg = "Stage completed successfully".to_string();
+            if post_exit_code != 0 {
+                msg = format!(
+                    "Stage completed successfully (post-script exited {})",
+                    post_exit_code
+                );
+            }
+            (JobState::Success, msg)
+        }
         StageState::Failed => (
             JobState::Failed,
-            format!("Stage failed in phase: {}", phase),
+            format!(
+                "Stage failed in phase: {} (exit code {})",
+                phase, result.command_exit_code
+            ),
         ),
         StageState::Cancelled => (
             JobState::Cancelled,
@@ -551,6 +565,7 @@ fn determine_final_state_from_stage(result: &StageResult) -> StatusReport {
         ),
     };
 
+    // exit_code is ALWAYS the command's exit code — never the post-script's.
     StatusReport {
         state,
         message,

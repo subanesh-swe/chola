@@ -4,7 +4,7 @@ use ci_core::proto::orchestrator::{
 use tracing::{info, warn};
 
 use super::submit::{
-    exit_with_job_status, fallback_poll_status, stream_logs, wait_for_job_termination,
+    exit_with_job_status, fallback_poll_status, stream_logs, wait_for_job_termination_with_timeout,
 };
 
 pub async fn execute(
@@ -83,13 +83,14 @@ pub async fn execute(
                             let cr = cr.into_inner();
                             if cr.accepted {
                                 info!("Cancellation accepted: {}", cr.message);
-                                match wait_for_job_termination(client, &jid).await {
+                                // Short timeout — kill + post-script should finish in ~30s
+                                match wait_for_job_termination_with_timeout(client, &jid, 30).await {
                                     Ok(s) => info!(
                                         "Job {} terminated with state: {:?}",
                                         jid,
                                         JobState::try_from(s.state).unwrap_or(JobState::Unknown)
                                     ),
-                                    Err(e) => warn!("Error waiting for termination: {}", e),
+                                    Err(_) => warn!("Job {} not terminated after 30s, exiting anyway", jid),
                                 }
                             } else {
                                 warn!("Cancel not accepted: {}", cr.message);
@@ -98,7 +99,7 @@ pub async fn execute(
                         Err(e) => warn!("Failed to cancel job: {}", e),
                     }
 
-                    Err(anyhow::anyhow!("Stage cancelled by user"))
+                    std::process::exit(130) // 128 + SIGINT(2)
                 }
             }
         }

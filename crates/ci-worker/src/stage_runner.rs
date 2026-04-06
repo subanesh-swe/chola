@@ -275,12 +275,15 @@ impl StageRunner {
             )
             .await;
 
+        // The command's exit code is the sole determinant of success/failure.
+        // Post-script is cleanup — its exit code is tracked but never affects
+        // the stage outcome.
         let final_state = if was_cancelled {
             StageState::Cancelled
-        } else if command_exit_code == 0 {
-            StageState::Success
-        } else {
+        } else if command_exit_code != 0 {
             StageState::Failed
+        } else {
+            StageState::Success
         };
 
         Ok(StageResult {

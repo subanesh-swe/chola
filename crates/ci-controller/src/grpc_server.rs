@@ -1218,47 +1218,25 @@ impl Orchestrator for OrchestratorService {
                 x if x == ci_core::proto::orchestrator::JobState::Assigned as i32 => "assigned",
                 _ => "unknown",
             };
-            if let Ok(job_uuid) = uuid::Uuid::parse_str(&req.job_id) {
-                if let Err(e) = storage
-                    .update_job_state(
-                        job_uuid,
-                        state_str,
-                        if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
-                            Some(req.exit_code)
-                        } else {
-                            None
-                        },
-                        None,
-                        None,
-                        Some(&req.worker_id),
-                    )
-                    .await
-                {
-                    warn!("Failed to update job state in DB: {}", e);
-                }
-            } else {
-                // Legacy job IDs are strings like "job-20260401T...", generate matching UUID
-                let job_uuid = uuid::Uuid::new_v5(
-                    &uuid::Uuid::NAMESPACE_OID,
-                    format!("job-{}", req.job_id).as_bytes(),
-                );
-                if let Err(e) = storage
-                    .update_job_state(
-                        job_uuid,
-                        state_str,
-                        if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
-                            Some(req.exit_code)
-                        } else {
-                            None
-                        },
-                        None,
-                        None,
-                        Some(&req.worker_id),
-                    )
-                    .await
-                {
-                    warn!("Failed to update legacy job state in DB: {}", e);
-                }
+            // DB uses deterministic UUID v5 derived from job_id string
+            // (same as what do_submit_stage uses when persisting the job)
+            let job_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, req.job_id.as_bytes());
+            if let Err(e) = storage
+                .update_job_state(
+                    job_uuid,
+                    state_str,
+                    if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
+                        Some(req.exit_code)
+                    } else {
+                        None
+                    },
+                    None,
+                    None,
+                    Some(&req.worker_id),
+                )
+                .await
+            {
+                warn!("Failed to update job state in DB: {}", e);
             }
         }
 
