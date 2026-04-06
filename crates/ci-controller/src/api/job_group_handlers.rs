@@ -38,7 +38,6 @@ pub struct TriggerRequest {
     pub commit_sha: Option<String>,
     pub stages: Option<Vec<String>>,
     pub priority: Option<i32>,
-    pub idempotency_key: Option<String>,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -255,36 +254,16 @@ pub async fn cancel(
                 ));
             }
         }
-        let info = jg.get(&id).map(|g| {
-            (
-                g.reserved_worker_id.clone(),
-                g.allocated_resources,
-                g.repo_id,
-                g.branch.clone(),
-                g.commit_sha.clone(),
-            )
-        });
+        let info = jg
+            .get(&id)
+            .map(|g| (g.reserved_worker_id.clone(), g.allocated_resources));
         jg.update_state(&id, JobGroupState::Cancelled);
         jg.fail_group_jobs(&id, "Cancelled via API");
         info
     };
 
-    // Dispatch global post-script before releasing worker resources
-    if let Some((Some(ref wid), _, repo_id, ref branch, ref commit_sha)) = release_info {
-        crate::grpc_server::dispatch_global_post_script(
-            &state,
-            &id,
-            wid,
-            repo_id,
-            branch.clone(),
-            commit_sha.clone(),
-            JobGroupState::Cancelled,
-        )
-        .await;
-    }
-
     // Release allocated resources on the worker
-    if let Some((Some(ref wid), alloc, _, _, _)) = release_info {
+    if let Some((Some(wid), alloc)) = &release_info {
         if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
             let mut wr = state.worker_registry.write().await;
             if let Some(w) = wr.get_mut(wid) {
@@ -294,7 +273,7 @@ pub async fn cancel(
     }
 
     // Release Redis reservation so the worker can accept new groups
-    if let Some((Some(ref wid), _, _, _, _)) = release_info {
+    if let Some((Some(wid), _)) = &release_info {
         if let Some(redis) = &state.redis_store {
             if let Err(e) = crate::reservation::ReservationManager::release(redis, wid, &id).await {
                 warn!("Failed to release Redis reservation for worker {wid}: {e}");
@@ -357,7 +336,6 @@ pub async fn trigger(
         commit_sha: body.commit_sha.unwrap_or_default(),
         stages: body.stages.unwrap_or_default(),
         priority: body.priority.unwrap_or(0),
-        idempotency_key: body.idempotency_key.clone().unwrap_or_default(),
     };
 
     let resp = do_reserve_worker(&state, &req)
@@ -427,7 +405,6 @@ pub async fn retry(
         commit_sha: original.commit_sha.unwrap_or_default(),
         stages,
         priority: 0,
-        idempotency_key: String::new(),
     };
 
     let resp = do_reserve_worker(&state, &req)
@@ -503,30 +480,6 @@ pub async fn stages(
             None
         };
 
-    // Compute time until inactivity timeout using last_activity_at
-    let idle_cfg = state.config.workers.idle_timeout_secs;
-    let stall_cfg = state.config.workers.stall_timeout_secs;
-    let time_until_timeout = {
-        let jg = state.job_group_registry.read().await;
-        jg.get(&id)
-            .map(|g| {
-                let idle_secs = (chrono::Utc::now() - g.last_activity_at)
-                    .num_seconds()
-                    .max(0) as u64;
-                let timeout: u64 = match g.state {
-                    ci_core::models::job_group::JobGroupState::Reserved => idle_cfg,
-                    ci_core::models::job_group::JobGroupState::Running => stall_cfg,
-                    _ => 0,
-                };
-                if timeout > 0 {
-                    timeout.saturating_sub(idle_secs) as i64
-                } else {
-                    -1i64
-                }
-            })
-            .unwrap_or(-1)
-    };
-
     // Index jobs by stage_name for O(1) lookup
     let jobs_by_stage: HashMap<String, &crate::storage::DbJob> = jobs
         .iter()
@@ -577,10 +530,6 @@ pub async fn stages(
         "worker_id": group.reserved_worker_id,
         "state": group.state,
         "reservation_expires_in_secs": reservation_ttl,
-        "last_activity_at": group.last_activity_at.to_rfc3339(),
-        "time_until_timeout_secs": time_until_timeout,
-        "idle_timeout_secs": idle_cfg,
-        "stall_timeout_secs": stall_cfg,
         "allocated_resources": {
             "cpu": alloc.cpu,
             "memory_mb": alloc.memory_mb,

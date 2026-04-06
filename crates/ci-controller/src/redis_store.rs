@@ -52,87 +52,75 @@ impl RedisStore {
         format!("{}{}", self.prefix, parts.join(":"))
     }
 
-    // ── Worker Reservation Lock ──
+    // ── Worker Reservation (per-group, non-exclusive) ──
+    //
+    // Key format: worker:reservation:{worker_id}:{group_id}
+    // Multiple groups can reserve the same worker concurrently.
+    // The real gating mechanism is WorkerState.allocate() in memory.
 
-    /// Attempt to reserve a worker for a job group. Returns true if lock acquired.
+    /// Record a per-group reservation for a worker. Non-exclusive: multiple
+    /// groups can hold reservations on the same worker simultaneously.
     pub async fn reserve_worker(
         &self,
         worker_id: &str,
-        job_group_id: &str,
+        group_id: &str,
         ttl_secs: u64,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<()> {
         let mut conn = self.get_conn().await?;
-        let key = self.key(&["worker", "reservation", worker_id]);
-
-        // SET NX EX — atomic "set if not exists" with TTL
-        let result: Option<String> = redis::cmd("SET")
-            .arg(&key)
-            .arg(job_group_id)
-            .arg("NX")
-            .arg("EX")
-            .arg(ttl_secs)
-            .query_async(&mut conn)
-            .await?;
-
-        let acquired = result.is_some();
-        if acquired {
-            info!("Worker {} reserved for group {}", worker_id, job_group_id);
-        }
-        Ok(acquired)
+        let key = self.key(&["worker", "reservation", worker_id, group_id]);
+        let _: () = conn.set_ex(&key, "1", ttl_secs).await?;
+        info!(
+            "Recorded reservation: worker {} group {} (TTL {}s)",
+            worker_id, group_id, ttl_secs
+        );
+        Ok(())
     }
 
-    /// Release a worker reservation only if owned by `expected_group_id`.
-    /// Uses a Lua script for atomic check-and-delete to prevent clobbering
-    /// a newer reservation acquired after TTL expiry.
-    /// Returns true if the reservation was actually deleted.
-    pub async fn release_worker_if_owner(
+    /// Release a specific per-group reservation for a worker.
+    pub async fn release_worker_reservation(
         &self,
         worker_id: &str,
-        expected_group_id: &str,
-    ) -> anyhow::Result<bool> {
+        group_id: &str,
+    ) -> anyhow::Result<()> {
         let mut conn = self.get_conn().await?;
-        let key = self.key(&["worker", "reservation", worker_id]);
-
-        let script = redis::Script::new(
-            r#"
-            if redis.call('GET', KEYS[1]) == ARGV[1] then
-                redis.call('DEL', KEYS[1])
-                return 1
-            else
-                return 0
-            end
-            "#,
+        let key = self.key(&["worker", "reservation", worker_id, group_id]);
+        let _: () = conn.del(&key).await?;
+        info!(
+            "Released reservation: worker {} group {}",
+            worker_id, group_id
         );
-
-        let result: i32 = script
-            .key(&key)
-            .arg(expected_group_id)
-            .invoke_async(&mut conn)
-            .await?;
-
-        let released = result == 1;
-        if released {
-            info!(
-                "Released worker {} reservation (group {})",
-                worker_id, expected_group_id
-            );
-        } else {
-            warn!(
-                "Worker {} reservation not owned by group {}, skipping release",
-                worker_id, expected_group_id
-            );
-        }
-        Ok(released)
+        Ok(())
     }
 
-    /// Refresh the TTL on an existing worker reservation without changing its value.
-    /// Call on every stage submission to prevent expiry during long pipelines.
+    /// Release ALL reservations for a given worker (used on worker death).
+    pub async fn release_all_worker_reservations(&self, worker_id: &str) -> anyhow::Result<usize> {
+        let mut conn = self.get_conn().await?;
+        let pattern = self.key(&["worker", "reservation", worker_id, "*"]);
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(&pattern)
+            .query_async(&mut conn)
+            .await?;
+        let count = keys.len();
+        for key in &keys {
+            let _: () = conn.del(key).await?;
+        }
+        if count > 0 {
+            info!(
+                "Force-released {} reservations for worker {}",
+                count, worker_id
+            );
+        }
+        Ok(count)
+    }
+
+    /// Refresh the TTL on a per-group reservation key.
     pub async fn refresh_reservation_ttl(
         &self,
         worker_id: &str,
+        group_id: &str,
         ttl_secs: u64,
     ) -> anyhow::Result<()> {
-        let key = self.key(&["worker", "reservation", worker_id]);
+        let key = self.key(&["worker", "reservation", worker_id, group_id]);
         let mut conn = self.pool.get().await?;
         let _: () = redis::cmd("EXPIRE")
             .arg(&key)
@@ -142,31 +130,58 @@ impl RedisStore {
         Ok(())
     }
 
-    /// Get remaining TTL (seconds) on a worker reservation. Returns None if key absent.
-    pub async fn get_reservation_ttl(&self, worker_id: &str) -> anyhow::Result<Option<i64>> {
-        let key = self.key(&["worker", "reservation", worker_id]);
+    /// Get remaining TTL (seconds) on a per-group reservation.
+    /// Returns None if key absent.
+    pub async fn get_reservation_ttl(
+        &self,
+        worker_id: &str,
+        group_id: &str,
+    ) -> anyhow::Result<Option<i64>> {
+        let key = self.key(&["worker", "reservation", worker_id, group_id]);
         let mut conn = self.pool.get().await?;
         let ttl: i64 = redis::cmd("TTL").arg(&key).query_async(&mut conn).await?;
         Ok(if ttl >= 0 { Some(ttl) } else { None })
     }
 
-    /// Unconditionally delete a worker reservation.
-    /// Use only when the worker is dead and we must reclaim regardless of owner
-    /// (e.g., heartbeat timeout cleanup).
-    pub async fn release_worker_force(&self, worker_id: &str) -> anyhow::Result<()> {
+    /// List all group IDs that have an active reservation on a worker.
+    pub async fn get_worker_reservations(&self, worker_id: &str) -> anyhow::Result<Vec<String>> {
         let mut conn = self.get_conn().await?;
-        let key = self.key(&["worker", "reservation", worker_id]);
-        let _: () = conn.del(&key).await?;
-        info!("Worker {} reservation force-released", worker_id);
-        Ok(())
+        let pattern = self.key(&["worker", "reservation", worker_id, "*"]);
+        let prefix = self.key(&["worker", "reservation", worker_id, ""]);
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(&pattern)
+            .query_async(&mut conn)
+            .await?;
+        let group_ids = keys
+            .iter()
+            .filter_map(|k| k.strip_prefix(&prefix).map(|s| s.to_string()))
+            .collect();
+        Ok(group_ids)
     }
 
-    /// Check if a worker is reserved. Returns the job_group_id if reserved.
-    pub async fn get_worker_reservation(&self, worker_id: &str) -> anyhow::Result<Option<String>> {
+    /// Scan all worker reservation keys.
+    /// Returns vec of (worker_id, group_id) pairs.
+    pub async fn scan_all_reservations(&self) -> anyhow::Result<Vec<(String, String)>> {
         let mut conn = self.get_conn().await?;
-        let key = self.key(&["worker", "reservation", worker_id]);
-        let result: Option<String> = conn.get(&key).await?;
-        Ok(result)
+        let pattern = self.key(&["worker", "reservation", "*"]);
+        let prefix = self.key(&["worker", "reservation", ""]);
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(&pattern)
+            .query_async(&mut conn)
+            .await?;
+        let mut results = Vec::new();
+        for key in keys {
+            // Key format: {prefix}worker:reservation:{worker_id}:{group_id}
+            let suffix = match key.strip_prefix(&prefix) {
+                Some(s) => s,
+                None => continue,
+            };
+            // Split on first ':' to get worker_id and group_id
+            if let Some((worker_id, group_id)) = suffix.split_once(':') {
+                results.push((worker_id.to_string(), group_id.to_string()));
+            }
+        }
+        Ok(results)
     }
 
     // ── Worker Presence ──
@@ -205,32 +220,6 @@ impl RedisStore {
         let key = self.key(&["worker", "alive", worker_id]);
         let _: () = conn.del(&key).await?;
         Ok(())
-    }
-
-    // ── Available Workers Set ──
-
-    /// Add a worker to the available set.
-    pub async fn add_available_worker(&self, worker_id: &str) -> anyhow::Result<()> {
-        let mut conn = self.get_conn().await?;
-        let key = self.key(&["workers", "available"]);
-        let _: () = conn.sadd(&key, worker_id).await?;
-        Ok(())
-    }
-
-    /// Remove a worker from the available set.
-    pub async fn remove_available_worker(&self, worker_id: &str) -> anyhow::Result<()> {
-        let mut conn = self.get_conn().await?;
-        let key = self.key(&["workers", "available"]);
-        let _: () = conn.srem(&key, worker_id).await?;
-        Ok(())
-    }
-
-    /// Get all available worker IDs.
-    pub async fn get_available_workers(&self) -> anyhow::Result<Vec<String>> {
-        let mut conn = self.get_conn().await?;
-        let key = self.key(&["workers", "available"]);
-        let result: Vec<String> = conn.smembers(&key).await?;
-        Ok(result)
     }
 
     // ── Job Group State Cache ──
@@ -342,7 +331,6 @@ impl RedisStore {
 }
 
 // ── Keyspace notification helpers (outside RedisStore, use raw client) ──
-// TODO: Wire into reconnect handler.
 
 /// Create a raw Redis client for pub/sub (outside connection pool).
 /// Pub/sub requires a dedicated connection that cannot be shared via a pool.

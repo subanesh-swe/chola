@@ -1,62 +1,55 @@
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::redis_store::RedisStore;
 
-/// Manages worker reservations using Redis for locking
+/// Manages worker reservations using Redis for per-group tracking.
+///
+/// Reservations are non-exclusive: multiple groups can share a worker
+/// concurrently. The real capacity gate is `WorkerState::allocate()` in
+/// memory; Redis tracks per-group keys for TTL-based expiry and audit.
 pub struct ReservationManager;
 
 impl ReservationManager {
-    /// Attempt to reserve a worker for a job group
+    /// Record a per-group reservation in Redis.
+    /// Does NOT gate on exclusivity -- caller must have already
+    /// succeeded on `WorkerState::allocate()`.
     pub async fn reserve(
         redis: &RedisStore,
         worker_id: &str,
         job_group_id: &Uuid,
         ttl_secs: u64,
-    ) -> anyhow::Result<bool> {
-        let acquired = redis
+    ) -> anyhow::Result<()> {
+        redis
             .reserve_worker(worker_id, &job_group_id.to_string(), ttl_secs)
             .await?;
-        if acquired {
-            redis.remove_available_worker(worker_id).await?;
-            info!("Worker {} reserved for group {}", worker_id, job_group_id);
-        } else {
-            warn!("Failed to reserve worker {} (already reserved)", worker_id);
-        }
-        Ok(acquired)
+        info!("Worker {} reserved for group {}", worker_id, job_group_id);
+        Ok(())
     }
 
-    /// Release a worker reservation if owned by the given group.
-    /// Returns true if the reservation was actually released.
+    /// Release a specific per-group reservation.
     pub async fn release(
         redis: &RedisStore,
         worker_id: &str,
         job_group_id: &Uuid,
-    ) -> anyhow::Result<bool> {
-        let released = redis
-            .release_worker_if_owner(worker_id, &job_group_id.to_string())
+    ) -> anyhow::Result<()> {
+        redis
+            .release_worker_reservation(worker_id, &job_group_id.to_string())
             .await?;
-        if released {
-            redis.add_available_worker(worker_id).await?;
-            info!(
-                "Worker {} reservation released (group {})",
-                worker_id, job_group_id
-            );
-        } else {
-            warn!(
-                "Worker {} not owned by group {}, skipping release",
-                worker_id, job_group_id
-            );
-        }
-        Ok(released)
+        info!(
+            "Worker {} reservation released (group {})",
+            worker_id, job_group_id
+        );
+        Ok(())
     }
 
-    /// Force-release a worker reservation regardless of owner.
-    /// Use only for dead-worker cleanup.
+    /// Release ALL reservations for a worker (dead-worker cleanup).
     pub async fn release_force(redis: &RedisStore, worker_id: &str) -> anyhow::Result<()> {
-        redis.release_worker_force(worker_id).await?;
-        redis.add_available_worker(worker_id).await?;
-        info!("Worker {} reservation force-released", worker_id);
+        let count = redis.release_all_worker_reservations(worker_id).await?;
+        info!(
+            "Worker {} all reservations force-released ({})",
+            worker_id, count
+        );
         Ok(())
     }
 }

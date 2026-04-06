@@ -152,23 +152,21 @@ async fn trigger_build(
     group.state = ci_core::models::job_group::JobGroupState::Reserved;
     group.updated_at = chrono::Utc::now();
 
-    // Acquire Redis lock if available
+    // Record per-group reservation in Redis (non-exclusive tracking key)
     if let Some(redis) = &state.redis_store {
-        let ok = redis
+        if let Err(e) = redis
             .reserve_worker(
                 &worker_id,
                 &group.id.to_string(),
                 state.config.workers.reservation_timeout_secs,
             )
             .await
-            .unwrap_or(false);
-        if !ok {
-            return Err(ApiError::Conflict(
-                "Could not acquire worker reservation".into(),
-            ));
-        }
-        if let Err(e) = redis.remove_available_worker(&worker_id).await {
-            tracing::warn!("Failed to remove available worker {}: {}", worker_id, e);
+        {
+            tracing::warn!(
+                "Failed to record Redis reservation for worker {}: {}",
+                worker_id,
+                e
+            );
         }
     }
 
