@@ -441,7 +441,7 @@ pub struct ReconnectConfig {
 }
 
 fn default_max_reconnect_attempts() -> u32 {
-    5
+    0 // 0 = unlimited retries (never give up on transient errors)
 }
 fn default_initial_delay_ms() -> u64 {
     1000

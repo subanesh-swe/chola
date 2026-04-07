@@ -33,8 +33,18 @@ export const drainWorker = (id: string) =>
 export const undrainWorker = (id: string) =>
   apiClient.post(`/workers/${id}/undrain`).then((r) => r.data);
 
-export const approveWorker = (id: string) =>
-  apiClient.put(`/workers/${id}/approve`).then((r) => r.data);
+export const deleteWorker = (id: string) =>
+  apiClient.delete(`/workers/${id}`).then((r) => r.data);
 
-export const rejectWorker = (id: string) =>
-  apiClient.put(`/workers/${id}/reject`).then((r) => r.data);
+export const updateWorkerLabels = (id: string, labels: string[]) =>
+  apiClient.put(`/workers/${id}/labels`, { labels }).then((r) => r.data);
+
+export interface RegenerateTokenResponse {
+  worker_id: string;
+  token: string;
+}
+
+export const regenerateWorkerToken = (workerId: string) =>
+  apiClient
+    .post<RegenerateTokenResponse>(`/workers/${workerId}/regenerate-token`)
+    .then((r) => r.data);

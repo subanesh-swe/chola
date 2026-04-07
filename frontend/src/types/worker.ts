@@ -53,6 +53,7 @@ export interface Worker {
   disk_details?: DiskDetail[];
   system_info?: WorkerSystemInfo | null;
   active_groups?: WorkerActiveGroup[];
+  labels?: string[];
   /** Whether the worker has been approved (set via approve/reject API) */
   approved?: boolean;
   /** ID of the registration token used to register this worker */

@@ -171,7 +171,10 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
             "/workers/{id}/regenerate-token",
             post(worker_handlers::regenerate_token),
         )
-        .route("/workers/{id}", get(worker_handlers::get_one))
+        .route(
+            "/workers/{id}",
+            get(worker_handlers::get_one).delete(worker_handlers::delete_worker),
+        )
         .route("/workers/{id}/drain", post(worker_handlers::drain))
         .route("/workers/{id}/undrain", post(worker_handlers::undrain))
         .route("/workers/{id}/approve", put(worker_handlers::approve))

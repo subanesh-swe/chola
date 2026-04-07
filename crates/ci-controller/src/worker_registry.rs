@@ -249,4 +249,9 @@ impl WorkerRegistry {
 
         timed_out
     }
+
+    /// Remove a worker entirely from the registry.
+    pub fn remove(&mut self, worker_id: &str) -> bool {
+        self.workers.remove(worker_id).is_some()
+    }
 }
