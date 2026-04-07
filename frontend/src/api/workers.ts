@@ -38,13 +38,3 @@ export const approveWorker = (id: string) =>
 
 export const rejectWorker = (id: string) =>
   apiClient.put(`/workers/${id}/reject`).then((r) => r.data);
-
-export interface RegenerateTokenResponse {
-  worker_id: string;
-  token: string;
-}
-
-export const regenerateWorkerToken = (workerId: string) =>
-  apiClient
-    .post<RegenerateTokenResponse>(`/workers/${workerId}/regenerate-token`)
-    .then((r) => r.data);

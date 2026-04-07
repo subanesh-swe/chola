@@ -52,4 +52,21 @@ export interface Worker {
   last_heartbeat: WorkerHeartbeat | null;
   disk_details?: DiskDetail[];
   system_info?: WorkerSystemInfo | null;
+  active_groups?: WorkerActiveGroup[];
+  /** Whether the worker has been approved (set via approve/reject API) */
+  approved?: boolean;
+  /** ID of the registration token used to register this worker */
+  registration_token_id?: string | null;
+}
+
+export interface WorkerActiveGroup {
+  group_id: string;
+  state: string;
+  branch: string | null;
+  commit_sha: string | null;
+  allocated_cpu: number;
+  allocated_memory_mb: number;
+  allocated_disk_mb: number;
+  stages_submitted: number;
+  created_at: string;
 }

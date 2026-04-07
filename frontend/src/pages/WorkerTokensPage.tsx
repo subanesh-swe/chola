@@ -8,6 +8,7 @@ import {
   deleteWorkerToken,
 } from '../api/workerTokens';
 import type { WorkerToken, CreatedWorkerToken } from '../api/workerTokens';
+import { listWorkers } from '../api/workers';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { EmptyState } from '../components/ui/EmptyState';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
@@ -89,18 +90,27 @@ function CreatedTokenModal({
             <dd className="text-slate-200">{token.max_uses === 0 ? 'Unlimited' : token.max_uses}</dd>
           </div>
         </dl>
-        {token.scope === 'runner' && (
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 mb-4 text-xs space-y-2">
-            <p className="text-slate-300 font-medium">Use this token with ci-job-runner:</p>
-            <code className="block text-emerald-300 font-mono">
-              --auth-token {token.token}
-            </code>
-            <p className="text-slate-400 pt-1">Or set environment variable:</p>
-            <code className="block text-emerald-300 font-mono">
-              export CHOLA_AUTH_TOKEN={token.token}
-            </code>
-          </div>
-        )}
+        <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 mb-4 text-xs space-y-2">
+          {token.scope === 'runner' ? (
+            <>
+              <p className="text-slate-300 font-medium">Set environment variable for ci-job-runner:</p>
+              <code className="block text-emerald-300 font-mono">
+                export CHOLA_TOKEN={token.token}
+              </code>
+            </>
+          ) : (
+            <>
+              <p className="text-slate-300 font-medium">Add to worker config file:</p>
+              <code className="block text-emerald-300 font-mono">
+                token: &quot;{token.token}&quot;
+              </code>
+              <p className="text-slate-400 pt-1">Or set environment variable:</p>
+              <code className="block text-emerald-300 font-mono">
+                export CHOLA_TOKEN={token.token}
+              </code>
+            </>
+          )}
+        </div>
         <div className="flex justify-end">
           <button
             onClick={onClose}
@@ -122,19 +132,29 @@ interface CreateModalProps {
   defaultScope?: string;
 }
 
-function CreateTokenModal({ onClose, onCreated, defaultScope = 'shared' }: CreateModalProps) {
+function CreateTokenModal({ onClose, onCreated, defaultScope = 'worker' }: CreateModalProps) {
   const [name, setName] = useState('');
   const [scope, setScope] = useState(defaultScope);
+  const [selectedWorker, setSelectedWorker] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [maxUses, setMaxUses] = useState('0');
+
+  // Fetch workers for the dropdown (only when scope is worker)
+  const { data: workersData } = useQuery({
+    queryKey: ['workers'],
+    queryFn: () => listWorkers(),
+    enabled: scope === 'worker',
+  });
+  const workers = workersData?.data ?? [];
 
   const mut = useMutation({
     mutationFn: () =>
       createWorkerToken({
-        name,
+        name: name || selectedWorker || 'token',
         scope,
         expires_at: expiresAt || undefined,
         max_uses: parseInt(maxUses, 10) || 0,
+        worker_id: scope === 'worker' && selectedWorker ? selectedWorker : undefined,
       }),
     onSuccess: (data) => {
       onCreated(data);
@@ -146,9 +166,7 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'shared' }: Creat
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-        <h3 className="text-lg font-semibold text-white mb-4">
-          {defaultScope === 'runner' ? 'Create Runner Token' : 'Create Worker Token'}
-        </h3>
+        <h3 className="text-lg font-semibold text-white mb-4">Create Token</h3>
         <div className="space-y-4">
           <div>
             <label className="block text-sm text-slate-300 mb-1">Name</label>
@@ -156,7 +174,7 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'shared' }: Creat
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder={defaultScope === 'runner' ? 'ci-job-runner-prod' : 'prod-workers'}
+              placeholder="e.g. worker-a or jenkins-runner"
               autoFocus
             />
           </div>
@@ -167,17 +185,37 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'shared' }: Creat
               onChange={(e) => setScope(e.target.value)}
               className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {defaultScope === 'runner' ? (
-                <option value="runner">runner</option>
-              ) : (
-                <>
-                  <option value="shared">shared</option>
-                  <option value="project">project</option>
-                  <option value="team">team</option>
-                </>
-              )}
+              <option value="worker">worker (chola_wkr_)</option>
+              <option value="runner">runner (chola_svc_)</option>
+              <option value="shared">shared</option>
             </select>
           </div>
+          {scope === 'worker' && (
+            <div>
+              <label className="block text-sm text-slate-300 mb-1">Worker</label>
+              {workers.length > 0 ? (
+                <select
+                  value={selectedWorker}
+                  onChange={(e) => {
+                    setSelectedWorker(e.target.value);
+                    if (!name) setName(e.target.value);
+                  }}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— Select registered worker —</option>
+                  {workers.map((w: { worker_id: string; hostname: string; status: string }) => (
+                    <option key={w.worker_id} value={w.worker_id}>
+                      {w.worker_id} ({w.hostname}) — {w.status}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-slate-500 italic">
+                  No workers registered. <a href="/workers" className="text-blue-400 underline">Register a worker first</a>.
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm text-slate-300 mb-1">Expires at (optional)</label>
             <input
@@ -295,7 +333,7 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
 
       <p className="text-sm text-slate-400">
         {isRunnerView
-          ? 'Runner tokens authenticate ci-job-runner with the controller. Use --auth-token or CHOLA_AUTH_TOKEN. Each token is shown only once.'
+          ? 'Runner tokens authenticate ci-job-runner and scripts. Set CHOLA_TOKEN env var. Each token is shown only once.'
           : 'Registration tokens allow workers to authenticate and join the pool. Each token is shown only once.'}
       </p>
 

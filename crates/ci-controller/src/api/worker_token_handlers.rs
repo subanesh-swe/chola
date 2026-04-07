@@ -22,6 +22,7 @@ pub struct CreateTokenRequest {
     pub scope: Option<String>,
     pub expires_at: Option<String>,
     pub max_uses: Option<i32>,
+    pub worker_id: Option<String>,
 }
 
 fn sha256_hex(input: &str) -> String {
@@ -100,7 +101,7 @@ pub async fn create(
             Some(auth_user.username.as_str()),
             expires_at,
             max_uses,
-            None,
+            body.worker_id.as_deref(),
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;

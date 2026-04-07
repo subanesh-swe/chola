@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import WorkerTokensPage from './WorkerTokensPage';
 
-type TabKey = 'worker' | 'runner' | 'api';
+type TabKey = 'worker' | 'runner';
 
 const tabs: { key: TabKey; label: string; description: string }[] = [
-  { key: 'worker', label: 'Worker Tokens', description: 'Registration tokens for workers to authenticate with the controller' },
-  { key: 'runner', label: 'Runner Tokens', description: 'Service tokens for ci-job-runner to authenticate gRPC and REST calls' },
-  { key: 'api', label: 'API Keys', description: 'Personal API keys for REST API access (manage in Profile)' },
+  { key: 'worker', label: 'Worker Tokens', description: 'Authenticate workers with the controller. Create from Workers page or here.' },
+  { key: 'runner', label: 'Runner Tokens', description: 'Authenticate ci-job-runner and automation scripts. Set CHOLA_TOKEN env var.' },
 ];
 
 export default function TokensPage() {
@@ -16,7 +15,6 @@ export default function TokensPage() {
     <div className="space-y-4">
       <h2 className="text-2xl font-bold text-white">Tokens</h2>
 
-      {/* Tab bar */}
       <div className="flex border-b border-slate-700">
         {tabs.map((tab) => (
           <button
@@ -36,25 +34,12 @@ export default function TokensPage() {
         ))}
       </div>
 
-      {/* Tab description */}
       <p className="text-xs text-slate-500">
         {tabs.find((t) => t.key === activeTab)?.description}
       </p>
 
-      {/* Tab content */}
-      {activeTab === 'worker' && <WorkerTokensPage filterScope="worker" />}
+      {activeTab === 'worker' && <WorkerTokensPage filterScope="worker" defaultScope="worker" />}
       {activeTab === 'runner' && <WorkerTokensPage filterScope="runner" defaultScope="runner" />}
-      {activeTab === 'api' && (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl p-8 text-center">
-          <p className="text-slate-400 text-sm">API keys are managed per-user.</p>
-          <a
-            href="/profile"
-            className="inline-block mt-3 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            Go to Profile &rarr;
-          </a>
-        </div>
-      )}
     </div>
   );
 }
