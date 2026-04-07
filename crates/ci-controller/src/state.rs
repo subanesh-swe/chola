@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{Notify, RwLock};
@@ -38,6 +38,10 @@ pub struct ControllerState {
     pub redis_store: Option<Arc<crate::redis_store::RedisStore>>,
     /// Directory where logs are persisted on disk (always set)
     pub log_dir: String,
+    /// SHA-256 hashes of all active API tokens (runner + worker scopes).
+    /// Refreshed on startup and whenever tokens are created/deleted.
+    /// Wrapped in Arc so the gRPC interceptor (sync) shares the same instance.
+    pub token_hashes: Arc<std::sync::RwLock<HashSet<String>>>,
 }
 
 /// Allow the axum auth middleware extractor to pull `AuthConfig` from `Arc<ControllerState>`.

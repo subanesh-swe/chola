@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listWorkers, drainWorker, undrainWorker } from '../api/workers';
+import { listWorkers, drainWorker, undrainWorker, approveWorker, rejectWorker, registerWorker, regenerateWorkerToken } from '../api/workers';
+import type { RegisterWorkerResponse, RegenerateTokenResponse } from '../api/workers';
 import {
   listBranchBlacklist,
   createBranchBlacklist,
@@ -13,7 +14,7 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { usePermission } from '../hooks/usePermission';
 import { toast } from 'sonner';
-import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo } from '../types';
+import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo, WorkerActiveGroup } from '../types';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 
@@ -127,6 +128,213 @@ function DiskSection({
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Register Worker modal ─────────────────────────────────────────────────────
+
+function RegisterWorkerModal({
+  onClose,
+  onSuccess,
+}: {
+  onClose: () => void;
+  onSuccess: (result: RegisterWorkerResponse) => void;
+}) {
+  const [workerId, setWorkerId] = useState('');
+  const [hostname, setHostname] = useState('');
+  const [description, setDescription] = useState('');
+  const [labels, setLabels] = useState<string[]>([]);
+  const [labelInput, setLabelInput] = useState('');
+
+  const registerMut = useMutation({
+    mutationFn: () =>
+      registerWorker({
+        worker_id: workerId.trim(),
+        hostname: hostname.trim(),
+        labels: labels.length > 0 ? labels : undefined,
+        description: description.trim() || undefined,
+      }),
+    onSuccess: (data) => {
+      onSuccess(data);
+    },
+    onError: (err: unknown) =>
+      toast.error((err as MutationError).userMessage || 'Failed to register worker'),
+  });
+
+  function addLabel() {
+    const trimmed = labelInput.trim();
+    if (trimmed && !labels.includes(trimmed)) {
+      setLabels((prev) => [...prev, trimmed]);
+    }
+    setLabelInput('');
+  }
+
+  function removeLabel(label: string) {
+    setLabels((prev) => prev.filter((l) => l !== label));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
+        <h3 className="text-lg font-semibold text-white mb-4">Register Worker</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">
+              Worker ID <span className="text-red-400">*</span>
+            </label>
+            <input
+              value={workerId}
+              onChange={(e) => setWorkerId(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="worker-prod-1"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">
+              Hostname <span className="text-red-400">*</span>
+            </label>
+            <input
+              value={hostname}
+              onChange={(e) => setHostname(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="build-server-01.example.com"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">Labels</label>
+            <div className="flex gap-2 mb-1.5">
+              <input
+                value={labelInput}
+                onChange={(e) => setLabelInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addLabel();
+                  }
+                }}
+                className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Type and press Enter to add"
+              />
+              <button
+                type="button"
+                onClick={addLabel}
+                disabled={!labelInput.trim()}
+                className="px-3 py-2 text-sm bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                Add
+              </button>
+            </div>
+            {labels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {labels.map((l) => (
+                  <span
+                    key={l}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded text-xs font-mono"
+                  >
+                    {l}
+                    <button
+                      type="button"
+                      onClick={() => removeLabel(l)}
+                      className="text-blue-400 hover:text-red-400 focus:outline-none"
+                      aria-label={`Remove label ${l}`}
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              placeholder="Optional description for this worker"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => registerMut.mutate()}
+            disabled={!workerId.trim() || !hostname.trim() || registerMut.isPending}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {registerMut.isPending ? 'Registering...' : 'Register'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Token display modal ───────────────────────────────────────────────────────
+
+function TokenDisplayModal({
+  result,
+  onClose,
+}: {
+  result: RegisterWorkerResponse;
+  onClose: () => void;
+}) {
+  const tokenRef = useRef<HTMLElement>(null);
+
+  function copyToken() {
+    navigator.clipboard.writeText(result.token).then(
+      () => toast.success('Token copied to clipboard'),
+      () => toast.error('Failed to copy token'),
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full">
+        <h3 className="text-lg font-semibold text-white mb-1">Worker Registered</h3>
+        <p className="text-sm text-yellow-400 mb-4">
+          Save this token now. It will not be shown again.
+        </p>
+        <div className="relative bg-slate-800 border border-slate-600 rounded-lg p-3 mb-4">
+          <code
+            ref={tokenRef}
+            className="block text-xs font-mono text-emerald-300 break-all pr-16"
+          >
+            {result.token}
+          </code>
+          <button
+            onClick={copyToken}
+            className="absolute top-2 right-2 px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            Copy
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 mb-1">
+          Add to worker config:
+        </p>
+        <code className="block text-xs font-mono text-slate-300 bg-slate-800 rounded px-3 py-2 mb-2">
+          token: {result.token}
+        </code>
+        <p className="text-xs text-slate-400 mb-1">Or set environment variable:</p>
+        <code className="block text-xs font-mono text-slate-300 bg-slate-800 rounded px-3 py-2 mb-4">
+          CHOLA_TOKEN={result.token}
+        </code>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -324,6 +532,9 @@ export default function WorkersPage() {
   const [expandedBlacklist, setExpandedBlacklist] = useState<string | null>(null);
   const [expandedDisks, setExpandedDisks] = useState<Set<string>>(new Set());
   const [expandedSysInfo, setExpandedSysInfo] = useState<Set<string>>(new Set());
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [tokenResult, setTokenResult] = useState<RegisterWorkerResponse | RegenerateTokenResponse | null>(null);
+  const [regenConfirmId, setRegenConfirmId] = useState<string | null>(null);
   const { data, isLoading, isError } = useQuery({ queryKey: ['workers'], queryFn: () => listWorkers(), refetchInterval: 5000 });
 
   const drainMut = useMutation({
@@ -336,12 +547,45 @@ export default function WorkersPage() {
     onSuccess: () => { toast.success('Worker undrained'); qc.invalidateQueries({ queryKey: ['workers'] }); },
     onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to undrain worker'),
   });
+  const approveMut = useMutation({
+    mutationFn: (id: string) => approveWorker(id),
+    onSuccess: () => { toast.success('Worker approved'); qc.invalidateQueries({ queryKey: ['workers'] }); },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to approve worker'),
+  });
+  const rejectMut = useMutation({
+    mutationFn: (id: string) => rejectWorker(id),
+    onSuccess: () => { toast.success('Worker rejected'); qc.invalidateQueries({ queryKey: ['workers'] }); },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to reject worker'),
+  });
+  const regenerateTokenMut = useMutation({
+    mutationFn: (id: string) => regenerateWorkerToken(id),
+    onSuccess: (data) => {
+      setRegenConfirmId(null);
+      setTokenResult(data);
+      qc.invalidateQueries({ queryKey: ['workers'] });
+      toast.success(`Token regenerated for ${data.worker_id}`);
+    },
+    onError: (err: unknown) => {
+      setRegenConfirmId(null);
+      toast.error((err as MutationError).userMessage || 'Failed to regenerate token');
+    },
+  });
 
   const workers = data?.data ?? [];
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-bold text-white">Workers ({workers.length})</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-white">Workers ({workers.length})</h2>
+        {canManageWorkers && (
+          <button
+            onClick={() => setShowRegisterModal(true)}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Register Worker
+          </button>
+        )}
+      </div>
 
       {isError && (
         <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
@@ -360,8 +604,36 @@ export default function WorkersPage() {
                     <p className="text-sm text-slate-400">{w.hostname} &middot; {w.disk_type} &middot; Docker: {w.docker_enabled ? 'Yes' : 'No'}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                   {w.last_heartbeat && <span className="text-xs text-slate-500">Jobs: {w.last_heartbeat.running_jobs}</span>}
+                  {w.approved === false && (
+                    <span className="text-xs px-1.5 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/30">
+                      Rejected
+                    </span>
+                  )}
+                  {w.approved === true && (
+                    <span className="text-xs px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+                      Approved
+                    </span>
+                  )}
+                  {canManageWorkers && w.approved !== true && (
+                    <button
+                      onClick={() => approveMut.mutate(w.worker_id)}
+                      aria-label={`Approve worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {canManageWorkers && w.approved !== false && (
+                    <button
+                      onClick={() => rejectMut.mutate(w.worker_id)}
+                      aria-label={`Reject worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    >
+                      Reject
+                    </button>
+                  )}
                   {canManageWorkers && w.status === 'Connected' && (
                     <button
                       onClick={() => drainMut.mutate(w.worker_id)}
@@ -380,63 +652,113 @@ export default function WorkersPage() {
                       Undrain
                     </button>
                   )}
+                  {canManageWorkers && (
+                    <button
+                      onClick={() => setRegenConfirmId(w.worker_id)}
+                      aria-label={`Regenerate token for worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/30 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      Regen Token
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <ResourceBar
-                  label="CPU"
-                  used={w.last_heartbeat?.used_cpu_percent ?? 0}
-                  total={100}
-                  unit="%"
-                  allocated={w.total_cpu > 0 ? Math.min((w.allocated_cpu / w.total_cpu) * 100, 100) : 0}
-                />
-                <ResourceBar
-                  label="Memory"
-                  used={w.last_heartbeat?.used_memory_mb ?? 0}
-                  total={w.total_memory_mb}
-                  unit=" MB"
-                  allocated={w.allocated_memory_mb}
-                />
-                <DiskSection
-                  usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
-                  totalDiskMb={w.total_disk_mb}
-                  diskDetails={w.last_heartbeat?.disk_details ?? w.disk_details ?? []}
-                  expanded={expandedDisks.has(w.worker_id)}
-                  onToggle={() => setExpandedDisks(prev => {
-                    const next = new Set(prev);
-                    if (next.has(w.worker_id)) next.delete(w.worker_id);
-                    else next.add(w.worker_id);
-                    return next;
-                  })}
-                />
-              </div>
+              {(() => {
+                const isOffline = w.status === 'Disconnected';
+                const hasLastKnown = isOffline && w.last_heartbeat != null;
+                return (
+                  <div className="space-y-1">
+                    {hasLastKnown && (
+                      <p className="text-[11px] text-slate-500 italic mb-1">
+                        Last known values (worker offline)
+                      </p>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <ResourceBar
+                        label={hasLastKnown ? 'CPU (last known)' : 'CPU'}
+                        used={w.last_heartbeat?.used_cpu_percent ?? 0}
+                        total={100}
+                        unit="%"
+                        allocated={w.total_cpu > 0 ? Math.min((w.allocated_cpu / w.total_cpu) * 100, 100) : 0}
+                      />
+                      <ResourceBar
+                        label={hasLastKnown ? 'Memory (last known)' : 'Memory'}
+                        used={w.last_heartbeat?.used_memory_mb ?? 0}
+                        total={w.total_memory_mb}
+                        unit=" MB"
+                        allocated={w.allocated_memory_mb}
+                      />
+                      <DiskSection
+                        usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
+                        totalDiskMb={w.total_disk_mb}
+                        diskDetails={w.last_heartbeat?.disk_details ?? w.disk_details ?? []}
+                        expanded={expandedDisks.has(w.worker_id)}
+                        onToggle={() => setExpandedDisks(prev => {
+                          const next = new Set(prev);
+                          if (next.has(w.worker_id)) next.delete(w.worker_id);
+                          else next.add(w.worker_id);
+                          return next;
+                        })}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
               {(w.allocated_cpu > 0 || w.allocated_memory_mb > 0 || w.allocated_disk_mb > 0) && (
-                <div className="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between">
-                  <p className="text-xs text-slate-500">
-                    <span className="text-indigo-400 font-medium">Active reservations</span>
-                    {' — '}
-                    {w.allocated_cpu > 0 && (
-                      <span className="mr-2">{w.allocated_cpu} CPU</span>
-                    )}
-                    {w.allocated_memory_mb > 0 && (
-                      <span className="mr-2">{w.allocated_memory_mb.toLocaleString()} MB RAM</span>
-                    )}
-                    {w.allocated_disk_mb > 0 && (
-                      <span>{w.allocated_disk_mb.toLocaleString()} MB disk</span>
-                    )}
-                  </p>
-                  <a
-                    href={`/builds?worker=${encodeURIComponent(w.worker_id)}&state=running,reserved`}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 underline shrink-0 ml-4"
-                  >
-                    View active builds &rarr;
-                  </a>
+                <div className="mt-3 pt-3 border-t border-slate-800">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-slate-500">
+                      <span className="text-indigo-400 font-medium">Active reservations</span>
+                      {' — '}
+                      {w.allocated_cpu > 0 && (
+                        <span className="mr-2">{w.allocated_cpu} CPU</span>
+                      )}
+                      {w.allocated_memory_mb > 0 && (
+                        <span className="mr-2">{w.allocated_memory_mb.toLocaleString()} MB RAM</span>
+                      )}
+                      {w.allocated_disk_mb > 0 && (
+                        <span>{w.allocated_disk_mb.toLocaleString()} MB disk</span>
+                      )}
+                    </p>
+                    <a
+                      href={`/builds?worker=${encodeURIComponent(w.worker_id)}&state=running,reserved`}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 underline shrink-0 ml-4"
+                    >
+                      View active builds &rarr;
+                    </a>
+                  </div>
+                  {w.active_groups && w.active_groups.length > 0 && (
+                    <div className="space-y-1.5">
+                      {w.active_groups.map((g: WorkerActiveGroup) => (
+                        <a
+                          key={g.group_id}
+                          href={`/builds/${g.group_id}`}
+                          className="flex items-center justify-between px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg hover:bg-slate-800 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <StatusBadge status={g.state} />
+                            <span className="text-xs text-slate-300 font-mono">{g.group_id.slice(0, 8)}</span>
+                            {g.branch && <span className="text-xs text-slate-500">{g.branch}</span>}
+                            {g.commit_sha && <span className="text-xs text-slate-600 font-mono">{g.commit_sha.slice(0, 8)}</span>}
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-slate-500">
+                            <span>{g.allocated_cpu} CPU, {g.allocated_memory_mb}MB</span>
+                            <span>{g.stages_submitted} stage{g.stages_submitted !== 1 ? 's' : ''}</span>
+                            <TimeAgo date={g.created_at} />
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
                 <span>Types: {w.supported_job_types.join(', ')}</span>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>
                 {w.last_heartbeat && <span>Last beat: <TimeAgo date={w.last_heartbeat.timestamp} /></span>}
+                {w.registration_token_id && (
+                  <span>Token: <span className="font-mono text-slate-600">{w.registration_token_id.slice(0, 8)}</span></span>
+                )}
                 {w.system_info && (
                   <button
                     onClick={() => setExpandedSysInfo(prev => {
@@ -470,9 +792,38 @@ export default function WorkersPage() {
               )}
             </div>
           ))}
-          {!workers.length && <EmptyState message="No workers registered" description="Workers will appear here once connected." />}
+          {!workers.length && <EmptyState message="No workers registered" description="Use Register Worker to add a new worker." />}
         </div>
       )}
+
+      {showRegisterModal && (
+        <RegisterWorkerModal
+          onClose={() => setShowRegisterModal(false)}
+          onSuccess={(result) => {
+            setShowRegisterModal(false);
+            setTokenResult(result);
+            qc.invalidateQueries({ queryKey: ['workers'] });
+            toast.success(`Worker ${result.worker_id} registered`);
+          }}
+        />
+      )}
+
+      {tokenResult && (
+        <TokenDisplayModal
+          result={tokenResult}
+          onClose={() => setTokenResult(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={regenConfirmId !== null}
+        title="Regenerate Worker Token"
+        message="This will deactivate the current token and disconnect the worker. A new token will be generated. The worker must reconnect with the new token."
+        confirmLabel="Regenerate"
+        variant="warning"
+        onConfirm={() => regenConfirmId && regenerateTokenMut.mutate(regenConfirmId)}
+        onCancel={() => setRegenConfirmId(null)}
+      />
     </div>
   );
 }

@@ -56,6 +56,11 @@ async fn main() -> anyhow::Result<()> {
         config.http_port = port;
     }
 
+    // Env var override for auth token
+    if let Ok(val) = std::env::var("CHOLA_TOKEN") {
+        config.token = Some(val);
+    }
+
     let log_level = cli.log_level.as_deref().unwrap_or(&config.logging.level);
 
     // Initialize tracing

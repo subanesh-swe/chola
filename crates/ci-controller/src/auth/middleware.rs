@@ -76,8 +76,11 @@ where
             });
         }
 
-        // --- API key: X-API-Key header ---
+        // --- API key / runner token: X-API-Key header ---
         if let Some(raw_key) = parts.headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
+            if raw_key.starts_with("chola_svc_") {
+                return resolve_runner_token(raw_key, auth_config).await;
+            }
             return resolve_api_key(raw_key, auth_config).await;
         }
 
@@ -99,6 +102,12 @@ where
                 message: "Missing Authorization header".to_string(),
             })?;
         let auth_header = auth_header.as_str();
+
+        // --- Runner token: Authorization: Bearer chola_svc_* ---
+        if let Some(rest) = auth_header.strip_prefix("Bearer chola_svc_") {
+            let full = format!("chola_svc_{rest}");
+            return resolve_runner_token(&full, auth_config).await;
+        }
 
         // --- API key: Authorization: Bearer chola_* ---
         if let Some(raw_key) = auth_header.strip_prefix("Bearer chola_") {
@@ -138,6 +147,55 @@ where
             role: UserRole::from_db_str(&claims.role),
         })
     }
+}
+
+/// Resolve a runner token (chola_svc_* prefix) against the worker_tokens table.
+/// Runner tokens are service accounts with operator-level access.
+async fn resolve_runner_token(raw_key: &str, cfg: &AuthConfig) -> Result<AuthUser, AuthError> {
+    let storage = cfg.storage.as_ref().ok_or(AuthError {
+        status: StatusCode::UNAUTHORIZED,
+        message: "Storage unavailable".to_string(),
+    })?;
+
+    let hash = sha256_hex(raw_key);
+    let token = storage
+        .get_worker_token_by_hash(&hash)
+        .await
+        .map_err(|_| AuthError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "Token lookup failed".to_string(),
+        })?
+        .ok_or(AuthError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "Invalid runner token".to_string(),
+        })?;
+
+    if !token.active {
+        return Err(AuthError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "Runner token is inactive".to_string(),
+        });
+    }
+    if token.scope != "runner" {
+        return Err(AuthError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "Invalid runner token".to_string(),
+        });
+    }
+    if let Some(exp) = token.expires_at {
+        if exp < chrono::Utc::now() {
+            return Err(AuthError {
+                status: StatusCode::UNAUTHORIZED,
+                message: "Runner token has expired".to_string(),
+            });
+        }
+    }
+
+    Ok(AuthUser {
+        user_id: Uuid::nil(),
+        username: format!("runner:{}", token.name),
+        role: UserRole::Operator,
+    })
 }
 
 async fn resolve_api_key(raw_key: &str, cfg: &AuthConfig) -> Result<AuthUser, AuthError> {

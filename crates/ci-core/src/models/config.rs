@@ -315,14 +315,11 @@ pub struct WorkerConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub reconnect: ReconnectConfig,
+    /// Auth token. Prefix determines type:
+    ///   chola_wkr_ = worker, chola_svc_ = runner
+    /// Env: CHOLA_TOKEN
     #[serde(default)]
-    pub auth_token: Option<String>,
-    /// One-time registration token (first connect). Controller returns a permanent worker_token.
-    #[serde(default)]
-    pub registration_token: Option<String>,
-    /// Permanent worker token (subsequent connects). Returned by controller on first registration.
-    #[serde(default)]
-    pub worker_token: Option<String>,
+    pub token: Option<String>,
     #[serde(default = "default_worker_http_port")]
     pub http_port: u16,
     /// Disk mount points to track. If empty, auto-detect and dedup by device.

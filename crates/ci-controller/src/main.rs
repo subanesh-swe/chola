@@ -182,6 +182,42 @@ async fn main() -> anyhow::Result<()> {
     let mut auth_config = AuthConfig::from_controller_config(&config.auth);
     auth_config.storage = storage.clone();
 
+    // Load all active token hashes for gRPC interceptor cache
+    let mut token_hashes: std::collections::HashSet<String> = if let Some(s) = &storage {
+        match s.list_worker_tokens().await {
+            Ok(tokens) => tokens
+                .into_iter()
+                .filter(|t| t.active)
+                .map(|t| t.token_hash)
+                .collect(),
+            Err(e) => {
+                warn!("Failed to load token hashes: {}", e);
+                std::collections::HashSet::new()
+            }
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+    // Also load worker token hashes (chola_wkr_ tokens from registration)
+    if let Some(s) = &storage {
+        match s.load_workers().await {
+            Ok(workers) => {
+                let count_before = token_hashes.len();
+                for w in workers {
+                    if let Some(h) = w.worker_token_hash {
+                        token_hashes.insert(h);
+                    }
+                }
+                let added = token_hashes.len() - count_before;
+                if added > 0 {
+                    info!("Added {} worker token hash(es) to cache", added);
+                }
+            }
+            Err(e) => warn!("Failed to load worker token hashes: {}", e),
+        }
+    }
+    info!("Loaded {} token hash(es) into cache", token_hashes.len());
+
     // Construct the shared ControllerState
     let state = Arc::new(ControllerState {
         config: config.clone(),
@@ -196,6 +232,7 @@ async fn main() -> anyhow::Result<()> {
         storage,
         redis_store,
         log_dir,
+        token_hashes: Arc::new(std::sync::RwLock::new(token_hashes)),
     });
 
     // ── State recovery ────────────────────────────────────────────────────────
