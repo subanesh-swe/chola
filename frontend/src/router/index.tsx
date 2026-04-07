@@ -17,6 +17,8 @@ import ProfilePage from '../pages/ProfilePage';
 import AnalyticsPage from '../pages/AnalyticsPage';
 import RunsPage from '../pages/RunsPage';
 import BlacklistPage from '../pages/BlacklistPage';
+import TokensPage from '../pages/TokensPage';
+import LabelGroupsPage from '../pages/LabelGroupsPage';
 import NotFoundPage from '../pages/NotFoundPage';
 
 export function AppRouter() {
@@ -35,6 +37,8 @@ export function AppRouter() {
           <Route path="repos/:id" element={<RepoDetailPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="blacklist" element={<BlacklistPage />} />
+          <Route path="tokens" element={<TokensPage />} />
+          <Route path="label-groups" element={<LabelGroupsPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route element={<RoleGuard minRole="super_admin" />}>
             <Route path="users" element={<UsersPage />} />

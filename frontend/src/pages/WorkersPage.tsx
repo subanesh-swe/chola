@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listWorkers, drainWorker, undrainWorker, approveWorker, rejectWorker, registerWorker, regenerateWorkerToken } from '../api/workers';
-import type { RegisterWorkerResponse, RegenerateTokenResponse } from '../api/workers';
+import { listWorkers, drainWorker, undrainWorker, approveWorker, rejectWorker, registerWorker } from '../api/workers';
+import type { RegisterWorkerResponse } from '../api/workers';
 import {
   listBranchBlacklist,
   createBranchBlacklist,
@@ -533,8 +533,7 @@ export default function WorkersPage() {
   const [expandedDisks, setExpandedDisks] = useState<Set<string>>(new Set());
   const [expandedSysInfo, setExpandedSysInfo] = useState<Set<string>>(new Set());
   const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [tokenResult, setTokenResult] = useState<RegisterWorkerResponse | RegenerateTokenResponse | null>(null);
-  const [regenConfirmId, setRegenConfirmId] = useState<string | null>(null);
+  const [tokenResult, setTokenResult] = useState<RegisterWorkerResponse | null>(null);
   const { data, isLoading, isError } = useQuery({ queryKey: ['workers'], queryFn: () => listWorkers(), refetchInterval: 5000 });
 
   const drainMut = useMutation({
@@ -556,19 +555,6 @@ export default function WorkersPage() {
     mutationFn: (id: string) => rejectWorker(id),
     onSuccess: () => { toast.success('Worker rejected'); qc.invalidateQueries({ queryKey: ['workers'] }); },
     onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to reject worker'),
-  });
-  const regenerateTokenMut = useMutation({
-    mutationFn: (id: string) => regenerateWorkerToken(id),
-    onSuccess: (data) => {
-      setRegenConfirmId(null);
-      setTokenResult(data);
-      qc.invalidateQueries({ queryKey: ['workers'] });
-      toast.success(`Token regenerated for ${data.worker_id}`);
-    },
-    onError: (err: unknown) => {
-      setRegenConfirmId(null);
-      toast.error((err as MutationError).userMessage || 'Failed to regenerate token');
-    },
   });
 
   const workers = data?.data ?? [];
@@ -650,15 +636,6 @@ export default function WorkersPage() {
                       className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       Undrain
-                    </button>
-                  )}
-                  {canManageWorkers && (
-                    <button
-                      onClick={() => setRegenConfirmId(w.worker_id)}
-                      aria-label={`Regenerate token for worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/30 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    >
-                      Regen Token
                     </button>
                   )}
                 </div>
@@ -814,16 +791,6 @@ export default function WorkersPage() {
           onClose={() => setTokenResult(null)}
         />
       )}
-
-      <ConfirmDialog
-        open={regenConfirmId !== null}
-        title="Regenerate Worker Token"
-        message="This will deactivate the current token and disconnect the worker. A new token will be generated. The worker must reconnect with the new token."
-        confirmLabel="Regenerate"
-        variant="warning"
-        onConfirm={() => regenConfirmId && regenerateTokenMut.mutate(regenConfirmId)}
-        onCancel={() => setRegenConfirmId(null)}
-      />
     </div>
   );
 }
