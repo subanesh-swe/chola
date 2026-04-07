@@ -341,6 +341,78 @@ pub async fn register_worker(
     })))
 }
 
+/// POST /api/v1/workers/:id/regenerate-token
+pub async fn regenerate_token(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(worker_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_workers() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    // 1. Deactivate all existing active tokens for this worker
+    storage
+        .deactivate_tokens_for_worker(&worker_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // 2. Generate new token
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let token = format!(
+        "chola_wkr_{}",
+        bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let token_name = format!("worker-{}-regen", worker_id);
+
+    // 3. Insert new token row bound to this worker
+    storage
+        .create_worker_token(
+            &token_name,
+            &token_hash,
+            "dedicated",
+            Some(auth_user.username.as_str()),
+            None,
+            0,
+            Some(worker_id.as_str()),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // 4. Refresh in-memory token hash cache
+    if let Ok(tokens) = storage.list_worker_tokens().await {
+        let hashes: std::collections::HashSet<String> = tokens
+            .into_iter()
+            .filter(|t| t.active)
+            .map(|t| t.token_hash.clone())
+            .collect();
+        if let Ok(mut guard) = state.token_hashes.write() {
+            *guard = hashes;
+        }
+    }
+
+    // 5. Kill existing job stream for this worker (forces reconnect with new token)
+    {
+        let mut senders = state.job_stream_senders.write().await;
+        senders.remove(&worker_id);
+    }
+
+    info!(
+        "Token regenerated for worker {} by {}",
+        worker_id, auth_user.username
+    );
+    Ok(Json(json!({
+        "worker_id": worker_id,
+        "token": token,
+    })))
+}
+
 /// POST /api/v1/workers/:id/undrain
 pub async fn undrain(
     State(state): State<Arc<ControllerState>>,

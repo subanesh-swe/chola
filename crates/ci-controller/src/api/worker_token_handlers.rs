@@ -28,16 +28,43 @@ fn sha256_hex(input: &str) -> String {
     format!("{:x}", Sha256::digest(input.as_bytes()))
 }
 
-fn generate_registration_token() -> String {
+fn generate_token(scope: &str) -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
+    let prefix = if scope == "runner" {
+        "chola_svc_"
+    } else {
+        "chola_wkr_"
+    };
     format!(
-        "chola_reg_{}",
+        "{}{}",
+        prefix,
         bytes
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect::<String>()
     )
+}
+
+/// Reload all active token hashes into the in-memory cache from DB.
+async fn refresh_token_hashes(state: &Arc<ControllerState>) {
+    let storage = match &state.storage {
+        Some(s) => s,
+        None => return,
+    };
+    match storage.list_worker_tokens().await {
+        Ok(tokens) => {
+            let hashes: std::collections::HashSet<String> = tokens
+                .into_iter()
+                .filter(|t| t.active)
+                .map(|t| t.token_hash.clone())
+                .collect();
+            if let Ok(mut guard) = state.token_hashes.write() {
+                *guard = hashes;
+            }
+        }
+        Err(e) => tracing::warn!("Failed to refresh token hashes: {}", e),
+    }
 }
 
 /// POST /api/v1/worker-tokens
@@ -55,9 +82,9 @@ pub async fn create(
         return Err(ApiError::BadRequest("Name is required".into()));
     }
 
-    let token = generate_registration_token();
-    let hash = sha256_hex(&token);
     let scope = body.scope.as_deref().unwrap_or("shared");
+    let token = generate_token(scope);
+    let hash = sha256_hex(&token);
     let expires_at = body
         .expires_at
         .as_deref()
@@ -77,6 +104,8 @@ pub async fn create(
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    refresh_token_hashes(&state).await;
 
     Ok(Json(json!({
         "id": db_token.id.to_string(),
@@ -161,6 +190,8 @@ async fn set_active(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    refresh_token_hashes(&state).await;
+
     Ok(Json(json!({ "id": id.to_string(), "active": active })))
 }
 
@@ -179,6 +210,8 @@ pub async fn delete_one(
         .delete_worker_token(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    refresh_token_hashes(&state).await;
 
     Ok(Json(json!({ "deleted": true })))
 }

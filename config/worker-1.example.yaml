@@ -30,6 +30,12 @@ execution: {}
 logging:
   level: "info"
 
+# Auth token (create at http://controller:3000/tokens)
+#   chola_wkr_ = worker token (Worker Tokens tab)
+#   chola_reg_ = registration token (one-time, legacy)
+# Or set CHOLA_TOKEN env var
+# token: "chola_wkr_xxxxxxxx..."
+
 # Disk mount points to track (optional). If empty, auto-detects and deduplicates by device.
 # tracked_disk_paths:
 #   - "/"

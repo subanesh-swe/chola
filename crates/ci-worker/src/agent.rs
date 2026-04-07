@@ -74,7 +74,7 @@ pub async fn run(
                 warn!("Attempting to reconnect with exponential backoff...");
 
                 let controller_addr = config.controller.address.clone();
-                let reconnect_auth_token = config.auth_token.clone();
+                let reconnect_auth_token = config.token.clone();
                 let reconnect_result = reconnect_handler
                     .reconnect(config.worker_id.clone(), |req| {
                         let addr = controller_addr.clone();
@@ -123,7 +123,7 @@ async fn run_session(
     let client = GrpcClient::connect_with_options(
         &config.controller.address,
         config.controller.tls.as_ref(),
-        config.auth_token.clone(),
+        config.token.clone(),
     )
     .await?;
 
@@ -162,16 +162,25 @@ async fn run_session(
             docker_enabled: config.capabilities.docker_enabled,
             labels: Vec::new(),
             disk_details,
-            registration_token: config.registration_token.clone().unwrap_or_default(),
-            worker_token: config.worker_token.clone().unwrap_or_default(),
+            registration_token: {
+                let t = config.token.as_deref().unwrap_or("");
+                if t.starts_with("chola_reg_") {
+                    t.to_string()
+                } else {
+                    String::new()
+                }
+            },
+            worker_token: {
+                let t = config.token.as_deref().unwrap_or("");
+                if !t.starts_with("chola_reg_") {
+                    t.to_string()
+                } else {
+                    String::new()
+                }
+            },
         };
         let resp = client.register(register_req).await?;
         info!("Registration response: {}", resp.message);
-        if !resp.worker_token.is_empty() {
-            info!("=== SAVE THIS TOKEN TO YOUR WORKER CONFIG ===");
-            info!("worker_token: \"{}\"", resp.worker_token);
-            info!("=============================================");
-        }
 
         // Report system metadata to controller REST API
         report_system_metadata(config).await;

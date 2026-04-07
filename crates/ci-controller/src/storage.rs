@@ -3538,6 +3538,18 @@ impl Storage {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Deactivate all active tokens bound to a specific worker_id.
+    /// Returns the number of rows updated.
+    pub async fn deactivate_tokens_for_worker(&self, worker_id: &str) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE worker_tokens SET active = false WHERE worker_id = $1 AND active = true",
+        )
+        .bind(worker_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Validate a registration token: must be active, not expired, and under
     /// the max_uses limit (max_uses=0 means unlimited).
     pub async fn validate_registration_token(&self, hash: &str) -> anyhow::Result<DbWorkerToken> {

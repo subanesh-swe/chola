@@ -7,7 +7,7 @@ interface Props {
   confirmLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
-  variant?: 'danger' | 'default';
+  variant?: 'danger' | 'warning' | 'default';
 }
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -81,6 +81,8 @@ export function ConfirmDialog({
             className={
               variant === 'danger'
                 ? 'px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500'
+                : variant === 'warning'
+                ? 'px-4 py-2 text-sm text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500'
                 : 'px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500'
             }
           >
