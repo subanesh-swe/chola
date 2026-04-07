@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listWorkers, drainWorker, undrainWorker, approveWorker, rejectWorker, registerWorker } from '../api/workers';
-import type { RegisterWorkerResponse } from '../api/workers';
+import { listWorkers, drainWorker, undrainWorker, deleteWorker, updateWorkerLabels, registerWorker, regenerateWorkerToken } from '../api/workers';
+import type { RegisterWorkerResponse, RegenerateTokenResponse } from '../api/workers';
 import {
   listBranchBlacklist,
   createBranchBlacklist,
@@ -339,6 +339,95 @@ function TokenDisplayModal({
   );
 }
 
+// ── Inline Labels Editor ──────────────────────────────────────────────────────
+
+function InlineLabelsEditor({
+  workerId,
+  currentLabels,
+  onSave,
+  onCancel,
+  isPending,
+}: {
+  workerId: string;
+  currentLabels: string[];
+  onSave: (labels: string[]) => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [labels, setLabels] = useState<string[]>(currentLabels);
+  const [input, setInput] = useState('');
+
+  function addLabel() {
+    const t = input.trim();
+    if (t && !labels.includes(t)) setLabels((prev) => [...prev, t]);
+    setInput('');
+  }
+
+  function removeLabel(label: string) {
+    setLabels((prev) => prev.filter((l) => l !== label));
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {labels.map((l) => (
+          <span
+            key={l}
+            className="flex items-center gap-1 px-2 py-0.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded text-xs font-mono"
+          >
+            {l}
+            <button
+              type="button"
+              onClick={() => removeLabel(l)}
+              className="text-blue-400 hover:text-red-400 focus:outline-none"
+              aria-label={`Remove label ${l}`}
+            >
+              &times;
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addLabel(); }
+          }}
+          placeholder="Type label and press Enter"
+          className="flex-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          aria-label={`Add label for worker ${workerId}`}
+        />
+        <button
+          type="button"
+          onClick={addLabel}
+          disabled={!input.trim()}
+          className="px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          Add
+        </button>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onSave(labels)}
+          disabled={isPending}
+          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          {isPending ? 'Saving...' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Worker Branch Blacklist panel ─────────────────────────────────────────────
 
 function WorkerBranchBlacklist({
@@ -533,7 +622,11 @@ export default function WorkersPage() {
   const [expandedDisks, setExpandedDisks] = useState<Set<string>>(new Set());
   const [expandedSysInfo, setExpandedSysInfo] = useState<Set<string>>(new Set());
   const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [tokenResult, setTokenResult] = useState<RegisterWorkerResponse | null>(null);
+  const [tokenResult, setTokenResult] = useState<RegisterWorkerResponse | RegenerateTokenResponse | null>(null);
+  const [regenConfirmId, setRegenConfirmId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [editingLabelsId, setEditingLabelsId] = useState<string | null>(null);
+  const [labelDraft, setLabelDraft] = useState<string[]>([]);
   const { data, isLoading, isError } = useQuery({ queryKey: ['workers'], queryFn: () => listWorkers(), refetchInterval: 5000 });
 
   const drainMut = useMutation({
@@ -546,15 +639,37 @@ export default function WorkersPage() {
     onSuccess: () => { toast.success('Worker undrained'); qc.invalidateQueries({ queryKey: ['workers'] }); },
     onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to undrain worker'),
   });
-  const approveMut = useMutation({
-    mutationFn: (id: string) => approveWorker(id),
-    onSuccess: () => { toast.success('Worker approved'); qc.invalidateQueries({ queryKey: ['workers'] }); },
-    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to approve worker'),
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteWorker(id),
+    onSuccess: (_, id) => {
+      toast.success('Worker deleted');
+      setDeleteConfirmId(null);
+      qc.invalidateQueries({ queryKey: ['workers'] });
+      if (editingLabelsId === id) setEditingLabelsId(null);
+    },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to delete worker'),
   });
-  const rejectMut = useMutation({
-    mutationFn: (id: string) => rejectWorker(id),
-    onSuccess: () => { toast.success('Worker rejected'); qc.invalidateQueries({ queryKey: ['workers'] }); },
-    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to reject worker'),
+  const updateLabelsMut = useMutation({
+    mutationFn: ({ id, labels }: { id: string; labels: string[] }) => updateWorkerLabels(id, labels),
+    onSuccess: () => {
+      toast.success('Labels updated');
+      setEditingLabelsId(null);
+      qc.invalidateQueries({ queryKey: ['workers'] });
+    },
+    onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to update labels'),
+  });
+  const regenerateTokenMut = useMutation({
+    mutationFn: (id: string) => regenerateWorkerToken(id),
+    onSuccess: (data) => {
+      setRegenConfirmId(null);
+      setTokenResult(data);
+      qc.invalidateQueries({ queryKey: ['workers'] });
+      toast.success(`Token regenerated for ${data.worker_id}`);
+    },
+    onError: (err: unknown) => {
+      setRegenConfirmId(null);
+      toast.error((err as MutationError).userMessage || 'Failed to regenerate token');
+    },
   });
 
   const workers = data?.data ?? [];
@@ -592,33 +707,12 @@ export default function WorkersPage() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                   {w.last_heartbeat && <span className="text-xs text-slate-500">Jobs: {w.last_heartbeat.running_jobs}</span>}
-                  {w.approved === false && (
-                    <span className="text-xs px-1.5 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/30">
-                      Rejected
+                  {w.status === 'Draining' && (
+                    <span className="text-xs text-yellow-400">
+                      {(w.active_groups?.length ?? 0) > 0
+                        ? `${w.active_groups!.length} reservation${w.active_groups!.length !== 1 ? 's' : ''} remaining`
+                        : 'Idle — ready for maintenance'}
                     </span>
-                  )}
-                  {w.approved === true && (
-                    <span className="text-xs px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
-                      Approved
-                    </span>
-                  )}
-                  {canManageWorkers && w.approved !== true && (
-                    <button
-                      onClick={() => approveMut.mutate(w.worker_id)}
-                      aria-label={`Approve worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    >
-                      Approve
-                    </button>
-                  )}
-                  {canManageWorkers && w.approved !== false && (
-                    <button
-                      onClick={() => rejectMut.mutate(w.worker_id)}
-                      aria-label={`Reject worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-500"
-                    >
-                      Reject
-                    </button>
                   )}
                   {canManageWorkers && w.status === 'Connected' && (
                     <button
@@ -636,6 +730,24 @@ export default function WorkersPage() {
                       className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       Undrain
+                    </button>
+                  )}
+                  {canManageWorkers && (
+                    <button
+                      onClick={() => setRegenConfirmId(w.worker_id)}
+                      aria-label={`Regenerate token for worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/30 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      Regen Token
+                    </button>
+                  )}
+                  {canManageWorkers && (
+                    <button
+                      onClick={() => setDeleteConfirmId(w.worker_id)}
+                      aria-label={`Delete worker ${w.worker_id}`}
+                      className="px-3 py-1 text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    >
+                      Delete
                     </button>
                   )}
                 </div>
@@ -729,6 +841,43 @@ export default function WorkersPage() {
                   )}
                 </div>
               )}
+              {/* Labels row with inline editing */}
+              <div className="mt-3 pt-3 border-t border-slate-800">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-slate-500 font-medium">Labels:</span>
+                  {(w.labels ?? []).length > 0
+                    ? (w.labels ?? []).map((l) => (
+                        <span
+                          key={l}
+                          className="px-2 py-0.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded text-xs font-mono"
+                        >
+                          {l}
+                        </span>
+                      ))
+                    : <span className="text-xs text-slate-600 italic">none</span>}
+                  {canManageWorkers && editingLabelsId !== w.worker_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingLabelsId(w.worker_id);
+                        setLabelDraft(w.labels ?? []);
+                      }}
+                      className="text-xs text-slate-500 hover:text-slate-300 underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                    >
+                      Edit Labels
+                    </button>
+                  )}
+                </div>
+                {editingLabelsId === w.worker_id && (
+                  <InlineLabelsEditor
+                    workerId={w.worker_id}
+                    currentLabels={labelDraft}
+                    onSave={(labels) => updateLabelsMut.mutate({ id: w.worker_id, labels })}
+                    onCancel={() => setEditingLabelsId(null)}
+                    isPending={updateLabelsMut.isPending}
+                  />
+                )}
+              </div>
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
                 <span>Types: {w.supported_job_types.join(', ')}</span>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>
@@ -791,6 +940,26 @@ export default function WorkersPage() {
           onClose={() => setTokenResult(null)}
         />
       )}
+
+      <ConfirmDialog
+        open={regenConfirmId !== null}
+        title="Regenerate Worker Token"
+        message="This will deactivate the current token and disconnect the worker. A new token will be generated. The worker must reconnect with the new token."
+        confirmLabel="Regenerate"
+        variant="warning"
+        onConfirm={() => regenConfirmId && regenerateTokenMut.mutate(regenConfirmId)}
+        onCancel={() => setRegenConfirmId(null)}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirmId !== null}
+        title="Delete Worker"
+        message="This will remove the worker and deactivate its token. The worker will be disconnected."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => deleteConfirmId && deleteMut.mutate(deleteConfirmId)}
+        onCancel={() => setDeleteConfirmId(null)}
+      />
     </div>
   );
 }

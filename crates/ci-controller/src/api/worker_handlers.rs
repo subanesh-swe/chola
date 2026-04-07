@@ -43,6 +43,8 @@ pub async fn list(
 ) -> Result<Json<Value>, ApiError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+    // Collect worker data + active groups per worker
+    let jg_registry = state.job_group_registry.read().await;
     let registry = state.worker_registry.read().await;
     let all = registry.all_workers();
     let total = all.len() as i64;
@@ -63,6 +65,25 @@ pub async fn list(
                     "disk_details": hb.disk_details,
                 })
             });
+            // Active groups on this worker
+            let active_groups: Vec<Value> = jg_registry
+                .get_groups_for_worker(&w.info.worker_id)
+                .iter()
+                .map(|g| {
+                    let jobs = jg_registry.get_jobs_for_group(&g.id);
+                    json!({
+                        "group_id": g.id.to_string(),
+                        "state": g.state.to_string(),
+                        "branch": g.branch,
+                        "commit_sha": g.commit_sha,
+                        "allocated_cpu": g.allocated_resources.cpu,
+                        "allocated_memory_mb": g.allocated_resources.memory_mb,
+                        "allocated_disk_mb": g.allocated_resources.disk_mb,
+                        "stages_submitted": jobs.len(),
+                        "created_at": g.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
             json!({
                 "worker_id": w.info.worker_id,
                 "hostname": w.info.hostname,
@@ -83,6 +104,8 @@ pub async fn list(
                 "last_heartbeat": last_hb,
                 "disk_details": w.info.disk_details,
                 "system_info": w.system_info,
+                "active_groups": active_groups,
+                "labels": w.info.labels,
             })
         })
         .collect();
@@ -136,6 +159,7 @@ pub async fn get_one(
         "last_heartbeat": last_hb,
         "disk_details": w.info.disk_details,
         "system_info": w.system_info,
+        "labels": w.info.labels,
     })))
 }
 
@@ -411,6 +435,61 @@ pub async fn regenerate_token(
         "worker_id": worker_id,
         "token": token,
     })))
+}
+
+/// DELETE /api/v1/workers/:id
+pub async fn delete_worker(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_workers() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    // Deactivate all tokens for this worker
+    storage
+        .deactivate_tokens_for_worker(&id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Refresh token hash cache
+    if let Ok(tokens) = storage.list_worker_tokens().await {
+        let hashes: std::collections::HashSet<String> = tokens
+            .into_iter()
+            .filter(|t| t.active)
+            .map(|t| t.token_hash.clone())
+            .collect();
+        if let Ok(mut guard) = state.token_hashes.write() {
+            *guard = hashes;
+        }
+    }
+
+    // Disconnect job stream
+    {
+        let mut senders = state.job_stream_senders.write().await;
+        senders.remove(&id);
+    }
+
+    // Remove from in-memory registry
+    {
+        let mut registry = state.worker_registry.write().await;
+        registry.remove(&id);
+    }
+
+    // Delete from DB
+    let deleted = storage
+        .delete_worker(&id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if !deleted {
+        return Err(ApiError::NotFound(format!("Worker '{}' not found", id)));
+    }
+
+    info!("Worker {} deleted by {}", id, auth_user.username);
+    Ok(Json(json!({ "worker_id": id, "deleted": true })))
 }
 
 /// POST /api/v1/workers/:id/undrain

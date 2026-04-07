@@ -70,7 +70,22 @@ pub async fn run(
                 break;
             }
             Err(e) => {
-                error!("Session error: {}", e);
+                let err_msg = e.to_string();
+                error!("Session error: {}", err_msg);
+
+                // Fatal errors — don't retry, exit immediately
+                let is_fatal = err_msg.contains("AlreadyExists")
+                    || err_msg.contains("already has an active connection")
+                    || err_msg.contains("Unauthenticated")
+                    || err_msg.contains("Registration token required")
+                    || err_msg.contains("Invalid worker token")
+                    || err_msg.contains("Worker not registered")
+                    || err_msg.contains("permission_denied");
+                if is_fatal {
+                    error!("Fatal error — not retrying. Fix the issue and restart.");
+                    return Err(e);
+                }
+
                 warn!("Attempting to reconnect with exponential backoff...");
 
                 let controller_addr = config.controller.address.clone();
