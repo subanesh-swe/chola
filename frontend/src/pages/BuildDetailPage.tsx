@@ -13,7 +13,7 @@ import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
 import { toast } from 'sonner';
-import type { Job, MutationError } from '../types';
+import type { Job, JobGroup, MutationError } from '../types';
 
 interface JobLogPanelProps {
   job: Job;
@@ -103,26 +103,126 @@ function JobLogPanel({ job, onRetry }: JobLogPanelProps) {
   );
 }
 
-function TimeoutBadge({ timeUntilTimeout, state, idleTimeout, stallTimeout }: {
-  timeUntilTimeout: number;
-  state: string;
-  idleTimeout: number;
-  stallTimeout: number;
-}) {
-  if (timeUntilTimeout < 0 || !['reserved', 'running'].includes(state)) return null;
+function fmtSecs(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
 
-  const totalTimeout = state === 'reserved' ? idleTimeout : stallTimeout;
-  const pct = totalTimeout > 0 ? timeUntilTimeout / totalTimeout : 1;
-  const color = pct > 0.6 ? 'emerald' : pct > 0.2 ? 'yellow' : 'red';
+function TimersPanel({ group, jobs }: { group: JobGroup; jobs: Job[] }) {
+  const isTerminal = ['success', 'failed', 'cancelled', 'expired'].includes(group.state);
+  if (isTerminal) return null;
 
-  const mins = Math.floor(timeUntilTimeout / 60);
-  const secs = timeUntilTimeout % 60;
-  const label = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  const hasRunningStage = jobs.some(j => j.state === 'running' || j.state === 'assigned');
+  const runningJob = jobs.find(j => j.state === 'running');
+  const idleTimeout = group.idle_timeout_secs ?? 300;
+  const stallTimeout = group.stall_timeout_secs ?? 1800;
+  const timeUntil = group.time_until_timeout_secs ?? -1;
+
+  // Stage timeout
+  let stageStatus: 'active' | 'paused' | 'na' = 'na';
+  let stageRemaining = '';
+  let stageMax = '';
+  if (runningJob && runningJob.max_duration_secs > 0 && runningJob.started_at) {
+    stageStatus = 'active';
+    const elapsed = Math.floor((Date.now() - new Date(runningJob.started_at).getTime()) / 1000);
+    const remaining = Math.max(0, runningJob.max_duration_secs - elapsed);
+    stageRemaining = fmtSecs(remaining);
+    stageMax = fmtSecs(runningJob.max_duration_secs);
+  } else if (runningJob) {
+    stageStatus = 'active';
+    stageRemaining = 'no limit';
+  }
+
+  // Idle timeout
+  let idleStatus: 'active' | 'paused' | 'na' = 'na';
+  let idleRemaining = '';
+  if (group.state === 'reserved') {
+    idleStatus = 'active';
+    idleRemaining = timeUntil >= 0 ? fmtSecs(timeUntil) : fmtSecs(idleTimeout);
+  }
+
+  // Stall timeout
+  let stallStatus: 'active' | 'paused' | 'na' = 'na';
+  let stallRemaining = '';
+  if (group.state === 'running') {
+    if (hasRunningStage) {
+      stallStatus = 'paused';
+    } else {
+      stallStatus = 'active';
+      stallRemaining = timeUntil >= 0 ? fmtSecs(timeUntil) : fmtSecs(stallTimeout);
+    }
+  }
+
+  const statusIcon = (s: 'active' | 'paused' | 'na') =>
+    s === 'active' ? '⏱' : s === 'paused' ? '⏸' : '○';
+  const statusColor = (s: 'active' | 'paused' | 'na') =>
+    s === 'active' ? 'text-emerald-400' : s === 'paused' ? 'text-slate-500' : 'text-slate-600';
+  const statusLabel = (s: 'active' | 'paused' | 'na', reason: string) =>
+    s === 'active' ? reason : s === 'paused' ? 'Paused (stage running)' : 'N/A';
 
   return (
-    <span className={`text-xs px-2 py-0.5 rounded border bg-${color}-500/10 text-${color}-400 border-${color}-500/30`}>
-      Timeout in {label}
-    </span>
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Timers</h3>
+      <div className="space-y-2">
+        {/* Stage timeout */}
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span>{statusIcon(stageStatus)}</span>
+            <span className="text-slate-300">Stage timeout</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {stageStatus === 'active' ? (
+              <span className="text-slate-200 font-mono">{stageRemaining}{stageMax ? ` / ${stageMax}` : ''}</span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+            <span className={`${statusColor(stageStatus)} w-36 text-right`}>
+              {statusLabel(stageStatus, runningJob ? `Active (${runningJob.stage_name})` : 'Active')}
+            </span>
+          </div>
+        </div>
+
+        {/* Stall timeout */}
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span>{statusIcon(stallStatus)}</span>
+            <span className="text-slate-300">Stall timeout</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {stallStatus === 'active' ? (
+              <span className="text-slate-200 font-mono">{stallRemaining} / {fmtSecs(stallTimeout)}</span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+            <span className={`${statusColor(stallStatus)} w-36 text-right`}>
+              {statusLabel(stallStatus, 'Waiting for next stage')}
+            </span>
+          </div>
+        </div>
+
+        {/* Idle timeout */}
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span>{statusIcon(idleStatus)}</span>
+            <span className="text-slate-300">Idle timeout</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {idleStatus === 'active' ? (
+              <span className="text-slate-200 font-mono">{idleRemaining} / {fmtSecs(idleTimeout)}</span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+            <span className={`${statusColor(idleStatus)} w-36 text-right`}>
+              {statusLabel(idleStatus, 'Waiting for first stage')}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -218,14 +318,6 @@ export default function BuildDetailPage() {
         {group.status_reason && (
           <p className="text-xs text-slate-400 mt-1">{group.status_reason}</p>
         )}
-        {group.time_until_timeout_secs != null && group.idle_timeout_secs != null && group.stall_timeout_secs != null && (
-          <TimeoutBadge
-            timeUntilTimeout={group.time_until_timeout_secs}
-            state={group.state}
-            idleTimeout={group.idle_timeout_secs}
-            stallTimeout={group.stall_timeout_secs}
-          />
-        )}
         <div className="ml-auto flex items-center gap-2">
           {canCancelJobs && group.state === 'failed' && (
             <button
@@ -279,6 +371,9 @@ export default function BuildDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Timers panel */}
+      <TimersPanel group={group} jobs={jobs} />
 
       {/* Stage pipeline timeline */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl">
