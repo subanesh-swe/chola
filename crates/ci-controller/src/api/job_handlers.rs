@@ -55,6 +55,7 @@ pub async fn list_by_group(
                 "worker_id": j.worker_id,
                 "state": j.state,
                 "exit_code": j.exit_code,
+                "status_reason": j.status_reason,
                 "created_at": j.created_at.to_rfc3339(),
                 "updated_at": j.updated_at.to_rfc3339(),
             })
@@ -91,6 +92,7 @@ pub async fn get_one(
         "worker_id": job.worker_id,
         "state": job.state,
         "exit_code": job.exit_code,
+        "status_reason": job.status_reason,
         "created_at": job.created_at.to_rfc3339(),
         "updated_at": job.updated_at.to_rfc3339(),
     })))
@@ -114,12 +116,16 @@ pub async fn cancel(
     };
 
     // Also update in DB
+    let cancel_reason = format!("Cancelled via API by {}", auth_user.username);
     if let Some(storage) = &state.storage {
         if let Err(e) = storage
             .update_job_state(id, "cancelled", None, None, None, None)
             .await
         {
             warn!("Failed to persist cancel state for job {id}: {e}");
+        }
+        if let Err(e) = storage.update_job_reason(id, &cancel_reason).await {
+            warn!("Failed to persist cancel reason for job {id}: {e}");
         }
     }
 
