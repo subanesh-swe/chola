@@ -1244,35 +1244,66 @@ impl Orchestrator for OrchestratorService {
         if !req.worker_token.is_empty() {
             let hash = sha256_hex(&req.worker_token);
             if let Some(st) = storage {
-                match st.get_worker_by_token_hash(&hash).await {
-                    Ok(Some(row)) => {
-                        if !row.approved {
-                            return Err(Status::permission_denied("Worker is not approved"));
-                        }
-                        // Cache worker token hash so the interceptor accepts it
-                        if let Ok(mut guard) = self.state.token_hashes.write() {
-                            guard.insert(hash.clone());
-                        }
-                        let worker_id = row.worker_id.clone();
-                        let mut registry = self.state.worker_registry.write().await;
-                        registry.register_with_id(&worker_id, &req);
-                        restore_allocations(&self.state, &mut registry, &worker_id).await;
-                        drop(registry);
-                        return Ok(Response::new(RegisterResponse {
-                            accepted: true,
-                            message: "Worker authenticated".to_string(),
-                            heartbeat_interval_secs: hb_interval,
-                            worker_token: String::new(),
-                            assigned_worker_id: worker_id,
-                        }));
-                    }
-                    Ok(None) => {
-                        return Err(Status::unauthenticated("Invalid worker token"));
-                    }
+                // Resolve worker_id from the token table (authoritative binding).
+                // Falls back to req.worker_id only if no binding exists (legacy token).
+                let bound_worker_id = match st.get_token_worker_id(&hash).await {
+                    Ok(id) => id,
                     Err(e) => {
                         return Err(Status::internal(format!("Token lookup failed: {}", e)));
                     }
+                };
+
+                let worker_id = match bound_worker_id {
+                    Some(id) => id,
+                    None => {
+                        // Legacy path: token exists in hash set but has no binding.
+                        // Validate via workers table to ensure token is known.
+                        match st.get_worker_by_token_hash(&hash).await {
+                            Ok(Some(row)) => row.worker_id.clone(),
+                            Ok(None) => {
+                                return Err(Status::unauthenticated("Invalid worker token"));
+                            }
+                            Err(e) => {
+                                return Err(Status::internal(format!(
+                                    "Worker lookup failed: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+                };
+
+                // Check worker approval status.
+                match st.get_worker(&worker_id).await {
+                    Ok(Some(row)) if !row.approved => {
+                        return Err(Status::permission_denied("Worker is not approved"));
+                    }
+                    Err(e) => {
+                        return Err(Status::internal(format!(
+                            "Worker approval check failed: {}",
+                            e
+                        )));
+                    }
+                    _ => {}
                 }
+
+                // Cache token hash so the interceptor accepts subsequent RPCs.
+                if let Ok(mut guard) = self.state.token_hashes.write() {
+                    guard.insert(hash.clone());
+                }
+
+                let mut registry = self.state.worker_registry.write().await;
+                registry.register_with_id(&worker_id, &req);
+                restore_allocations(&self.state, &mut registry, &worker_id).await;
+                drop(registry);
+
+                return Ok(Response::new(RegisterResponse {
+                    accepted: true,
+                    message: "Worker authenticated".to_string(),
+                    heartbeat_interval_secs: hb_interval,
+                    worker_token: String::new(),
+                    assigned_worker_id: worker_id,
+                }));
             }
         }
 
@@ -1418,9 +1449,22 @@ impl Orchestrator for OrchestratorService {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         let state = self.state.clone();
 
-        // Register this worker's channel for job assignments (including cancel directives)
+        // Register this worker's channel for job assignments (including cancel directives).
+        // Reject if an active stream already exists to prevent hijacking.
         {
             let mut senders = self.state.job_stream_senders.write().await;
+            if let Some(existing) = senders.get(&worker_id) {
+                if !existing.is_closed() {
+                    warn!(
+                        "Worker {} already has active job stream, rejecting duplicate",
+                        worker_id
+                    );
+                    return Err(Status::already_exists(format!(
+                        "Worker {} already has an active connection",
+                        worker_id
+                    )));
+                }
+            }
             senders.insert(worker_id.clone(), tx.clone());
             info!("Registered job stream channel for worker {}", worker_id);
         }
@@ -1736,12 +1780,48 @@ impl Orchestrator for OrchestratorService {
         &self,
         request: Request<ReconnectRequest>,
     ) -> Result<Response<ReconnectResponse>, Status> {
+        // Extract bearer token from metadata before consuming the request.
+        let bearer_token: Option<String> = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|s| s.to_owned());
+
         let req = request.into_inner();
         warn!(
             "Worker {} reconnecting with {} running jobs",
             req.worker_id,
             req.running_jobs.len()
         );
+
+        // Validate that the bearer token is bound to the claimed worker_id.
+        if let Some(token) = &bearer_token {
+            if token.starts_with("chola_wkr_") || token.starts_with("chola_svc_") {
+                let hash = sha256_hex(token);
+                if let Some(st) = self.state.storage.as_ref() {
+                    match st.get_token_worker_id(&hash).await {
+                        Ok(Some(bound_id)) if bound_id != req.worker_id => {
+                            warn!(
+                                "Reconnect identity mismatch: token bound to '{}', claimed '{}'",
+                                bound_id, req.worker_id
+                            );
+                            return Err(Status::permission_denied(format!(
+                                "Token is bound to worker '{}', not '{}'",
+                                bound_id, req.worker_id
+                            )));
+                        }
+                        Err(e) => {
+                            return Err(Status::internal(format!(
+                                "Token identity check failed: {}",
+                                e
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         // Re-register the worker (update heartbeat and mark as active)
         {
@@ -2174,6 +2254,10 @@ impl Orchestrator for OrchestratorService {
                 {
                     warn!("Failed to persist cancel for group {group_id}: {e}");
                 }
+                // Persist job cancellations so they survive restarts
+                if let Err(e) = storage.cancel_jobs_for_group(group_id).await {
+                    warn!("Failed to cancel orphaned jobs in DB for group {group_id}: {e}");
+                }
             }
 
             return Ok(Response::new(CancelJobResponse {
@@ -2389,6 +2473,12 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                     .await
                                 {
                                     error!("Failed to mark group {gid} as failed after worker death: {e}");
+                                }
+                                // Persist job failures so they survive restarts
+                                if let Err(e) = storage.cancel_jobs_for_group(gid).await {
+                                    warn!(
+                                        "Failed to cancel orphaned jobs in DB for group {gid}: {e}"
+                                    );
                                 }
                             }
                         }

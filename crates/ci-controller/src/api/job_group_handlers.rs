@@ -298,16 +298,36 @@ pub async fn cancel(
                 ));
             }
         }
-        let info = jg
-            .get(&id)
-            .map(|g| (g.reserved_worker_id.clone(), g.allocated_resources));
+        let info = jg.get(&id).map(|g| {
+            (
+                g.reserved_worker_id.clone(),
+                g.allocated_resources,
+                g.repo_id,
+                g.branch.clone(),
+                g.commit_sha.clone(),
+            )
+        });
         jg.update_state(&id, JobGroupState::Cancelled);
         jg.fail_group_jobs(&id, "Cancelled via API");
         info
     };
 
+    // Dispatch global post-script before releasing worker resources
+    if let Some((Some(ref wid), _, repo_id, ref branch, ref commit_sha)) = release_info {
+        crate::grpc_server::dispatch_global_post_script(
+            &state,
+            &id,
+            wid,
+            repo_id,
+            branch.clone(),
+            commit_sha.clone(),
+            JobGroupState::Cancelled,
+        )
+        .await;
+    }
+
     // Release allocated resources on the worker
-    if let Some((Some(wid), alloc)) = &release_info {
+    if let Some((Some(ref wid), alloc, _, _, _)) = release_info {
         if alloc.cpu > 0 || alloc.memory_mb > 0 || alloc.disk_mb > 0 {
             let mut wr = state.worker_registry.write().await;
             if let Some(w) = wr.get_mut(wid) {
@@ -317,7 +337,7 @@ pub async fn cancel(
     }
 
     // Release Redis reservation so the worker can accept new groups
-    if let Some((Some(wid), _)) = &release_info {
+    if let Some((Some(ref wid), _, _, _, _)) = release_info {
         if let Some(redis) = &state.redis_store {
             if let Err(e) = crate::reservation::ReservationManager::release(redis, wid, &id).await {
                 warn!("Failed to release Redis reservation for worker {wid}: {e}");
