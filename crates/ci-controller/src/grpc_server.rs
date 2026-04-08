@@ -612,6 +612,7 @@ pub async fn do_reserve_worker(
                             .update_job_group_state(
                                 *gid,
                                 ci_core::models::job_group::JobGroupState::Cancelled,
+                                None,
                             )
                             .await
                         {
@@ -1096,6 +1097,7 @@ async fn do_submit_stage(
             started_at: None,
             completed_at: None,
             retry_count: 0,
+            status_reason: None,
             created_at: now,
             updated_at: now,
         };
@@ -1418,8 +1420,11 @@ impl Orchestrator for OrchestratorService {
 
         tokio::spawn(async move {
             while let Ok(Some(msg)) = stream.message().await {
-                let mut registry = state.worker_registry.write().await;
-                registry.update_heartbeat(&msg);
+                let worker_id = msg.worker_id.clone();
+                {
+                    let mut registry = state.worker_registry.write().await;
+                    registry.update_heartbeat(&msg);
+                }
 
                 let ack = HeartbeatAck {
                     ok: true,
@@ -1560,6 +1565,25 @@ impl Orchestrator for OrchestratorService {
             {
                 warn!("Failed to update job state in DB: {}", e);
             }
+
+            // Persist job-level status_reason for terminal states
+            let job_reason: String = match reported_state {
+                x if x == ci_core::proto::orchestrator::JobState::Success as i32 => {
+                    "Completed successfully (exit code 0)".to_string()
+                }
+                x if x == ci_core::proto::orchestrator::JobState::Failed as i32 => {
+                    format!("Command failed (exit code {})", req.exit_code)
+                }
+                x if x == ci_core::proto::orchestrator::JobState::Cancelled as i32 => {
+                    "Cancelled".to_string()
+                }
+                _ => String::new(),
+            };
+            if !job_reason.is_empty() {
+                if let Err(e) = storage.update_job_reason(job_uuid, &job_reason).await {
+                    warn!("Failed to update job reason in DB: {}", e);
+                }
+            }
         }
 
         // Record resource usage for terminal states
@@ -1691,7 +1715,10 @@ impl Orchestrator for OrchestratorService {
                     }
 
                     if let Some(storage) = &self.state.storage {
-                        if let Err(e) = storage.update_job_group_state(group_id, new_state).await {
+                        if let Err(e) = storage
+                            .update_job_group_state(group_id, new_state, None)
+                            .await
+                        {
                             error!("Failed to persist group {} state to DB: {e}", group_id);
                         }
 
@@ -2010,6 +2037,7 @@ impl Orchestrator for OrchestratorService {
                 pr_number: None,
                 idempotency_key: None,
                 allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
+                status_reason: None,
                 created_at: now,
                 updated_at: now,
                 completed_at: None,
@@ -2039,6 +2067,7 @@ impl Orchestrator for OrchestratorService {
                 started_at: None,
                 completed_at: None,
                 retry_count: 0,
+                status_reason: None,
                 created_at: now,
                 updated_at: now,
             };
@@ -2207,7 +2236,11 @@ impl Orchestrator for OrchestratorService {
                     &group_id,
                     ci_core::models::job_group::JobGroupState::Cancelled,
                 );
-                jg.fail_group_jobs(&group_id, &req.reason);
+                let grpc_reason = format!("Cancelled via gRPC: {}", req.reason);
+                if let Some(g) = jg.get_mut(&group_id) {
+                    g.status_reason = Some(grpc_reason.clone());
+                }
+                jg.fail_group_jobs(&group_id, &grpc_reason);
                 info
             };
 
@@ -2249,6 +2282,7 @@ impl Orchestrator for OrchestratorService {
                     .update_job_group_state(
                         group_id,
                         ci_core::models::job_group::JobGroupState::Cancelled,
+                        None,
                     )
                     .await
                 {
@@ -2409,13 +2443,16 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
     // ── Heartbeat timeout detection background task ───────────────────────────
     {
         let state_for_hb = state.clone();
-        let hb_timeout = state.config.workers.heartbeat_timeout_secs as u64;
+        let default_hb_timeout = state.config.workers.heartbeat_timeout_secs as u64;
         tokio::spawn(async move {
-            let check_interval = std::cmp::max(hb_timeout / 2, 1);
+            let check_interval = std::cmp::max(default_hb_timeout / 2, 1);
             let mut interval =
                 tokio::time::interval(tokio::time::Duration::from_secs(check_interval));
             loop {
                 interval.tick().await;
+                let hb_timeout = state_for_hb
+                    .resolve_setting_u64("workers.heartbeat_timeout_secs", default_hb_timeout)
+                    .await;
                 let timed_out = {
                     let mut registry = state_for_hb.worker_registry.write().await;
                     registry.check_heartbeat_timeouts(hb_timeout)
@@ -2469,6 +2506,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                     .update_job_group_state(
                                         gid,
                                         ci_core::models::job_group::JobGroupState::Failed,
+                                        None,
                                     )
                                     .await
                                 {
