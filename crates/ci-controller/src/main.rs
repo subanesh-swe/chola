@@ -276,15 +276,22 @@ async fn main() -> anyhow::Result<()> {
 
                 for (gid, _) in &stale_ids {
                     jgr.update_state(gid, ci_core::models::job_group::JobGroupState::Expired);
+                    if let Some(g) = jgr.get_mut(gid) {
+                        g.status_reason = Some(
+                            "Reservation expired on startup (stale from previous run)".to_string(),
+                        );
+                    }
                 }
             }
 
             if !stale_ids.is_empty() {
+                let startup_reason = "Reservation expired on startup (stale from previous run)";
                 for (gid, worker_id) in &stale_ids {
                     if let Err(e) = storage
                         .update_job_group_state(
                             *gid,
                             ci_core::models::job_group::JobGroupState::Expired,
+                            Some(startup_reason),
                         )
                         .await
                     {
@@ -481,19 +488,34 @@ async fn main() -> anyhow::Result<()> {
     // Reservation timeout reaper
     {
         let reaper_state = state.clone();
-        let idle_timeout = config.workers.idle_timeout_secs;
-        let stall_timeout = config.workers.stall_timeout_secs;
+        let default_idle = config.workers.idle_timeout_secs;
+        let default_stall = config.workers.stall_timeout_secs;
         let cancel_token_clone = cancel_token.clone();
         tokio::spawn(async move {
             info!(
-                "Reservation reaper started (idle={}s, stall={}s)",
-                idle_timeout, stall_timeout
+                "Reservation reaper started (default idle={}s, stall={}s)",
+                default_idle, default_stall
             );
             loop {
                 tokio::select! {
                     _ = cancel_token_clone.cancelled() => break,
                     _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
                 }
+                // Read DB overrides each cycle (settings page can change these at runtime)
+                let (idle_timeout, stall_timeout) = if let Some(storage) = &reaper_state.storage {
+                    let settings = storage.get_all_config_settings().await.unwrap_or_default();
+                    let idle = settings
+                        .get("workers.idle_timeout_secs")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(default_idle);
+                    let stall = settings
+                        .get("workers.stall_timeout_secs")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(default_stall);
+                    (idle, stall)
+                } else {
+                    (default_idle, default_stall)
+                };
                 reap_stale_reservations(&reaper_state, idle_timeout, stall_timeout).await;
             }
             info!("Reservation reaper stopped");
@@ -549,6 +571,7 @@ fn db_job_to_job(db: &storage::DbJob) -> Job {
     job.log_path = db.log_path.clone();
     job.started_at = db.started_at;
     job.completed_at = db.completed_at;
+    job.status_reason = db.status_reason.clone();
     job.created_at = db.created_at;
     job.updated_at = db.updated_at;
     job
@@ -596,7 +619,8 @@ async fn reap_stale_reservations(
 ) {
     let now = chrono::Utc::now();
 
-    // Collect stale groups under read lock first
+    // Collect stale groups under read lock first.
+    // Tuple: (group_id, worker_id, alloc, repo_id, branch, commit_sha, was_reserved)
     let stale: Vec<(
         uuid::Uuid,
         Option<String>,
@@ -604,6 +628,7 @@ async fn reap_stale_reservations(
         Option<uuid::Uuid>,
         Option<String>,
         Option<String>,
+        bool,
     )> = {
         let jg = state.job_group_registry.read().await;
         jg.active_groups()
@@ -612,11 +637,27 @@ async fn reap_stale_reservations(
                 let idle_secs = (now - g.last_activity_at).num_seconds().max(0) as u64;
                 match g.state {
                     ci_core::models::job_group::JobGroupState::Reserved => idle_secs > idle_timeout,
-                    ci_core::models::job_group::JobGroupState::Running => idle_secs > stall_timeout,
+                    ci_core::models::job_group::JobGroupState::Running => {
+                        // Don't timeout if any job is actively running —
+                        // the stage has its own max_duration_secs timeout
+                        let has_running_jobs = jg.get_jobs_for_group(&g.id).iter().any(|j| {
+                            matches!(
+                                j.state,
+                                ci_core::models::job::JobState::Running
+                                    | ci_core::models::job::JobState::Assigned
+                            )
+                        });
+                        if has_running_jobs {
+                            false // skip — stage is running, let stage timeout handle it
+                        } else {
+                            idle_secs > stall_timeout // no jobs running, apply stall timeout
+                        }
+                    }
                     _ => false,
                 }
             })
             .map(|g| {
+                let was_reserved = g.state == ci_core::models::job_group::JobGroupState::Reserved;
                 (
                     g.id,
                     g.reserved_worker_id.clone(),
@@ -624,6 +665,7 @@ async fn reap_stale_reservations(
                     g.repo_id,
                     g.branch.clone(),
                     g.commit_sha.clone(),
+                    was_reserved,
                 )
             })
             .collect()
@@ -633,16 +675,24 @@ async fn reap_stale_reservations(
         return;
     }
 
-    for (group_id, worker_id, alloc, repo_id, branch, commit_sha) in &stale {
+    for (group_id, worker_id, alloc, repo_id, branch, commit_sha, was_reserved) in &stale {
+        let reap_reason = if *was_reserved {
+            format!("Reservation expired: no stage submitted within {idle_timeout}s")
+        } else {
+            format!("Reservation expired: no activity for {stall_timeout}s after last stage")
+        };
         warn!(
-            "Reaping stale reservation: group={} worker={:?} (inactivity timeout)",
-            group_id, worker_id
+            "Reaping stale reservation: group={} worker={:?} reason={}",
+            group_id, worker_id, reap_reason
         );
 
         {
             let mut jg = state.job_group_registry.write().await;
             jg.update_state(group_id, ci_core::models::job_group::JobGroupState::Expired);
-            jg.fail_group_jobs(group_id, "Reservation timed out (inactivity)");
+            if let Some(g) = jg.get_mut(group_id) {
+                g.status_reason = Some(reap_reason.clone());
+            }
+            jg.fail_group_jobs(group_id, &reap_reason);
         }
 
         // Dispatch global post-script (best-effort; worker may be disconnected)
@@ -682,6 +732,7 @@ async fn reap_stale_reservations(
                 .update_job_group_state(
                     *group_id,
                     ci_core::models::job_group::JobGroupState::Expired,
+                    Some(&reap_reason),
                 )
                 .await
             {

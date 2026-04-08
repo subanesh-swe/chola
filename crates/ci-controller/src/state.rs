@@ -44,6 +44,37 @@ pub struct ControllerState {
     pub token_hashes: Arc<std::sync::RwLock<HashSet<String>>>,
 }
 
+impl ControllerState {
+    /// Resolve a config setting: DB override wins over config file value.
+    /// Returns the DB value if set, otherwise the config file default.
+    pub async fn resolve_setting(&self, key: &str, config_default: &str) -> String {
+        if let Some(storage) = &self.storage {
+            if let Ok(settings) = storage.get_all_config_settings().await {
+                if let Some(val) = settings.get(key) {
+                    return val.clone();
+                }
+            }
+        }
+        config_default.to_string()
+    }
+
+    /// Resolve a numeric setting with DB override.
+    pub async fn resolve_setting_u64(&self, key: &str, config_default: u64) -> u64 {
+        self.resolve_setting(key, &config_default.to_string())
+            .await
+            .parse()
+            .unwrap_or(config_default)
+    }
+
+    /// Resolve a boolean setting with DB override.
+    pub async fn resolve_setting_bool(&self, key: &str, config_default: bool) -> bool {
+        self.resolve_setting(key, &config_default.to_string())
+            .await
+            .parse()
+            .unwrap_or(config_default)
+    }
+}
+
 /// Allow the axum auth middleware extractor to pull `AuthConfig` from `Arc<ControllerState>`.
 impl AsRef<AuthConfig> for Arc<ControllerState> {
     fn as_ref(&self) -> &AuthConfig {

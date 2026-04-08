@@ -43,16 +43,19 @@ pub async fn list(
 ) -> Result<Json<Value>, ApiError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
-    // Collect worker data + active groups per worker
+
+    // Merge: in-memory (live) + DB (registered but maybe offline)
     let jg_registry = state.job_group_registry.read().await;
     let registry = state.worker_registry.read().await;
-    let all = registry.all_workers();
-    let total = all.len() as i64;
+    let live_workers = registry.all_workers();
+    let live_ids: std::collections::HashSet<String> = live_workers
+        .iter()
+        .map(|w| w.info.worker_id.clone())
+        .collect();
 
-    let data: Vec<Value> = all
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
+    // Build JSON for live workers (with heartbeat, resources, etc.)
+    let mut data: Vec<Value> = live_workers
+        .iter()
         .map(|w| {
             let last_hb = w.last_heartbeat.as_ref().map(|hb| {
                 json!({
@@ -65,7 +68,6 @@ pub async fn list(
                     "disk_details": hb.disk_details,
                 })
             });
-            // Active groups on this worker
             let active_groups: Vec<Value> = jg_registry
                 .get_groups_for_worker(&w.info.worker_id)
                 .iter()
@@ -109,9 +111,52 @@ pub async fn list(
             })
         })
         .collect();
+    drop(registry);
+    drop(jg_registry);
+
+    // Add registered-but-offline workers from DB
+    if let Some(storage) = &state.storage {
+        if let Ok(db_workers) = storage.list_workers().await {
+            for row in db_workers {
+                if !live_ids.contains(&row.worker_id) {
+                    data.push(json!({
+                        "worker_id": row.worker_id,
+                        "hostname": row.hostname.unwrap_or_default(),
+                        "status": "Offline",
+                        "total_cpu": row.total_cpu.unwrap_or(0),
+                        "allocated_cpu": 0,
+                        "available_cpu": 0,
+                        "total_memory_mb": row.total_memory_mb.unwrap_or(0),
+                        "allocated_memory_mb": 0,
+                        "available_memory_mb": 0,
+                        "total_disk_mb": row.total_disk_mb.unwrap_or(0),
+                        "allocated_disk_mb": 0,
+                        "available_disk_mb": 0,
+                        "disk_type": row.disk_type.as_deref().unwrap_or("unknown"),
+                        "docker_enabled": row.docker_enabled,
+                        "supported_job_types": row.supported_job_types,
+                        "registered_at": row.registered_at.to_rfc3339(),
+                        "last_heartbeat": row.last_heartbeat_at.map(|t| json!({ "timestamp": t.to_rfc3339() })),
+                        "disk_details": [],
+                        "system_info": row.system_info,
+                        "active_groups": [],
+                        "labels": row.labels,
+                        "description": row.description,
+                    }));
+                }
+            }
+        }
+    }
+
+    let total = data.len() as i64;
+    let paged: Vec<Value> = data
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
 
     Ok(Json(json!({
-        "data": data,
+        "data": paged,
         "pagination": { "total": total, "limit": limit, "offset": offset },
     })))
 }
@@ -316,6 +361,14 @@ pub async fn register_worker(
     }
 
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    // Check if worker already registered
+    if let Ok(Some(_)) = storage.get_worker(&body.worker_id).await {
+        return Err(ApiError::Conflict(format!(
+            "Worker '{}' already registered. Use Regenerate Token to issue a new token.",
+            body.worker_id
+        )));
+    }
 
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);

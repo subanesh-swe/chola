@@ -197,9 +197,23 @@ pub async fn get_one(
         json!({ "cpu": 0, "memory_mb": 0, "disk_mb": 0 })
     };
 
+    // Look up max_duration_secs per stage from stage_configs
+    let stage_timeouts: std::collections::HashMap<String, i32> = if let Some(rid) = group.repo_id {
+        storage
+            .get_stage_configs_for_repo(rid)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|sc| (sc.stage_name, sc.max_duration_secs))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let job_list: Vec<Value> = jobs
         .iter()
         .map(|j| {
+            let max_dur = stage_timeouts.get(&j.stage_name).copied().unwrap_or(0);
             json!({
                 "id": j.id.to_string(),
                 "stage_name": j.stage_name,
@@ -209,6 +223,7 @@ pub async fn get_one(
                 "exit_code": j.exit_code,
                 "pre_exit_code": j.pre_exit_code,
                 "post_exit_code": j.post_exit_code,
+                "max_duration_secs": max_dur,
                 "started_at": j.started_at.map(|t| t.to_rfc3339()),
                 "completed_at": j.completed_at.map(|t| t.to_rfc3339()),
                 "created_at": j.created_at.to_rfc3339(),
@@ -217,7 +232,20 @@ pub async fn get_one(
         })
         .collect();
 
-    // Compute timeout info from in-memory state
+    // Compute timeout info from in-memory state (respect DB overrides)
+    let idle_cfg = state
+        .resolve_setting_u64(
+            "workers.idle_timeout_secs",
+            state.config.workers.idle_timeout_secs,
+        )
+        .await;
+    let stall_cfg = state
+        .resolve_setting_u64(
+            "workers.stall_timeout_secs",
+            state.config.workers.stall_timeout_secs,
+        )
+        .await;
+
     let (last_activity_at, time_until_timeout) = {
         let jg = state.job_group_registry.read().await;
         if let Some(g) = jg.get(&id) {
@@ -225,11 +253,21 @@ pub async fn get_one(
                 .num_seconds()
                 .max(0) as u64;
             let timeout = match g.state {
-                ci_core::models::job_group::JobGroupState::Reserved => {
-                    state.config.workers.idle_timeout_secs
-                }
+                ci_core::models::job_group::JobGroupState::Reserved => idle_cfg,
                 ci_core::models::job_group::JobGroupState::Running => {
-                    state.config.workers.stall_timeout_secs
+                    // No group timeout while a stage is actively running
+                    let has_running = jg.get_jobs_for_group(&id).iter().any(|j| {
+                        matches!(
+                            j.state,
+                            ci_core::models::job::JobState::Running
+                                | ci_core::models::job::JobState::Assigned
+                        )
+                    });
+                    if has_running {
+                        0
+                    } else {
+                        stall_cfg
+                    }
                 }
                 _ => 0,
             };
@@ -273,8 +311,8 @@ pub async fn get_one(
         "last_activity_at": last_activity_at,
         "time_until_timeout_secs": time_until_timeout,
         "reservation_expires_in_secs": reservation_ttl,
-        "idle_timeout_secs": state.config.workers.idle_timeout_secs,
-        "stall_timeout_secs": state.config.workers.stall_timeout_secs,
+        "idle_timeout_secs": idle_cfg,
+        "stall_timeout_secs": stall_cfg,
     })))
 }
 
@@ -348,7 +386,7 @@ pub async fn cancel(
     // Update in DB
     if let Some(storage) = &state.storage {
         if let Err(e) = storage
-            .update_job_group_state(id, JobGroupState::Cancelled)
+            .update_job_group_state(id, JobGroupState::Cancelled, None)
             .await
         {
             warn!("Failed to persist cancel state for group {id}: {e}");
@@ -550,9 +588,19 @@ pub async fn stages(
             None
         };
 
-    // Compute time until inactivity timeout using last_activity_at
-    let idle_cfg = state.config.workers.idle_timeout_secs;
-    let stall_cfg = state.config.workers.stall_timeout_secs;
+    // Compute time until inactivity timeout using last_activity_at (respect DB overrides)
+    let idle_cfg = state
+        .resolve_setting_u64(
+            "workers.idle_timeout_secs",
+            state.config.workers.idle_timeout_secs,
+        )
+        .await;
+    let stall_cfg = state
+        .resolve_setting_u64(
+            "workers.stall_timeout_secs",
+            state.config.workers.stall_timeout_secs,
+        )
+        .await;
     let time_until_timeout = {
         let jg = state.job_group_registry.read().await;
         jg.get(&id)
@@ -562,7 +610,20 @@ pub async fn stages(
                     .max(0) as u64;
                 let timeout: u64 = match g.state {
                     ci_core::models::job_group::JobGroupState::Reserved => idle_cfg,
-                    ci_core::models::job_group::JobGroupState::Running => stall_cfg,
+                    ci_core::models::job_group::JobGroupState::Running => {
+                        let has_running = jg.get_jobs_for_group(&id).iter().any(|j| {
+                            matches!(
+                                j.state,
+                                ci_core::models::job::JobState::Running
+                                    | ci_core::models::job::JobState::Assigned
+                            )
+                        });
+                        if has_running {
+                            0
+                        } else {
+                            stall_cfg
+                        }
+                    }
                     _ => 0,
                 };
                 if timeout > 0 {
