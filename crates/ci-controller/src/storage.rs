@@ -38,11 +38,11 @@ const JOB_GROUP_COLUMNS: &str =
     "id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
      state, priority, pr_number, idempotency_key, \
      allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
-     created_at, updated_at, completed_at";
+     status_reason, created_at, updated_at, completed_at";
 
 const JOB_COLUMNS: &str = "id, job_group_id, stage_config_id, stage_name, command, pre_script, \
      post_script, worker_id, state, exit_code, pre_exit_code, post_exit_code, \
-     log_path, started_at, completed_at, retry_count, created_at, updated_at";
+     log_path, started_at, completed_at, retry_count, status_reason, created_at, updated_at";
 
 const WORKER_COLUMNS: &str =
     "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
@@ -148,6 +148,7 @@ fn map_job_group(r: sqlx::postgres::PgRow) -> JobGroup {
             memory_mb: r.try_get::<i64, _>("allocated_memory_mb").unwrap_or(0) as u64,
             disk_mb: r.try_get::<i64, _>("allocated_disk_mb").unwrap_or(0) as u64,
         },
+        status_reason: r.try_get("status_reason").ok().flatten(),
         created_at: r.get("created_at"),
         updated_at,
         completed_at: r.get("completed_at"),
@@ -199,6 +200,7 @@ impl From<sqlx::postgres::PgRow> for DbJob {
             started_at: r.get("started_at"),
             completed_at: r.get("completed_at"),
             retry_count: r.get("retry_count"),
+            status_reason: r.try_get("status_reason").ok().flatten(),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         }
@@ -315,6 +317,7 @@ pub struct DbJob {
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub retry_count: i32,
+    pub status_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -716,6 +719,11 @@ impl Storage {
                 "token_worker_binding",
                 include_str!("../../../migrations/029_token_worker_binding.sql"),
             ),
+            (
+                30,
+                "status_reason",
+                include_str!("../../../migrations/030_status_reason.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
@@ -894,8 +902,8 @@ impl Storage {
             "INSERT INTO job_groups (id, repo_id, branch, commit_sha, trigger_source, \
              reserved_worker_id, state, priority, pr_number, idempotency_key, \
              allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
-             created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+             status_reason, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              RETURNING {JOB_GROUP_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -912,6 +920,7 @@ impl Storage {
             .bind(group.allocated_resources.cpu as i32)
             .bind(group.allocated_resources.memory_mb as i64)
             .bind(group.allocated_resources.disk_mb as i64)
+            .bind(&group.status_reason)
             .bind(group.created_at)
             .bind(group.updated_at)
             .fetch_one(&self.pool)
@@ -924,13 +933,15 @@ impl Storage {
         &self,
         id: Uuid,
         state: JobGroupState,
+        reason: Option<&str>,
     ) -> anyhow::Result<Option<JobGroup>> {
         let now = Utc::now();
         let completed_at = if state.is_terminal() { Some(now) } else { None };
 
         let q = format!(
             "UPDATE job_groups \
-             SET state = $2, updated_at = $3, completed_at = COALESCE($4, completed_at) \
+             SET state = $2, updated_at = $3, completed_at = COALESCE($4, completed_at), \
+                 status_reason = COALESCE($5, status_reason) \
              WHERE id = $1 \
              RETURNING {JOB_GROUP_COLUMNS}"
         );
@@ -939,10 +950,29 @@ impl Storage {
             .bind(state.to_string())
             .bind(now)
             .bind(completed_at)
+            .bind(reason)
             .fetch_optional(&self.pool)
             .await?;
 
         Ok(row.map(map_job_group))
+    }
+
+    pub async fn update_job_group_reason(&self, id: Uuid, reason: &str) -> anyhow::Result<()> {
+        sqlx::query("UPDATE job_groups SET status_reason = $2, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .bind(reason)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_job_reason(&self, id: Uuid, reason: &str) -> anyhow::Result<()> {
+        sqlx::query("UPDATE jobs SET status_reason = $2, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .bind(reason)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn get_job_group(&self, id: Uuid) -> anyhow::Result<Option<JobGroup>> {
@@ -972,8 +1002,8 @@ impl Storage {
     pub async fn create_job(&self, job: &DbJob) -> anyhow::Result<DbJob> {
         let q = format!(
             "INSERT INTO jobs (id, job_group_id, stage_config_id, stage_name, command, \
-             pre_script, post_script, worker_id, state, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             pre_script, post_script, worker_id, state, status_reason, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at \
              RETURNING {JOB_COLUMNS}"
         );
@@ -987,6 +1017,7 @@ impl Storage {
             .bind(&job.post_script)
             .bind(&job.worker_id)
             .bind(&job.state)
+            .bind(&job.status_reason)
             .bind(job.created_at)
             .bind(job.updated_at)
             .fetch_one(&self.pool)

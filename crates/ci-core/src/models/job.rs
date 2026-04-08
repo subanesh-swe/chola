@@ -94,6 +94,8 @@ pub struct Job {
     pub submitter_connection_id: Option<String>,
     /// Cancel reason if the job was cancelled
     pub cancel_reason: Option<String>,
+    /// Human-readable reason for the current status
+    pub status_reason: Option<String>,
     /// Job group this job belongs to (None for legacy single jobs)
     pub job_group_id: Option<uuid::Uuid>,
     /// Stage config ID from the database
@@ -151,6 +153,7 @@ impl Job {
             updated_at: now,
             submitter_connection_id: None,
             cancel_reason: None,
+            status_reason: None,
             job_group_id: None,
             stage_config_id: None,
             stage_name: None,

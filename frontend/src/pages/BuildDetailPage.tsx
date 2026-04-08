@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getBuild, cancelBuild, retryBuild, retryJob } from '../api/builds';
@@ -18,6 +18,43 @@ import type { Job, MutationError } from '../types';
 interface JobLogPanelProps {
   job: Job;
   onRetry?: () => void;
+}
+
+function StageTimer({ job }: { job: Job }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (job.state !== 'running' || !job.started_at) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [job.state, job.started_at]);
+
+  if (!job.started_at) return null;
+
+  const startMs = new Date(job.started_at).getTime();
+  const endMs = job.completed_at ? new Date(job.completed_at).getTime() : now;
+  const elapsedSecs = Math.max(0, Math.floor((endMs - startMs) / 1000));
+  const maxSecs = job.max_duration_secs || 0;
+
+  const h = Math.floor(elapsedSecs / 3600);
+  const m = Math.floor((elapsedSecs % 3600) / 60);
+  const s = elapsedSecs % 60;
+  const elapsed = h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+
+  const maxH = Math.floor(maxSecs / 3600);
+  const maxM = Math.floor((maxSecs % 3600) / 60);
+  const maxLabel = maxSecs > 0
+    ? (maxH > 0 ? `${maxH}h ${maxM}m` : `${maxM}m`)
+    : null;
+
+  const pct = maxSecs > 0 ? elapsedSecs / maxSecs : 0;
+  const color = pct > 0.9 ? 'text-red-400' : pct > 0.7 ? 'text-yellow-400' : 'text-slate-400';
+
+  return (
+    <span className={`text-xs font-mono ${color}`}>
+      {elapsed}{maxLabel && ` / ${maxLabel}`}
+    </span>
+  );
 }
 
 function JobLogPanel({ job, onRetry }: JobLogPanelProps) {
@@ -42,7 +79,8 @@ function JobLogPanel({ job, onRetry }: JobLogPanelProps) {
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-400">
           {job.exit_code !== null && <span>exit: {job.exit_code}</span>}
-          <span>{formatDuration(job.started_at, job.completed_at)}</span>
+          {job.status_reason && <span className="text-xs text-slate-500">{job.status_reason}</span>}
+          <StageTimer job={job} />
           {job.state === 'failed' && onRetry && (
             <button
               onClick={onRetry}
@@ -177,6 +215,9 @@ export default function BuildDetailPage() {
         </button>
         <h2 className="text-2xl font-bold text-white font-mono">{group.job_group_id.slice(0, 8)}</h2>
         <StatusBadge status={group.state} size="md" />
+        {group.status_reason && (
+          <p className="text-xs text-slate-400 mt-1">{group.status_reason}</p>
+        )}
         {group.time_until_timeout_secs != null && group.idle_timeout_secs != null && group.stall_timeout_secs != null && (
           <TimeoutBadge
             timeUntilTimeout={group.time_until_timeout_secs}

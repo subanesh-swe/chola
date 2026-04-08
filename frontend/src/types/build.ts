@@ -21,6 +21,7 @@ export interface JobGroup {
   time_until_timeout_secs?: number | null;
   idle_timeout_secs?: number | null;
   stall_timeout_secs?: number | null;
+  status_reason?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

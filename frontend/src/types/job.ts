@@ -14,7 +14,9 @@ export interface Job {
   exit_code: number | null;
   pre_exit_code: number | null;
   post_exit_code: number | null;
+  status_reason: string | null;
   log_path: string | null;
+  max_duration_secs: number;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;

@@ -77,6 +77,7 @@ pub struct JobGroup {
     /// Resources allocated on the worker for this group
     #[serde(default)]
     pub allocated_resources: AllocatedResources,
+    pub status_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -101,6 +102,7 @@ impl JobGroup {
             pr_number: None,
             idempotency_key: None,
             allocated_resources: AllocatedResources::default(),
+            status_reason: None,
             created_at: now,
             updated_at: now,
             completed_at: None,
@@ -128,6 +130,7 @@ impl JobGroup {
             pr_number: None,
             idempotency_key: None,
             allocated_resources: AllocatedResources::default(),
+            status_reason: None,
             created_at: now,
             updated_at: now,
             completed_at: None,

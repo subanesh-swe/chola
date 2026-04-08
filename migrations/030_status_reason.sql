@@ -1,0 +1,2 @@
+ALTER TABLE job_groups ADD COLUMN IF NOT EXISTS status_reason TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS status_reason TEXT;
