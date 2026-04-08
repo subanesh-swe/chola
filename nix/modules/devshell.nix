@@ -13,6 +13,7 @@
         nixd # Nix language server
         bacon
         cargo-watch
+        nodejs_22 # For frontend (npm, npx)
       ];
     };
   };
