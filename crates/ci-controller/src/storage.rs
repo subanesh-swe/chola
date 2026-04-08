@@ -1477,7 +1477,7 @@ impl Storage {
     pub async fn load_active_job_groups(&self) -> anyhow::Result<Vec<JobGroup>> {
         let q = format!(
             "SELECT {JOB_GROUP_COLUMNS} FROM job_groups \
-             WHERE state NOT IN ('success', 'failed', 'cancelled') \
+             WHERE state NOT IN ('success', 'failed', 'cancelled', 'expired') \
              ORDER BY created_at"
         );
         let rows = sqlx::query(&q).fetch_all(&self.pool).await?;
@@ -3756,5 +3756,38 @@ impl Storage {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Cancel all non-terminal jobs belonging to a group.
+    /// Called when the group transitions to a terminal state.
+    pub async fn cancel_jobs_for_group(&self, group_id: Uuid) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE jobs SET state = 'cancelled', updated_at = now() \
+             WHERE job_group_id = $1 AND state NOT IN ('success', 'failed', 'cancelled')",
+        )
+        .bind(group_id)
+        .execute(&self.pool)
+        .await?;
+        let count = result.rows_affected();
+        if count > 0 {
+            info!("Cancelled {} orphaned jobs for group {}", count, group_id);
+        }
+        Ok(count)
+    }
+
+    /// Cancel jobs that are in non-terminal state but their group is terminal.
+    /// Runs on startup to catch any missed updates from previous crashes.
+    pub async fn cleanup_orphaned_jobs(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE jobs SET state = 'cancelled', updated_at = now() \
+             WHERE state NOT IN ('success', 'failed', 'cancelled') \
+             AND job_group_id IN (\
+                 SELECT id FROM job_groups \
+                 WHERE state IN ('success', 'failed', 'cancelled', 'expired')\
+             )",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }
