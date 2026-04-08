@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use ci_core::proto::orchestrator::{JobState, ReconnectRequest, ReconnectResponse, RunningJobInfo};
+use ci_core::proto::orchestrator::{
+    JobState, LogResumeDirective, ReconnectRequest, ReconnectResponse, RunningJobInfo,
+};
 use rand::Rng;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
