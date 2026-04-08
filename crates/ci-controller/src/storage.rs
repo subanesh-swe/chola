@@ -3793,7 +3793,9 @@ impl Storage {
     /// Called when the group transitions to a terminal state.
     pub async fn cancel_jobs_for_group(&self, group_id: Uuid) -> anyhow::Result<u64> {
         let result = sqlx::query(
-            "UPDATE jobs SET state = 'cancelled', updated_at = now() \
+            "UPDATE jobs SET state = 'cancelled', \
+             status_reason = COALESCE(status_reason, 'Parent group terminated'), \
+             updated_at = now() \
              WHERE job_group_id = $1 AND state NOT IN ('success', 'failed', 'cancelled')",
         )
         .bind(group_id)
@@ -3810,7 +3812,9 @@ impl Storage {
     /// Runs on startup to catch any missed updates from previous crashes.
     pub async fn cleanup_orphaned_jobs(&self) -> anyhow::Result<u64> {
         let result = sqlx::query(
-            "UPDATE jobs SET state = 'cancelled', updated_at = now() \
+            "UPDATE jobs SET state = 'cancelled', \
+             status_reason = COALESCE(status_reason, 'Parent group terminated'), \
+             updated_at = now() \
              WHERE state NOT IN ('success', 'failed', 'cancelled') \
              AND job_group_id IN (\
                  SELECT id FROM job_groups \
