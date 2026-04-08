@@ -105,6 +105,18 @@ impl JobGroupRegistry {
                 job.updated_at = chrono::Utc::now();
                 if state.is_terminal() {
                     job.completed_at = Some(chrono::Utc::now());
+                    // Set status_reason on terminal transition
+                    job.status_reason = match state {
+                        JobState::Success => {
+                            Some("Completed successfully (exit code 0)".to_string())
+                        }
+                        JobState::Failed => Some(format!(
+                            "Command failed (exit code {})",
+                            exit_code.unwrap_or(-1)
+                        )),
+                        JobState::Cancelled => Some("Cancelled".to_string()),
+                        _ => None,
+                    };
                 }
             }
         }
