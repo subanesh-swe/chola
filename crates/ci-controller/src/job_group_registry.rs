@@ -117,7 +117,8 @@ impl JobGroupRegistry {
             .find(|j| j.job_id == job_id)
     }
 
-    /// Check if all jobs in a group have reached terminal state
+    /// Check if all jobs in a group have reached terminal state.
+    /// Sets `status_reason` on the group when it transitions to a terminal state.
     pub fn check_group_completion(&mut self, group_id: &Uuid) -> Option<JobGroupState> {
         let group = self.groups.get(group_id)?;
         if group.state.is_terminal() {
@@ -142,15 +143,34 @@ impl JobGroupRegistry {
         let any_failed = jobs.iter().any(|j| j.state == JobState::Failed);
         let any_cancelled = jobs.iter().any(|j| j.state == JobState::Cancelled);
 
-        let new_state = if any_failed {
-            JobGroupState::Failed
+        let (new_state, reason) = if any_failed {
+            // Find the first failed stage to include in the reason
+            let reason = jobs
+                .iter()
+                .find(|j| j.state == JobState::Failed)
+                .map(|j| {
+                    let stage = j.stage_name.as_deref().unwrap_or("unknown");
+                    let code = j.exit_code.unwrap_or(-1);
+                    format!("Stage {stage} failed (exit code {code})")
+                })
+                .unwrap_or_else(|| "Stage failed".to_string());
+            (JobGroupState::Failed, reason)
         } else if any_cancelled {
-            JobGroupState::Cancelled
+            (
+                JobGroupState::Cancelled,
+                "Cancelled: stage was cancelled".to_string(),
+            )
         } else {
-            JobGroupState::Success
+            (
+                JobGroupState::Success,
+                "All stages completed successfully".to_string(),
+            )
         };
 
         self.update_state(group_id, new_state);
+        if let Some(group) = self.groups.get_mut(group_id) {
+            group.status_reason = Some(reason);
+        }
         Some(new_state)
     }
 
@@ -270,6 +290,7 @@ impl JobGroupRegistry {
                     );
                     job.state = JobState::Failed;
                     job.output = Some(reason.to_string());
+                    job.status_reason = Some(reason.to_string());
                     job.updated_at = now;
                     job.completed_at = Some(now);
                 }

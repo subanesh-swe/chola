@@ -268,6 +268,7 @@ async fn submit_stages(
                 started_at: None,
                 completed_at: None,
                 retry_count: 0,
+                status_reason: None,
                 created_at: now,
                 updated_at: now,
             };

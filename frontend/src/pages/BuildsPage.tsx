@@ -73,7 +73,12 @@ export default function BuildsPage() {
                       role="row"
                       className="cursor-pointer hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
                     >
-                      <td className="px-4 py-3"><StatusBadge status={b.state} /></td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={b.state} />
+                        {b.status_reason && (
+                          <span className="block text-[10px] text-slate-500 truncate max-w-xs">{b.status_reason}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-sm text-slate-300 font-mono">{b.job_group_id.slice(0, 8)}</td>
                       <td className="px-4 py-3 text-sm text-slate-200">{b.branch || '-'}</td>
                       <td className="px-4 py-3 text-sm text-slate-400 font-mono">{b.commit_sha?.slice(0, 7) || '-'}</td>
@@ -100,6 +105,9 @@ export default function BuildsPage() {
                     <StatusBadge status={b.state} />
                     <TimeAgo date={b.created_at} className="text-xs text-slate-500" />
                   </div>
+                  {b.status_reason && (
+                    <span className="block text-[10px] text-slate-500 truncate max-w-xs">{b.status_reason}</span>
+                  )}
                   <div className="text-sm text-slate-300 font-mono">{b.job_group_id.slice(0, 8)}</div>
                   <div className="text-sm text-slate-400 mt-0.5">
                     {b.branch || '-'}
