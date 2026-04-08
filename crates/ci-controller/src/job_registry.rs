@@ -42,6 +42,15 @@ impl JobRegistry {
             if !update.output.is_empty() {
                 job.output = Some(update.output.clone());
             }
+            // Set status_reason for terminal states
+            job.status_reason = match new_state {
+                JobState::Success => Some("Completed successfully (exit code 0)".to_string()),
+                JobState::Failed => {
+                    Some(format!("Command failed (exit code {})", update.exit_code))
+                }
+                JobState::Cancelled => Some("Cancelled".to_string()),
+                _ => None,
+            };
             job.updated_at = chrono::Utc::now();
         }
     }
@@ -130,6 +139,7 @@ impl JobRegistry {
                     info!("Cancelling queued job {}: {}", job.job_id, reason);
                     job.state = JobState::Cancelled;
                     job.cancel_reason = Some(reason.to_string());
+                    job.status_reason = Some(format!("Cancelled: {reason}"));
                     job.updated_at = chrono::Utc::now();
                     return None;
                 }
@@ -168,6 +178,8 @@ impl JobRegistry {
             {
                 job.state = JobState::Cancelled;
                 job.cancel_reason = Some("Orphaned (submitter disconnected)".to_string());
+                job.status_reason =
+                    Some("Cancelled: orphaned (submitter disconnected)".to_string());
                 job.updated_at = now;
                 cancelled += 1;
             }

@@ -612,7 +612,7 @@ pub async fn do_reserve_worker(
                             .update_job_group_state(
                                 *gid,
                                 ci_core::models::job_group::JobGroupState::Cancelled,
-                                None,
+                                Some("Superseded by newer build on same branch"),
                             )
                             .await
                         {
@@ -1672,13 +1672,29 @@ impl Orchestrator for OrchestratorService {
                             .get(&group_id)
                             .map(|g| g.allocated_resources)
                             .unwrap_or_default();
-                        (new_state, worker_id, repo_id, branch, commit_sha, alloc)
+                        let status_reason = jg.get(&group_id).and_then(|g| g.status_reason.clone());
+                        (
+                            new_state,
+                            worker_id,
+                            repo_id,
+                            branch,
+                            commit_sha,
+                            alloc,
+                            status_reason,
+                        )
                     })
                 }; // jg write lock dropped here
 
                 // Phase 2: async I/O without holding the lock
-                if let Some((new_state, worker_id, repo_id, branch, commit_sha, alloc)) =
-                    completion_info
+                if let Some((
+                    new_state,
+                    worker_id,
+                    repo_id,
+                    branch,
+                    commit_sha,
+                    alloc,
+                    status_reason,
+                )) = completion_info
                 {
                     info!("Job group {} completed: {}", group_id, new_state);
                     self.state.metrics.dec_active_builds();
@@ -1716,7 +1732,7 @@ impl Orchestrator for OrchestratorService {
 
                     if let Some(storage) = &self.state.storage {
                         if let Err(e) = storage
-                            .update_job_group_state(group_id, new_state, None)
+                            .update_job_group_state(group_id, new_state, status_reason.as_deref())
                             .await
                         {
                             error!("Failed to persist group {} state to DB: {e}", group_id);
@@ -2277,12 +2293,13 @@ impl Orchestrator for OrchestratorService {
             }
 
             // Persist to DB
+            let cancel_reason_db = format!("Cancelled via gRPC: {}", req.reason);
             if let Some(storage) = &self.state.storage {
                 if let Err(e) = storage
                     .update_job_group_state(
                         group_id,
                         ci_core::models::job_group::JobGroupState::Cancelled,
-                        None,
+                        Some(&cancel_reason_db),
                     )
                     .await
                 {
@@ -2478,6 +2495,8 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
 
                     // Handle group failure for dead workers
                     for worker_id in &timed_out {
+                        let death_reason =
+                            format!("Worker {} disconnected (heartbeat timeout)", worker_id);
                         let mut db_updates: Vec<uuid::Uuid> = Vec::new();
 
                         {
@@ -2485,7 +2504,10 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                             let (to_migrate, to_fail) = jg.handle_worker_death(worker_id);
 
                             for gid in &to_fail {
-                                jg.fail_group_jobs(gid, &format!("Worker {} died", worker_id));
+                                jg.fail_group_jobs(gid, &death_reason);
+                                if let Some(g) = jg.get_mut(gid) {
+                                    g.status_reason = Some(death_reason.clone());
+                                }
                                 state_for_hb.metrics.dec_active_builds();
                                 db_updates.push(*gid);
                             }
@@ -2506,7 +2528,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                     .update_job_group_state(
                                         gid,
                                         ci_core::models::job_group::JobGroupState::Failed,
-                                        None,
+                                        Some(&death_reason),
                                     )
                                     .await
                                 {
@@ -2572,6 +2594,10 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                 for gid in stuck {
                     warn!("Failing stuck group {} (running > 4h)", gid);
                     jgr.update_state(&gid, ci_core::models::job_group::JobGroupState::Failed);
+                    if let Some(g) = jgr.get_mut(&gid) {
+                        g.status_reason =
+                            Some("Group stuck: running for more than 4 hours".to_string());
+                    }
                 }
             }
         });
