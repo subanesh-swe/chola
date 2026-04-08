@@ -327,6 +327,7 @@ pub async fn cancel(
     }
 
     // Update in-memory registry, extract worker/resources for release
+    let api_reason = format!("Cancelled via API by {}", auth_user.username);
     let release_info = {
         let mut jg = state.job_group_registry.write().await;
         if let Some(group) = jg.get(&id) {
@@ -346,7 +347,10 @@ pub async fn cancel(
             )
         });
         jg.update_state(&id, JobGroupState::Cancelled);
-        jg.fail_group_jobs(&id, "Cancelled via API");
+        if let Some(g) = jg.get_mut(&id) {
+            g.status_reason = Some(api_reason.clone());
+        }
+        jg.fail_group_jobs(&id, &api_reason);
         info
     };
 
@@ -386,7 +390,7 @@ pub async fn cancel(
     // Update in DB
     if let Some(storage) = &state.storage {
         if let Err(e) = storage
-            .update_job_group_state(id, JobGroupState::Cancelled, None)
+            .update_job_group_state(id, JobGroupState::Cancelled, Some(&api_reason))
             .await
         {
             warn!("Failed to persist cancel state for group {id}: {e}");
