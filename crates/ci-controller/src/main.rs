@@ -43,8 +43,9 @@ use worker_registry::WorkerRegistry;
 #[command(name = "ci-controller", about = "CI Orchestrator Controller")]
 struct Cli {
     /// Path to controller YAML config file
+    /// Defaults: ~/.config/chola/controller.yaml → /etc/chola/controller.yaml
     #[arg(short, long)]
-    config: String,
+    config: Option<String>,
 
     /// Override bind address
     #[arg(long)]
@@ -64,8 +65,13 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Load configuration
-    let mut config = ControllerConfig::from_file(&cli.config)
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+    let config_path = cli.config
+        .or_else(|| ci_core::models::config::resolve_default_config("controller"))
+        .ok_or_else(|| anyhow::anyhow!(
+            "No config file found. Pass --config or create ~/.config/chola/controller.yaml or /etc/chola/controller.yaml"
+        ))?;
+    let mut config = ControllerConfig::from_file(&config_path)
+        .map_err(|e| anyhow::anyhow!("Failed to load config '{}': {}", config_path, e))?;
 
     // Apply CLI overrides
     if let Some(bind) = cli.bind {

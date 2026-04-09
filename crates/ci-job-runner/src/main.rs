@@ -8,9 +8,14 @@ use clap::{Parser, Subcommand};
     about = "CI Job Runner - Submit jobs and manage builds"
 )]
 struct Cli {
-    /// Controller gRPC address
-    #[arg(short = 'C', long, default_value = "http://localhost:50051")]
-    controller: String,
+    /// Controller gRPC address (overrides config file)
+    #[arg(short = 'C', long)]
+    controller: Option<String>,
+
+    /// Path to job-runner YAML config file
+    /// Defaults: ~/.config/chola/job-runner.yaml → /etc/chola/job-runner.yaml
+    #[arg(short, long)]
+    config: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -87,13 +92,41 @@ async fn main() {
     }
 }
 
+/// Simple job-runner config (optional YAML file)
+#[derive(Debug, Default, serde::Deserialize)]
+struct RunnerConfig {
+    #[serde(default = "default_controller")]
+    controller: String,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+fn default_controller() -> String {
+    "http://localhost:50051".to_string()
+}
+
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let token = std::env::var("CHOLA_TOKEN").ok();
 
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let mut client = commands::connect(&cli.controller, token.as_deref()).await?;
+    // Load config: --config flag → ~/.config/chola/job-runner.yaml → /etc/chola/job-runner.yaml
+    let file_config = cli
+        .config
+        .or_else(|| ci_core::models::config::resolve_default_config("job-runner"))
+        .and_then(|path| {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| serde_yaml::from_str::<RunnerConfig>(&s).ok())
+        })
+        .unwrap_or_default();
+
+    // Priority: CLI flag > config file > default
+    let controller = cli.controller.unwrap_or(file_config.controller);
+    // Priority: CHOLA_TOKEN env > config file token
+    let token = std::env::var("CHOLA_TOKEN").ok().or(file_config.token);
+
+    let mut client = commands::connect(&controller, token.as_deref()).await?;
 
     match cli.command {
         Commands::Reserve {
