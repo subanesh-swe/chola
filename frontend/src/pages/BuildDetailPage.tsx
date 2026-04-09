@@ -121,7 +121,8 @@ interface TimerInfo {
   reason?: string;
 }
 
-function TimerRow({ label, timer }: { label: string; timer: TimerInfo | undefined }) {
+function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | undefined; job?: Job | null }) {
+  const [now, setNow] = useState(Date.now());
   const status = timer?.status ?? 'na';
   const maxSecs = timer?.max_secs ?? 0;
   const reason = timer?.reason ?? (
@@ -129,12 +130,25 @@ function TimerRow({ label, timer }: { label: string; timer: TimerInfo | undefine
     status === 'deactivated' ? 'Deactivated' : '—'
   );
 
+  // Live tick for active stage timer
+  const isLiveStage = status === 'active' && job?.started_at;
+  useEffect(() => {
+    if (!isLiveStage) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isLiveStage]);
+
   const icon = status === 'active' ? '⏱' : status === 'paused' ? '⏸' : status === 'deactivated' ? '✓' : '○';
   const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-slate-600';
   const maxLabel = maxSecs > 0 ? fmtSecs(maxSecs) : 'no limit';
 
   let timeDisplay: string;
-  if (status === 'active' && timer?.remaining_secs != null) {
+  if (status === 'active' && job?.started_at && maxSecs > 0) {
+    // Live computation from job.started_at (same as StageTimer)
+    const elapsed = Math.floor((now - new Date(job.started_at).getTime()) / 1000);
+    const remaining = Math.max(0, maxSecs - elapsed);
+    timeDisplay = `${fmtSecs(remaining)} / ${maxLabel}`;
+  } else if (status === 'active' && timer?.remaining_secs != null) {
     timeDisplay = `${fmtSecs(Math.max(0, timer.remaining_secs))} / ${maxLabel}`;
   } else {
     timeDisplay = `— / ${maxLabel}`;
@@ -158,13 +172,15 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
   const isTerminal = ['success', 'failed', 'cancelled', 'expired'].includes(group.state);
   if (isTerminal) return null;
 
+  const runningJob = jobs.find(j => j.state === 'running') ?? null;
+
   // Use backend timers if available, else compute from frontend data
   if (group.timers) {
     return (
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Timers</h3>
         <div className="space-y-2">
-          <TimerRow label="Stage timeout" timer={group.timers.stage} />
+          <TimerRow label="Stage timeout" timer={group.timers.stage} job={runningJob} />
           <TimerRow label="Stall timeout" timer={group.timers.stall} />
           <TimerRow label="Idle timeout" timer={group.timers.idle} />
         </div>
@@ -173,7 +189,6 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
   }
 
   // Fallback: compute from group state + job data (for older API responses)
-  const runningJob = jobs.find(j => j.state === 'running');
   const hasRunning = jobs.some(j => j.state === 'running' || j.state === 'assigned');
   const idleMax = group.idle_timeout_secs ?? 300;
   const stallMax = group.stall_timeout_secs ?? 1800;
