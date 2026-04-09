@@ -1046,19 +1046,42 @@ async fn do_submit_stage(
     };
 
     // Add to both registries
-    {
+    let was_reserved = {
         let mut jg_registry = state.job_group_registry.write().await;
         // Update group state to Running if it was Reserved
-        if let Some(group) = jg_registry.get(&group_id) {
-            if group.state == ci_core::models::job_group::JobGroupState::Reserved {
-                jg_registry.update_state(
-                    &group_id,
-                    ci_core::models::job_group::JobGroupState::Running,
-                );
-            }
+        let was = if let Some(group) = jg_registry.get(&group_id) {
+            group.state == ci_core::models::job_group::JobGroupState::Reserved
+        } else {
+            false
+        };
+        if was {
+            jg_registry.update_state(
+                &group_id,
+                ci_core::models::job_group::JobGroupState::Running,
+            );
         }
         jg_registry.add_job_to_group(&group_id, job.clone());
         jg_registry.touch_activity(&group_id);
+        was
+    };
+
+    // Persist group state transition to DB
+    if was_reserved {
+        if let Some(storage) = &state.storage {
+            if let Err(e) = storage
+                .update_job_group_state(
+                    group_id,
+                    ci_core::models::job_group::JobGroupState::Running,
+                    None,
+                )
+                .await
+            {
+                warn!(
+                    "Failed to persist Running state for group {}: {}",
+                    group_id, e
+                );
+            }
+        }
     }
     {
         let mut job_registry = state.job_registry.write().await;
