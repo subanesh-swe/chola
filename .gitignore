@@ -38,3 +38,4 @@ local/
 # Frontend build artifacts
 frontend/node_modules/
 frontend/dist/
+.env
