@@ -17,8 +17,10 @@ use ci_core::models::config::WorkerConfig;
 #[command(name = "ci-worker", about = "CI Orchestrator Worker Agent")]
 struct Cli {
     /// Path to worker YAML config file
+    /// Path to worker YAML config file
+    /// Defaults: ~/.config/chola/worker.yaml → /etc/chola/worker.yaml
     #[arg(short, long)]
-    config: String,
+    config: Option<String>,
 
     /// Override controller address
     #[arg(long)]
@@ -42,8 +44,13 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Load configuration
-    let mut config = WorkerConfig::from_file(&cli.config)
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+    let config_path = cli.config
+        .or_else(|| ci_core::models::config::resolve_default_config("worker"))
+        .ok_or_else(|| anyhow::anyhow!(
+            "No config file found. Pass --config or create ~/.config/chola/worker.yaml or /etc/chola/worker.yaml"
+        ))?;
+    let mut config = WorkerConfig::from_file(&config_path)
+        .map_err(|e| anyhow::anyhow!("Failed to load config '{}': {}", config_path, e))?;
 
     // Apply CLI overrides
     if let Some(addr) = cli.controller_addr {

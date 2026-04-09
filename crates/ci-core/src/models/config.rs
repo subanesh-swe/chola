@@ -398,6 +398,31 @@ pub struct ExecutionConfig {
     pub repos_dir: String,
 }
 
+/// Resolve default config file path for a service.
+/// Lookup: ~/.config/chola/{name}.yaml → /etc/chola/{name}.yaml → None
+pub fn resolve_default_config(name: &str) -> Option<String> {
+    let filename = format!("{name}.yaml");
+
+    // 1. $XDG_CONFIG_HOME/chola/{name}.yaml or ~/.config/chola/{name}.yaml
+    let xdg = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.config")));
+    if let Some(base) = xdg {
+        let path = format!("{base}/chola/{filename}");
+        if std::path::Path::new(&path).exists() {
+            return Some(path);
+        }
+    }
+
+    // 2. /etc/chola/{name}.yaml
+    let etc_path = format!("/etc/chola/{filename}");
+    if std::path::Path::new(&etc_path).exists() {
+        return Some(etc_path);
+    }
+
+    None
+}
+
 /// Resolve chola data directory: $CHOLA_HOME > $XDG_DATA_HOME/chola > ~/.local/share/chola
 pub fn chola_data_dir(sub: &str) -> String {
     if let Ok(chola_home) = std::env::var("CHOLA_HOME") {
