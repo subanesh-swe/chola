@@ -137,12 +137,14 @@ function TimersPanel({ group, jobs }: { group: JobGroup; jobs: Job[] }) {
     stageRemaining = 'no limit';
   }
 
-  // Idle timeout
-  let idleStatus: 'active' | 'paused' | 'na' = 'na';
+  // Idle timeout — deactivated once any stage starts
+  let idleStatus: 'active' | 'paused' | 'na' | 'deactivated' = 'na';
   let idleRemaining = '';
   if (group.state === 'reserved') {
     idleStatus = 'active';
     idleRemaining = timeUntil >= 0 ? fmtSecs(timeUntil) : fmtSecs(idleTimeout);
+  } else if (group.state === 'running') {
+    idleStatus = 'deactivated';
   }
 
   // Stall timeout
@@ -157,12 +159,12 @@ function TimersPanel({ group, jobs }: { group: JobGroup; jobs: Job[] }) {
     }
   }
 
-  const statusIcon = (s: 'active' | 'paused' | 'na') =>
-    s === 'active' ? '⏱' : s === 'paused' ? '⏸' : '○';
-  const statusColor = (s: 'active' | 'paused' | 'na') =>
-    s === 'active' ? 'text-emerald-400' : s === 'paused' ? 'text-slate-500' : 'text-slate-600';
-  const statusLabel = (s: 'active' | 'paused' | 'na', reason: string) =>
-    s === 'active' ? reason : s === 'paused' ? 'Paused (stage running)' : 'N/A';
+  const statusIcon = (s: 'active' | 'paused' | 'na' | 'deactivated') =>
+    s === 'active' ? '⏱' : s === 'paused' ? '⏸' : s === 'deactivated' ? '✓' : '○';
+  const statusColor = (s: 'active' | 'paused' | 'na' | 'deactivated') =>
+    s === 'active' ? 'text-emerald-400' : s === 'paused' ? 'text-slate-500' : s === 'deactivated' ? 'text-slate-600' : 'text-slate-600';
+  const statusLabel = (s: 'active' | 'paused' | 'na' | 'deactivated', reason: string) =>
+    s === 'active' ? reason : s === 'paused' ? 'Paused (stage running)' : s === 'deactivated' ? 'Deactivated' : 'N/A';
 
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
