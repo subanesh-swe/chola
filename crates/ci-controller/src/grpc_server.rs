@@ -58,20 +58,19 @@ fn auth_interceptor(
             };
         }
 
-        // Static bearer token check (worker registration tokens / legacy)
+        // Static bearer token check (legacy)
         let token = config.token.as_deref().unwrap_or("");
-        if token.is_empty() {
-            return Ok(req);
+        if !token.is_empty() {
+            let expected = format!("Bearer {}", token);
+            if auth == expected {
+                return Ok(req);
+            }
         }
 
-        let expected = format!("Bearer {}", token);
-        if auth != expected {
-            return Err(tonic::Status::unauthenticated(
-                "Invalid or missing auth token",
-            ));
-        }
-
-        Ok(req)
+        // No valid token found — reject
+        Err(tonic::Status::unauthenticated(
+            "Valid token required (chola_wkr_ or chola_svc_)",
+        ))
     }
 }
 

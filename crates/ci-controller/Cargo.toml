@@ -4,6 +4,10 @@ description = "ci-controller"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["swagger-ui"]
+swagger-ui = ["dep:utoipa-swagger-ui"]
+
 [[bin]]
 name = "ci-controller"
 path = "src/main.rs"
@@ -42,5 +46,5 @@ hex = { workspace = true }
 aes-gcm = { workspace = true }
 regex = { workspace = true }
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
 mime_guess = { workspace = true }
