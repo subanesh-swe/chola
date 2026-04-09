@@ -17,6 +17,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 
 use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::csrf::csrf_middleware;
@@ -75,7 +76,7 @@ fn build_app(state: Arc<ControllerState>) -> Router {
     let api = crate::api::api_router();
     let public_api = crate::api::public_api_router();
 
-    Router::new()
+    let base = Router::new()
         .route("/health/live", get(health_live))
         .route("/health/ready", get(health_ready))
         .route("/metrics", get(metrics_handler))
@@ -85,13 +86,16 @@ fn build_app(state: Arc<ControllerState>) -> Router {
         .nest(
             "/api/v1",
             api.layer(middleware::from_fn(json_error_wrapper)),
-        )
-        // OpenAPI / Swagger UI
-        .merge(
-            SwaggerUi::new("/swagger-ui")
-                .url("/api-docs/openapi.json", crate::openapi::ApiDoc::openapi()),
-        )
-        .layer(middleware::from_fn(csrf_middleware))
+        );
+
+    // OpenAPI / Swagger UI (disabled in production builds without swagger-ui feature)
+    #[cfg(feature = "swagger-ui")]
+    let base = base.merge(
+        SwaggerUi::new("/swagger-ui")
+            .url("/api-docs/openapi.json", crate::openapi::ApiDoc::openapi()),
+    );
+
+    base.layer(middleware::from_fn(csrf_middleware))
         .layer(cors)
         .fallback(fallback_handler)
         .with_state(state)

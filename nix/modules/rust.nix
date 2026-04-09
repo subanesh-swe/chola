@@ -13,6 +13,7 @@
         filter = path: type:
           (config.rust-project.crateNixFile != null && lib.hasSuffix "/${config.rust-project.crateNixFile}" path) ||
           (lib.hasSuffix ".proto" path) ||
+          (lib.hasSuffix ".sql" path) ||
           # Default filter from crane (allow .rs files)
           (config.rust-project.crane-lib.filterCargoSources path type)
         ;

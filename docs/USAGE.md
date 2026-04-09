@@ -1,4 +1,4 @@
-# rust-ci-orchestrator — Usage Guide
+# Chola CI — Usage Guide
 
 > Example commands for every workflow. All commands assume you're in the project root.
 
@@ -7,14 +7,38 @@
 ## Prerequisites
 
 ```bash
-# Start infrastructure (if using local dev)
-docker compose up -d postgres redis opensearch   # or however you run them
-
-# Run database migrations
-just migrate
+# Start infrastructure
+# PostgreSQL + Redis must be running (migrations run automatically on controller startup)
 
 # Build all binaries
 just build
+# Or via nix:
+nix build .#ci-controller
+nix build .#ci-worker
+nix build .#ci-job-runner
+```
+
+---
+
+## Running via Nix
+
+```bash
+# Controller
+nix run .#ci-controller -- --config config/controller.example.yaml
+
+# Worker
+CHOLA_TOKEN=chola_wkr_xxx nix run .#ci-worker -- --config config/worker-1.example.yaml
+
+# ci-job-runner — reserve + run stage
+CHOLA_TOKEN=chola_svc_xxx nix run .#ci-job-runner -- -C http://localhost:50051 \
+    reserve --repo euler-api-txns --commit abc123 --stages gitleaks
+
+CHOLA_TOKEN=chola_svc_xxx nix run .#ci-job-runner -- -C http://localhost:50051 \
+    run --job-group-id <GROUP_ID> --stage gitleaks
+
+# Remote (from GitHub, pinned commit)
+nix run github:subanesh-swe/chola/<COMMIT>#ci-job-runner -- \
+    -C http://controller:50051 reserve --repo my-repo --commit abc123 --stages build,test
 ```
 
 ---
