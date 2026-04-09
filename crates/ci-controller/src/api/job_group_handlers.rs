@@ -248,39 +248,90 @@ pub async fn get_one(
         )
         .await;
 
-    let (last_activity_at, time_until_timeout) = {
+    // Compute per-timer status from in-memory state
+    let (last_activity_at, timers) = {
         let jg = state.job_group_registry.read().await;
         if let Some(g) = jg.get(&id) {
             let idle_secs = (chrono::Utc::now() - g.last_activity_at)
                 .num_seconds()
                 .max(0) as u64;
-            let timeout = match g.state {
-                ci_core::models::job_group::JobGroupState::Reserved => idle_cfg,
-                ci_core::models::job_group::JobGroupState::Running => {
-                    // No group timeout while a stage is actively running
-                    let has_running = jg.get_jobs_for_group(&id).iter().any(|j| {
-                        matches!(
-                            j.state,
-                            ci_core::models::job::JobState::Running
-                                | ci_core::models::job::JobState::Assigned
-                        )
-                    });
-                    if has_running {
-                        0
-                    } else {
-                        stall_cfg
-                    }
-                }
-                _ => 0,
-            };
-            let remaining = if timeout > 0 {
-                timeout.saturating_sub(idle_secs) as i64
+            let is_terminal = g.state.is_terminal();
+            let has_running = jg.get_jobs_for_group(&id).iter().any(|j| {
+                matches!(
+                    j.state,
+                    ci_core::models::job::JobState::Running
+                        | ci_core::models::job::JobState::Assigned
+                )
+            });
+
+            // Idle timer: only active when Reserved
+            let idle_timer = if is_terminal {
+                json!({"status": "deactivated", "remaining_secs": null, "max_secs": idle_cfg})
+            } else if g.state == ci_core::models::job_group::JobGroupState::Reserved {
+                let remaining = idle_cfg.saturating_sub(idle_secs) as i64;
+                json!({"status": "active", "remaining_secs": remaining, "max_secs": idle_cfg, "reason": "Waiting for first stage"})
             } else {
-                -1i64
+                json!({"status": "deactivated", "remaining_secs": null, "max_secs": idle_cfg})
             };
-            (Some(g.last_activity_at.to_rfc3339()), remaining)
+
+            // Stall timer: active when Running + no jobs running
+            let stall_timer = if is_terminal {
+                json!({"status": "deactivated", "remaining_secs": null, "max_secs": stall_cfg})
+            } else if g.state == ci_core::models::job_group::JobGroupState::Running {
+                if has_running {
+                    json!({"status": "paused", "remaining_secs": null, "max_secs": stall_cfg, "reason": "Stage is running"})
+                } else {
+                    let remaining = stall_cfg.saturating_sub(idle_secs) as i64;
+                    json!({"status": "active", "remaining_secs": remaining, "max_secs": stall_cfg, "reason": "Waiting for next stage"})
+                }
+            } else {
+                json!({"status": "na", "remaining_secs": null, "max_secs": stall_cfg})
+            };
+
+            // Stage timer: active when a job is running with max_duration_secs
+            let stage_timer = if has_running {
+                // Find the running job's stage info
+                let running_job = jg
+                    .get_jobs_for_group(&id)
+                    .iter()
+                    .find(|j| matches!(j.state, ci_core::models::job::JobState::Running))
+                    .cloned();
+                if let Some(rj) = running_job {
+                    let max_dur = rj.max_duration_secs.unwrap_or(0);
+                    let elapsed = rj
+                        .started_at
+                        .map(|t| (chrono::Utc::now() - t).num_seconds().max(0) as i64)
+                        .unwrap_or(0);
+                    let remaining = if max_dur > 0 {
+                        (max_dur as i64) - elapsed
+                    } else {
+                        -1
+                    };
+                    json!({
+                        "status": "active",
+                        "remaining_secs": remaining,
+                        "max_secs": max_dur,
+                        "elapsed_secs": elapsed,
+                        "stage_name": rj.stage_name,
+                        "reason": format!("Running ({})", rj.stage_name.as_deref().unwrap_or("unknown"))
+                    })
+                } else {
+                    json!({"status": "na", "remaining_secs": null, "max_secs": 0})
+                }
+            } else {
+                json!({"status": "na", "remaining_secs": null, "max_secs": 0})
+            };
+
+            (
+                Some(g.last_activity_at.to_rfc3339()),
+                json!({
+                    "idle": idle_timer,
+                    "stall": stall_timer,
+                    "stage": stage_timer,
+                }),
+            )
         } else {
-            (None, -1i64)
+            (None, json!(null))
         }
     };
 
@@ -312,7 +363,7 @@ pub async fn get_one(
         "completed_at": group.completed_at.map(|t| t.to_rfc3339()),
         "jobs": job_list,
         "last_activity_at": last_activity_at,
-        "time_until_timeout_secs": time_until_timeout,
+        "timers": timers,
         "reservation_expires_in_secs": reservation_ttl,
         "idle_timeout_secs": idle_cfg,
         "stall_timeout_secs": stall_cfg,
