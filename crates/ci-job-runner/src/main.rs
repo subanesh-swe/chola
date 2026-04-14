@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ci-job-runner",
-    about = "CI Job Runner - Submit jobs and manage builds"
+    name = "chola-job-runner",
+    about = "Chola CI Job Runner - Submit jobs and manage builds"
 )]
 struct Cli {
     /// Controller gRPC address (overrides config file)

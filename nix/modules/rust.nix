@@ -19,6 +19,6 @@
         ;
       };
     };
-    packages.default = self'.packages.ci-core;
+    packages.default = self'.packages.chola-controller;
   };
 }

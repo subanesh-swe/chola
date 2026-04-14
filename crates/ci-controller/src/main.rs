@@ -40,7 +40,7 @@ use worker_registry::WorkerRegistry;
 
 /// CI Orchestrator - Controller
 #[derive(Parser, Debug)]
-#[command(name = "ci-controller", about = "CI Orchestrator Controller")]
+#[command(name = "chola-controller", about = "Chola CI Controller")]
 struct Cli {
     /// Path to controller YAML config file
     /// Defaults: ~/.config/chola/controller.yaml → /etc/chola/controller.yaml

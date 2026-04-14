@@ -14,7 +14,7 @@ use ci_core::models::config::WorkerConfig;
 
 /// CI Orchestrator - Worker Agent
 #[derive(Parser, Debug)]
-#[command(name = "ci-worker", about = "CI Orchestrator Worker Agent")]
+#[command(name = "chola-worker", about = "Chola CI Worker Agent")]
 struct Cli {
     /// Path to worker YAML config file
     /// Path to worker YAML config file

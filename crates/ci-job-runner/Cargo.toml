@@ -1,11 +1,11 @@
 [package]
-name = "ci-job-runner"
-description = "CLI tool to submit jobs to CI Controller"
+name = "chola-job-runner"
+description = "CLI tool to submit jobs to Chola CI Controller"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "ci-job-runner"
+name = "chola-job-runner"
 path = "src/main.rs"
 
 [dependencies]

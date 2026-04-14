@@ -1,6 +1,6 @@
 [package]
-name = "ci-controller"
-description = "ci-controller"
+name = "chola-controller"
+description = "chola-controller"
 version.workspace = true
 edition.workspace = true
 
@@ -9,7 +9,7 @@ default = ["swagger-ui"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [[bin]]
-name = "ci-controller"
+name = "chola-controller"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,11 +1,11 @@
 [package]
-name = "ci-worker"
-description = "ci-worker"
+name = "chola-worker"
+description = "chola-worker"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "ci-worker"
+name = "chola-worker"
 path = "src/main.rs"
 
 [dependencies]
