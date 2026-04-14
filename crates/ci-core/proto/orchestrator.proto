@@ -135,6 +135,17 @@ message JobAssignment {
   int32 max_duration_secs = 15;
   // Keys in `environment` whose values are secret — worker masks these in logs
   repeated string secret_env_keys = 16;
+  // Script lock config — serialize concurrent script execution
+  ScriptLockConfig pre_script_lock = 17;
+  ScriptLockConfig post_script_lock = 18;
+}
+
+// Lock configuration for a script (pre or post)
+// Lock key is a template resolved at runtime: {{WORKER_ID}}, {{REPO_NAME}}, etc.
+message ScriptLockConfig {
+  bool enabled = 1;
+  string lock_key = 2;        // template: "{{WORKER_ID}}-{{REPO_NAME}}-pre"
+  int32 timeout_secs = 3;     // total time for lock acquisition + script execution
 }
 
 message CancelDirective {

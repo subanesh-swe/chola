@@ -23,6 +23,15 @@ pub struct CreateScriptRequest {
     pub script_scope: String,
     pub script: String,
     pub worker_id: Option<String>,
+    #[serde(default)]
+    pub lock_enabled: bool,
+    pub lock_key: Option<String>,
+    #[serde(default = "default_lock_timeout")]
+    pub lock_timeout_secs: i32,
+}
+
+fn default_lock_timeout() -> i32 {
+    120
 }
 
 #[derive(Deserialize)]
@@ -32,6 +41,9 @@ pub struct UpdateScriptRequest {
     pub script: Option<String>,
     /// Send `null` to clear, omit field to leave unchanged.
     pub worker_id: Option<Option<String>>,
+    pub lock_enabled: Option<bool>,
+    pub lock_key: Option<Option<String>>,
+    pub lock_timeout_secs: Option<i32>,
 }
 
 // -- Validation --------------------------------------------------------------
@@ -64,6 +76,9 @@ fn script_to_json(s: &StageScript) -> Value {
         "script_type": s.script_type,
         "script_scope": s.script_scope,
         "script": s.script,
+        "lock_enabled": s.lock_enabled,
+        "lock_key": s.lock_key,
+        "lock_timeout_secs": s.lock_timeout_secs,
         "created_at": s.created_at.to_rfc3339(),
         "updated_at": s.updated_at.to_rfc3339(),
     })
@@ -112,6 +127,9 @@ pub async fn create(
             &body.script_scope,
             &body.script,
             body.worker_id.as_deref(),
+            body.lock_enabled,
+            body.lock_key.as_deref(),
+            body.lock_timeout_secs,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -144,6 +162,7 @@ pub async fn update(
     }
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let worker_id = body.worker_id.as_ref().map(|opt| opt.as_deref());
+    let lock_key = body.lock_key.as_ref().map(|opt| opt.as_deref());
     let script = storage
         .update_stage_script(
             script_id,
@@ -151,6 +170,9 @@ pub async fn update(
             body.script_scope.as_deref(),
             body.script.as_deref(),
             worker_id,
+            body.lock_enabled,
+            lock_key,
+            body.lock_timeout_secs,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
