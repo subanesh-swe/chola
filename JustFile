@@ -31,29 +31,29 @@ fmt:
 # ─── Controller ───────────────────────────────────────────────────────────────
 
 controller:
-    cargo run -p ci-controller -- --config config/controller.example.yaml
+    cargo run -p chola-controller -- --config config/controller.example.yaml
 
 # Auto-restart controller on code change
 watch-controller:
-    cargo watch -x 'run -p ci-controller -- --config config/controller.example.yaml' -w crates/ci-controller -w crates/ci-core -i '*.log'
+    cargo watch -x 'run -p chola-controller -- --config config/controller.example.yaml' -w crates/ci-controller -w crates/ci-core -i '*.log'
 # ─── Worker ───────────────────────────────────────────────────────────────────
 
 # Usage:
 #   just worker           -> uses config/worker-1.example.yaml
 #   just worker worker-2  -> uses config/worker-2.example.yaml
 worker name='worker-1':
-    CHOLA_TOKEN="${CHOLA_WORKER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-worker -- --config config/{{name}}.example.yaml
+    CHOLA_TOKEN="${CHOLA_WORKER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-worker -- --config config/{{name}}.example.yaml
 
 # Auto-restart worker on code change
 watch-worker name='worker-1':
-    CHOLA_TOKEN="${CHOLA_WORKER_TOKEN:-${CHOLA_TOKEN}}" cargo watch -x 'run -p ci-worker -- --config config/{{name}}.example.yaml' -w crates/ci-worker -w crates/ci-core -i '*.log'
+    CHOLA_TOKEN="${CHOLA_WORKER_TOKEN:-${CHOLA_TOKEN}}" cargo watch -x 'run -p chola-worker -- --config config/{{name}}.example.yaml' -w crates/ci-worker -w crates/ci-core -i '*.log'
 # ─── Job Runner (new subcommand-based CLI) ────────────────────────────────────
 
 # Reserve a worker for a multi-stage build pipeline
 # Usage: just reserve euler-api-txns f1e3109e "gitleaks"
 #        just reserve euler-api-txns f1e3109e "gitleaks" main
 reserve repo commit stages branch="":
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         reserve \
         --repo {{repo}} \
@@ -64,7 +64,7 @@ reserve repo commit stages branch="":
 # Run a stage within a reserved job group
 # Usage: just run-stage <job_group_id> build
 run-stage group_id stage:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         run \
         --job-group-id {{group_id}} \
@@ -72,7 +72,7 @@ run-stage group_id stage:
 
 # Run a stage with a specific job ID
 run-stage-with-id group_id job_id stage:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         run \
         --job-group-id {{group_id}} \
@@ -81,14 +81,14 @@ run-stage-with-id group_id job_id stage:
 
 # Watch logs for a job group (all stages)
 logs-group group_id:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         logs \
         --job-group-id {{group_id}}
 
 # Watch logs for a specific stage
 logs-stage group_id stage:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         logs \
         --job-group-id {{group_id}} \
@@ -96,28 +96,28 @@ logs-stage group_id stage:
 
 # Watch logs for a specific job ID
 logs-job job_id:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         logs \
         --job-id {{job_id}}
 
 # Cancel an entire job group
 cancel-group group_id:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         cancel \
         --job-group-id {{group_id}}
 
 # Cancel a specific job
 cancel-job job_id:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         cancel \
         --job-id {{job_id}}
 
 # Get status of a job group with all stage states
 status group_id:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         status \
         --job-group-id {{group_id}}
@@ -130,7 +130,7 @@ job_id := `date +job-%Y%m%dT%H%M%S-` + `head /dev/urandom | tr -dc a-z0-9 | head
 # Submit a single job (legacy mode, backward compatible)
 # Usage: just submit job-001 "echo hello"
 submit job_id cmd:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         submit \
         --job-id {{job_id}} \
@@ -140,7 +140,7 @@ submit job_id cmd:
 # Submit with auto-generated job ID
 # Usage: just submit-auto "echo hello && sleep 5 && echo done"
 submit-auto cmd:
-    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- \
+    CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- \
         --controller {{controller_addr}} \
         submit \
         --job-id {{job_id}} \
@@ -225,7 +225,7 @@ pipeline repo stages:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "=== Reserving worker for {{repo}} ==="
-    OUTPUT=$(CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p ci-job-runner -- --controller {{controller_addr}} reserve --repo {{repo}} --stages {{stages}} 2>/dev/null)
+    OUTPUT=$(CHOLA_TOKEN="${CHOLA_RUNNER_TOKEN:-${CHOLA_TOKEN}}" cargo run -p chola-job-runner -- --controller {{controller_addr}} reserve --repo {{repo}} --stages {{stages}} 2>/dev/null)
     echo "$OUTPUT"
     GROUP_ID=$(echo "$OUTPUT" | grep -oP 'job_group_id=\K[^ ]+')
     echo ""
