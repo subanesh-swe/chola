@@ -105,6 +105,12 @@ async fn acquire_flock(
                 .await;
             return Ok(file);
         }
+        // Only retry on EWOULDBLOCK (lock held by another process).
+        // Any other errno (EBADF, ENOLCK, etc.) is a real error — fail immediately.
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::WouldBlock {
+            return Err(anyhow::anyhow!("flock failed: {}", err));
+        }
 
         if tokio::time::Instant::now() >= deadline {
             return Err(anyhow::anyhow!(
@@ -271,6 +277,7 @@ impl StageRunner {
                             .await;
                         // Skip command, but still run post_script
                         command_exit_code = -1;
+                        drop(_pre_lock_guard); // release pre-script lock before post-script
                         post_exit_code = self
                             .run_post_script(
                                 post_script,
@@ -301,6 +308,7 @@ impl StageRunner {
                 Err(e) => {
                     error!("Pre-script execution error: {}", e);
                     pre_exit_code = Some(-1);
+                    drop(_pre_lock_guard); // release pre-script lock before post-script
                     post_exit_code = self
                         .run_post_script(
                             post_script,
