@@ -1570,22 +1570,37 @@ impl Orchestrator for OrchestratorService {
             // DB uses deterministic UUID v5 derived from job_id string
             // (same as what do_submit_stage uses when persisting the job)
             let job_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, req.job_id.as_bytes());
+            let exit_code_param =
+                if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
+                    Some(req.exit_code)
+                } else {
+                    None
+                };
             if let Err(e) = storage
                 .update_job_state(
                     job_uuid,
                     state_str,
-                    if req.exit_code != 0 || state_str == "success" || state_str == "failed" {
-                        Some(req.exit_code)
-                    } else {
-                        None
-                    },
+                    exit_code_param,
                     None,
                     None,
                     Some(&req.worker_id),
                 )
                 .await
             {
-                warn!("Failed to update job state in DB: {}", e);
+                warn!("DB write failed, retrying once: {}", e);
+                if let Err(e2) = storage
+                    .update_job_state(
+                        job_uuid,
+                        state_str,
+                        exit_code_param,
+                        None,
+                        None,
+                        Some(&req.worker_id),
+                    )
+                    .await
+                {
+                    error!("DB write retry failed for job {}: {}", req.job_id, e2);
+                }
             }
 
             // Persist job-level status_reason for terminal states
@@ -1976,14 +1991,42 @@ impl Orchestrator for OrchestratorService {
                     output,
                 }))
             }
-            None => Ok(Response::new(GetJobStatusResponse {
-                found: false,
-                job_id: req.job_id,
-                state: ci_core::proto::orchestrator::JobState::Unknown as i32,
-                message: "Job not found".to_string(),
-                exit_code: 0,
-                output: String::new(),
-            })),
+            None => {
+                // Job evicted from memory — check DB before returning not found
+                drop(registry);
+                let job_uuid =
+                    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, req.job_id.as_bytes());
+                if let Some(storage) = self.state.storage.as_ref() {
+                    if let Ok(Some(db_job)) = storage.get_job(job_uuid).await {
+                        let state = match db_job.state.as_str() {
+                            "success" => ci_core::proto::orchestrator::JobState::Success as i32,
+                            "failed" => ci_core::proto::orchestrator::JobState::Failed as i32,
+                            "cancelled" => ci_core::proto::orchestrator::JobState::Cancelled as i32,
+                            "running" => ci_core::proto::orchestrator::JobState::Running as i32,
+                            "assigned" => ci_core::proto::orchestrator::JobState::Assigned as i32,
+                            _ => ci_core::proto::orchestrator::JobState::Unknown as i32,
+                        };
+                        return Ok(Response::new(GetJobStatusResponse {
+                            found: true,
+                            job_id: req.job_id,
+                            state,
+                            message: db_job
+                                .status_reason
+                                .unwrap_or_else(|| format!("Job state: {}", db_job.state)),
+                            exit_code: db_job.exit_code.unwrap_or(0),
+                            output: String::new(),
+                        }));
+                    }
+                }
+                Ok(Response::new(GetJobStatusResponse {
+                    found: false,
+                    job_id: req.job_id,
+                    state: ci_core::proto::orchestrator::JobState::Unknown as i32,
+                    message: "Job not found".to_string(),
+                    exit_code: 0,
+                    output: String::new(),
+                }))
+            }
         }
     }
 

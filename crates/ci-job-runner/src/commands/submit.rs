@@ -94,83 +94,101 @@ pub async fn stream_logs(
 
 /// Query the controller for the final job status and exit with its exit code.
 /// If the job is not yet terminal, polls until it reaches a terminal state
-/// (with a 5-minute timeout).
+/// (with a 5-minute timeout). Retries up to 3 times on transport errors.
 pub async fn exit_with_job_status(client: &mut super::Client, job_id: &str) -> anyhow::Result<()> {
-    let request = tonic::Request::new(GetJobStatusRequest {
-        job_id: job_id.to_string(),
-    });
-
-    match client.get_job_status(request).await {
-        Ok(resp) => {
-            let status = resp.into_inner();
-            let state = JobState::try_from(status.state).unwrap_or(JobState::Unknown);
-            match state {
-                JobState::Success => {
-                    info!("Job {} completed successfully", job_id);
-                    Ok(())
-                }
-                JobState::Failed => {
-                    let code = status.exit_code;
-                    eprintln!(
-                        "Job {} failed (exit code: {}): {}",
-                        job_id, code, status.message
-                    );
-                    std::process::exit(code)
-                }
-                JobState::Cancelled => {
-                    eprintln!("Job {} was cancelled", job_id);
-                    std::process::exit(130)
-                }
-                _ => {
-                    // Job not yet terminal — poll for final status with a 5-minute timeout
+    // Try up to 3 times (handles transient transport errors after stream close)
+    let mut last_err = String::new();
+    for attempt in 0..3u8 {
+        let request = tonic::Request::new(GetJobStatusRequest {
+            job_id: job_id.to_string(),
+        });
+        match client.get_job_status(request).await {
+            Ok(resp) => return process_terminal_status(client, job_id, resp.into_inner()).await,
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt < 2 {
                     warn!(
-                        "Job {} not yet terminal (state: {:?}), waiting...",
-                        job_id, state
+                        "get_job_status attempt {}/3 failed: {}, retrying...",
+                        attempt + 1,
+                        e
                     );
-                    match wait_for_job_termination_with_timeout(client, job_id, 300).await {
-                        Ok(final_status) => {
-                            let final_state =
-                                JobState::try_from(final_status.state).unwrap_or(JobState::Unknown);
-                            match final_state {
-                                JobState::Success => {
-                                    info!("Job {} completed successfully", job_id);
-                                    Ok(())
-                                }
-                                JobState::Failed => {
-                                    let code = final_status.exit_code;
-                                    eprintln!(
-                                        "Job {} failed (exit code: {}): {}",
-                                        job_id, code, final_status.message
-                                    );
-                                    std::process::exit(code)
-                                }
-                                JobState::Cancelled => {
-                                    eprintln!("Job {} was cancelled", job_id);
-                                    std::process::exit(130)
-                                }
-                                _ => {
-                                    eprintln!(
-                                        "Job {} stuck in state {:?} after timeout",
-                                        job_id, final_state
-                                    );
-                                    std::process::exit(1)
-                                }
-                            }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "Job {} status unknown after 3 retries: {}",
+        job_id, last_err
+    );
+    std::process::exit(1)
+}
+
+/// Process a job status response: exit with the correct code based on state.
+/// If not yet terminal, polls until terminal or timeout.
+async fn process_terminal_status(
+    client: &mut super::Client,
+    job_id: &str,
+    status: GetJobStatusResponse,
+) -> anyhow::Result<()> {
+    let state = JobState::try_from(status.state).unwrap_or(JobState::Unknown);
+    match state {
+        JobState::Success => {
+            info!("Job {} completed successfully", job_id);
+            Ok(())
+        }
+        JobState::Failed => {
+            let code = status.exit_code;
+            eprintln!(
+                "Job {} failed (exit code: {}): {}",
+                job_id, code, status.message
+            );
+            std::process::exit(code)
+        }
+        JobState::Cancelled => {
+            eprintln!("Job {} was cancelled", job_id);
+            std::process::exit(130)
+        }
+        _ => {
+            warn!(
+                "Job {} not yet terminal (state: {:?}), waiting...",
+                job_id, state
+            );
+            match wait_for_job_termination_with_timeout(client, job_id, 300).await {
+                Ok(final_status) => {
+                    let final_state =
+                        JobState::try_from(final_status.state).unwrap_or(JobState::Unknown);
+                    match final_state {
+                        JobState::Success => {
+                            info!("Job {} completed successfully", job_id);
+                            Ok(())
                         }
-                        Err(e) => {
-                            eprintln!("Failed to determine job {} final status: {}", job_id, e);
+                        JobState::Failed => {
+                            let code = final_status.exit_code;
+                            eprintln!(
+                                "Job {} failed (exit code: {}): {}",
+                                job_id, code, final_status.message
+                            );
+                            std::process::exit(code)
+                        }
+                        JobState::Cancelled => {
+                            eprintln!("Job {} was cancelled", job_id);
+                            std::process::exit(130)
+                        }
+                        _ => {
+                            eprintln!(
+                                "Job {} stuck in state {:?} after timeout",
+                                job_id, final_state
+                            );
                             std::process::exit(1)
                         }
                     }
                 }
+                Err(e) => {
+                    eprintln!("Failed to determine job {} final status: {}", job_id, e);
+                    std::process::exit(1)
+                }
             }
-        }
-        Err(_) => {
-            info!(
-                "Job {} log stream ended (could not verify final status)",
-                job_id
-            );
-            Ok(())
         }
     }
 }
