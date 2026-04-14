@@ -432,6 +432,7 @@ async fn handle_job_assignment(
         assignment.environment.clone().into_iter().collect();
     environment.insert("CHOLA_REPOS_DIR".into(), config.execution.repos_dir.clone());
     environment.insert("CHOLA_WORK_DIR".into(), work_dir.clone());
+    environment.insert("WORKER_ID".into(), config.worker_id.clone());
 
     let ctx = JobContext {
         worker_id: config.worker_id.clone(),

@@ -161,9 +161,20 @@ pub async fn dispatch_global_post_script(
     };
 
     let cleanup_id = format!("{}-__cleanup__", group_id);
+    let post_lock = if repo.global_post_script_lock_enabled {
+        Some(ScriptLockConfig {
+            enabled: true,
+            lock_key: repo.global_post_script_lock_key.clone().unwrap_or_default(),
+            timeout_secs: repo.global_post_script_lock_timeout_secs,
+        })
+    } else {
+        None
+    };
+    // Run global post-script as pre_script so it benefits from lock config.
+    // The "command" is a no-op `true` so the stage succeeds if the script succeeds.
     let assignment = JobAssignment {
         job_id: cleanup_id,
-        command: global_post,
+        command: "true".to_string(),
         job_type: "common".to_string(),
         required_cpu: 0,
         required_memory_mb: 0,
@@ -174,11 +185,11 @@ pub async fn dispatch_global_post_script(
         cancel: None,
         job_group_id: group_id.to_string(),
         stage_name: "__cleanup__".to_string(),
-        pre_script: String::new(),
+        pre_script: global_post,
         post_script: String::new(),
         max_duration_secs: 300,
         secret_env_keys: Vec::new(),
-        pre_script_lock: None,
+        pre_script_lock: post_lock,
         post_script_lock: None,
     };
     if sender.send(Ok(assignment)).await.is_err() {
