@@ -1,6 +1,7 @@
 use ci_core::proto::orchestrator::{
     CancelJobRequest, JobState, SubmitStageRequest, WatchJobLogsRequest,
 };
+use tokio::signal::unix::{signal, SignalKind};
 use tracing::{info, warn};
 
 use super::submit::{
@@ -50,6 +51,8 @@ pub async fn execute(
         stage_name: stage.clone(),
     });
 
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+
     match client.watch_job_logs(log_request).await {
         Ok(log_response) => {
             let mut stream = log_response.into_inner();
@@ -69,37 +72,11 @@ pub async fn execute(
                 }
 
                 _ = tokio::signal::ctrl_c() => {
-                    println!("\n{}", "-".repeat(60));
-                    warn!("Received Ctrl+C, cancelling job {}...", jid);
+                    cancel_and_exit(client, &jid, &job_group_id, "User interrupted (Ctrl+C)", 130).await;
+                }
 
-                    let cancel = tonic::Request::new(CancelJobRequest {
-                        job_id: jid.clone(),
-                        reason: "User interrupted (Ctrl+C)".to_string(),
-                        job_group_id: job_group_id.clone(),
-                    });
-
-                    match client.cancel_job(cancel).await {
-                        Ok(cr) => {
-                            let cr = cr.into_inner();
-                            if cr.accepted {
-                                info!("Cancellation accepted: {}", cr.message);
-                                // Short timeout — kill + post-script should finish in ~30s
-                                match wait_for_job_termination_with_timeout(client, &jid, 30).await {
-                                    Ok(s) => info!(
-                                        "Job {} terminated with state: {:?}",
-                                        jid,
-                                        JobState::try_from(s.state).unwrap_or(JobState::Unknown)
-                                    ),
-                                    Err(_) => warn!("Job {} not terminated after 30s, exiting anyway", jid),
-                                }
-                            } else {
-                                warn!("Cancel not accepted: {}", cr.message);
-                            }
-                        }
-                        Err(e) => warn!("Failed to cancel job: {}", e),
-                    }
-
-                    std::process::exit(130) // 128 + SIGINT(2)
+                _ = sigterm.recv() => {
+                    cancel_and_exit(client, &jid, &job_group_id, "Process terminated (SIGTERM)", 143).await;
                 }
             }
         }
@@ -109,4 +86,43 @@ pub async fn execute(
             fallback_poll_status(client, &job_id).await
         }
     }
+}
+
+async fn cancel_and_exit(
+    client: &mut super::Client,
+    job_id: &str,
+    job_group_id: &str,
+    reason: &str,
+    exit_code: i32,
+) -> ! {
+    println!("\n{}", "-".repeat(60));
+    warn!("{}, cancelling job {}...", reason, job_id);
+
+    let cancel = tonic::Request::new(CancelJobRequest {
+        job_id: job_id.to_string(),
+        reason: reason.to_string(),
+        job_group_id: job_group_id.to_string(),
+    });
+
+    match client.cancel_job(cancel).await {
+        Ok(cr) => {
+            let cr = cr.into_inner();
+            if cr.accepted {
+                info!("Cancellation accepted: {}", cr.message);
+                match wait_for_job_termination_with_timeout(client, job_id, 30).await {
+                    Ok(s) => info!(
+                        "Job {} terminated with state: {:?}",
+                        job_id,
+                        JobState::try_from(s.state).unwrap_or(JobState::Unknown)
+                    ),
+                    Err(_) => warn!("Job {} not terminated after 30s, exiting anyway", job_id),
+                }
+            } else {
+                warn!("Cancel not accepted: {}", cr.message);
+            }
+        }
+        Err(e) => warn!("Failed to cancel job: {}", e),
+    }
+
+    std::process::exit(exit_code)
 }
