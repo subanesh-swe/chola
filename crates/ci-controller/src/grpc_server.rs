@@ -12,8 +12,9 @@ use ci_core::proto::orchestrator::{
     GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse, HeartbeatAck,
     HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest, LogAck,
     LogChunk, LogResumeDirective, ReconnectRequest, ReconnectResponse, RegisterRequest,
-    RegisterResponse, ReserveWorkerRequest, ReserveWorkerResponse, SubmitJobRequest,
-    SubmitJobResponse, SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
+    RegisterResponse, ReserveWorkerRequest, ReserveWorkerResponse, ScriptLockConfig,
+    SubmitJobRequest, SubmitJobResponse, SubmitStageRequest, SubmitStageResponse,
+    WatchJobLogsRequest,
 };
 
 use crate::dag;
@@ -177,6 +178,8 @@ pub async fn dispatch_global_post_script(
         post_script: String::new(),
         max_duration_secs: 300,
         secret_env_keys: Vec::new(),
+        pre_script_lock: None,
+        post_script_lock: None,
     };
     if sender.send(Ok(assignment)).await.is_err() {
         warn!(
@@ -208,6 +211,8 @@ fn build_job_assignment(job: Job) -> JobAssignment {
         post_script: job.post_script.unwrap_or_default(),
         max_duration_secs: job.max_duration_secs.unwrap_or(0),
         secret_env_keys: Vec::new(),
+        pre_script_lock: None,
+        post_script_lock: None,
     }
 }
 
@@ -234,6 +239,8 @@ fn build_cancel_assignment(job_id: &str, reason: &str) -> JobAssignment {
         post_script: String::new(),
         max_duration_secs: 0,
         secret_env_keys: Vec::new(),
+        pre_script_lock: None,
+        post_script_lock: None,
     }
 }
 
@@ -937,56 +944,73 @@ async fn do_submit_stage(
     };
 
     // Load pre/post scripts from DB for this stage + worker
-    let (mut pre_script, post_script) =
+    let (mut pre_script, post_script, mut pre_lock, post_lock) =
         if let (Some(storage), Some(sc_id)) = (&state.storage, stage_config_id) {
             let scripts = storage
                 .get_scripts_for_stage(sc_id, Some(&worker_id))
                 .await
                 .unwrap_or_default();
-            let pre = scripts
+            let pre_s = scripts
                 .iter()
-                .find(|s| s.script_type == "pre" && s.script_scope == "worker")
-                .map(|s| s.script.clone())
-                .unwrap_or_default();
-            let post = scripts
+                .find(|s| s.script_type == "pre" && s.script_scope == "worker");
+            let post_s = scripts
                 .iter()
-                .find(|s| s.script_type == "post" && s.script_scope == "worker")
-                .map(|s| s.script.clone())
-                .unwrap_or_default();
-            (pre, post)
+                .find(|s| s.script_type == "post" && s.script_scope == "worker");
+            let pre = pre_s.map(|s| s.script.clone()).unwrap_or_default();
+            let post = post_s.map(|s| s.script.clone()).unwrap_or_default();
+            let pre_lk = pre_s.filter(|s| s.lock_enabled).map(|s| ScriptLockConfig {
+                enabled: true,
+                lock_key: s.lock_key.clone().unwrap_or_default(),
+                timeout_secs: s.lock_timeout_secs,
+            });
+            let post_lk = post_s.filter(|s| s.lock_enabled).map(|s| ScriptLockConfig {
+                enabled: true,
+                lock_key: s.lock_key.clone().unwrap_or_default(),
+                timeout_secs: s.lock_timeout_secs,
+            });
+            (pre, post, pre_lk, post_lk)
         } else {
-            (String::new(), String::new())
+            (String::new(), String::new(), None, None)
         };
 
     // Prepend/append global pre/post scripts at reservation boundaries
     if let (Some(storage), Some(rid)) = (&state.storage, repo_id) {
-        if let Ok((g_pre, g_pre_scope, g_post, g_post_scope)) =
-            storage.get_global_scripts(rid).await
-        {
-            // First stage: prepend global pre_script (worker-scope).
-            // Race-safe: group state transitions Reserved->Running atomically
-            // under write lock when the first job is added, so only one
-            // concurrent call can ever see Reserved.
-            if let Some(ref g_pre_body) = g_pre {
-                if matches!(g_pre_scope.as_str(), "worker" | "both") {
-                    let is_first = {
-                        let jg = state.job_group_registry.read().await;
-                        jg.get(&group_id)
-                            .map(|g| g.state == ci_core::models::job_group::JobGroupState::Reserved)
-                            .unwrap_or(false)
-                    };
-                    if is_first {
-                        if pre_script.is_empty() {
-                            pre_script = g_pre_body.clone();
-                        } else {
-                            pre_script = format!("{}\n{}", g_pre_body, pre_script);
+        if let Ok(repo) = storage.get_repo(rid).await {
+            if let Some(repo) = repo {
+                // First stage: prepend global pre_script (worker-scope).
+                if let Some(ref g_pre_body) = repo.global_pre_script {
+                    if matches!(repo.global_pre_script_scope.as_str(), "worker" | "both") {
+                        let is_first = {
+                            let jg = state.job_group_registry.read().await;
+                            jg.get(&group_id)
+                                .map(|g| {
+                                    g.state == ci_core::models::job_group::JobGroupState::Reserved
+                                })
+                                .unwrap_or(false)
+                        };
+                        if is_first {
+                            if pre_script.is_empty() {
+                                pre_script = g_pre_body.clone();
+                            } else {
+                                pre_script = format!("{}\n{}", g_pre_body, pre_script);
+                            }
+                            // Use global pre-script lock if stage doesn't have its own
+                            if pre_lock.is_none() && repo.global_pre_script_lock_enabled {
+                                pre_lock = Some(ScriptLockConfig {
+                                    enabled: true,
+                                    lock_key: repo
+                                        .global_pre_script_lock_key
+                                        .clone()
+                                        .unwrap_or_default(),
+                                    timeout_secs: repo.global_pre_script_lock_timeout_secs,
+                                });
+                            }
                         }
                     }
                 }
+                // Global post-script is dispatched on group terminal state
+                // (see dispatch_global_post_script), not at submission time.
             }
-            // Global post-script is dispatched on group terminal state
-            // (see dispatch_global_post_script), not at submission time.
-            let _ = (g_post, g_post_scope);
         }
     }
 
@@ -1160,6 +1184,8 @@ async fn do_submit_stage(
                 post_script,
                 max_duration_secs: max_duration_secs_cfg,
                 secret_env_keys,
+                pre_script_lock: pre_lock,
+                post_script_lock: post_lock,
             };
             if sender.send(Ok(assignment)).await.is_err() {
                 warn!(

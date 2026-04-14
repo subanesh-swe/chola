@@ -6,6 +6,118 @@ use tracing::{error, info, warn};
 
 use crate::executor::{Executor, LogLine};
 
+/// Lock configuration for a script, received from the controller.
+#[derive(Debug, Clone, Default)]
+pub struct ScriptLockConfig {
+    pub enabled: bool,
+    pub lock_key: String,
+    pub timeout_secs: i32,
+}
+
+impl ScriptLockConfig {
+    pub fn from_proto(proto: Option<ci_core::proto::orchestrator::ScriptLockConfig>) -> Self {
+        match proto {
+            Some(p) if p.enabled => Self {
+                enabled: true,
+                lock_key: p.lock_key,
+                timeout_secs: p.timeout_secs,
+            },
+            _ => Self::default(),
+        }
+    }
+
+    /// Resolve template variables in lock key.
+    /// Supported: {{WORKER_ID}}, {{REPO_NAME}}, {{COMMIT_SHA}}, {{BRANCH}},
+    ///            {{STAGE_NAME}}, {{JOB_GROUP_ID}}
+    pub fn resolve_key(&self, env: &HashMap<String, String>) -> String {
+        let mut key = self.lock_key.clone();
+        let mappings = [
+            ("{{WORKER_ID}}", "WORKER_ID"),
+            ("{{REPO_NAME}}", "REPO_NAME"),
+            ("{{COMMIT_SHA}}", "COMMIT_SHA"),
+            ("{{BRANCH}}", "BRANCH"),
+            ("{{STAGE_NAME}}", "STAGE_NAME"),
+            ("{{JOB_GROUP_ID}}", "JOB_GROUP_ID"),
+        ];
+        for (template, env_key) in &mappings {
+            if let Some(val) = env.get(*env_key) {
+                key = key.replace(template, val);
+            }
+        }
+        key
+    }
+}
+
+/// Acquire a file lock (flock) with timeout. Returns the lock file handle on success.
+/// Lock files are created under /tmp/chola-locks/.
+async fn acquire_flock(
+    resolved_key: &str,
+    timeout_secs: i32,
+    log_tx: &mpsc::Sender<LogLine>,
+) -> anyhow::Result<std::fs::File> {
+    use std::fs::{self, OpenOptions};
+
+    let lock_dir = PathBuf::from("/tmp/chola-locks");
+    fs::create_dir_all(&lock_dir)?;
+
+    // Sanitize lock key for filename
+    let safe_key: String = resolved_key
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let lock_path = lock_dir.join(format!("{}.lock", safe_key));
+
+    let _ = log_tx
+        .send(LogLine {
+            line: format!(
+                "[LOCK] Acquiring lock: {} (timeout {}s)",
+                resolved_key, timeout_secs
+            ),
+            is_stderr: false,
+        })
+        .await;
+
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+
+    let deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs.max(1) as u64);
+
+    loop {
+        // Try non-blocking flock
+        let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
+        let result = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            let _ = log_tx
+                .send(LogLine {
+                    line: format!("[LOCK] Acquired: {}", resolved_key),
+                    is_stderr: false,
+                })
+                .await;
+            return Ok(file);
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            return Err(anyhow::anyhow!(
+                "Lock timeout after {}s waiting for: {}",
+                timeout_secs,
+                resolved_key
+            ));
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+}
+
 /// Mask secret values in a command string for safe logging.
 fn mask_command_secrets(command: &str, secrets: &[String]) -> String {
     let mut masked = command.to_string();
@@ -78,6 +190,8 @@ impl StageRunner {
         max_duration_secs: i32,
         secret_values: Arc<Vec<String>>,
         environment: &HashMap<String, String>,
+        pre_script_lock: &ScriptLockConfig,
+        post_script_lock: &ScriptLockConfig,
     ) -> anyhow::Result<StageResult> {
         let mut pre_exit_code: Option<i32> = None;
         #[allow(unused_assignments)]
@@ -89,6 +203,34 @@ impl StageRunner {
         // -- Phase 1: Pre-script --
         if !pre_script.is_empty() {
             info!("Running pre_script");
+
+            // Acquire lock if configured (held until _pre_lock_guard is dropped)
+            let _pre_lock_guard = if pre_script_lock.enabled {
+                let resolved = pre_script_lock.resolve_key(environment);
+                match acquire_flock(&resolved, pre_script_lock.timeout_secs, &log_tx).await {
+                    Ok(guard) => Some(guard),
+                    Err(e) => {
+                        error!("Pre-script lock failed: {}", e);
+                        let _ = log_tx
+                            .send(LogLine {
+                                line: format!("[LOCK] Failed to acquire lock: {}", e),
+                                is_stderr: true,
+                            })
+                            .await;
+                        pre_exit_code = Some(-1);
+                        command_exit_code = -1;
+                        return Ok(StageResult {
+                            pre_exit_code,
+                            command_exit_code,
+                            post_exit_code: None,
+                            final_state: StageState::Failed,
+                        });
+                    }
+                }
+            } else {
+                None
+            };
+
             let _ = log_tx
                 .send(LogLine {
                     line: format!(
@@ -139,6 +281,7 @@ impl StageRunner {
                                 environment,
                                 command_exit_code,
                                 false,
+                                post_script_lock,
                             )
                             .await;
                         return Ok(StageResult {
@@ -168,6 +311,7 @@ impl StageRunner {
                             environment,
                             -1,
                             false,
+                            post_script_lock,
                         )
                         .await;
                     return Ok(StageResult {
@@ -272,6 +416,7 @@ impl StageRunner {
                 environment,
                 command_exit_code,
                 was_cancelled,
+                post_script_lock,
             )
             .await;
 
@@ -297,6 +442,7 @@ impl StageRunner {
     /// Run post_script. Returns exit code or None if no post_script.
     /// Injects STAGE_EXIT_CODE and STAGE_WAS_CANCELLED env vars so the
     /// post-script can behave differently on abort vs success.
+    #[allow(clippy::too_many_arguments)]
     async fn run_post_script(
         &self,
         post_script: &str,
@@ -307,12 +453,35 @@ impl StageRunner {
         environment: &HashMap<String, String>,
         command_exit_code: i32,
         was_cancelled: bool,
+        lock_config: &ScriptLockConfig,
     ) -> Option<i32> {
         if post_script.is_empty() {
             return None;
         }
 
         info!("Running post_script (MUST complete)");
+
+        // Acquire lock if configured
+        let _post_lock_guard = if lock_config.enabled {
+            let resolved = lock_config.resolve_key(environment);
+            match acquire_flock(&resolved, lock_config.timeout_secs, log_tx).await {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    warn!("Post-script lock failed: {}", e);
+                    let _ = log_tx
+                        .send(LogLine {
+                            line: format!("[LOCK] Post-script lock failed: {}", e),
+                            is_stderr: true,
+                        })
+                        .await;
+                    // Post-script lock failure is not fatal — run without lock
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let _ = log_tx
             .send(LogLine {
                 line: format!(

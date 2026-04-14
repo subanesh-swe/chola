@@ -22,6 +22,12 @@ const REPO_COLUMNS: &str = "id, repo_name, repo_url, default_branch, enabled, \
      COALESCE(global_pre_script_scope, 'worker') AS global_pre_script_scope, \
      global_post_script, \
      COALESCE(global_post_script_scope, 'worker') AS global_post_script_scope, \
+     COALESCE(global_pre_script_lock_enabled, false) AS global_pre_script_lock_enabled, \
+     global_pre_script_lock_key, \
+     COALESCE(global_pre_script_lock_timeout_secs, 120) AS global_pre_script_lock_timeout_secs, \
+     COALESCE(global_post_script_lock_enabled, false) AS global_post_script_lock_enabled, \
+     global_post_script_lock_key, \
+     COALESCE(global_post_script_lock_timeout_secs, 120) AS global_post_script_lock_timeout_secs, \
      created_at, updated_at";
 
 const STAGE_CONFIG_COLUMNS: &str =
@@ -32,6 +38,8 @@ const STAGE_CONFIG_COLUMNS: &str =
 
 const STAGE_SCRIPT_COLUMNS: &str =
     "id, stage_config_id, worker_id, script_type, script_scope, script, \
+     COALESCE(lock_enabled, false) AS lock_enabled, lock_key, \
+     COALESCE(lock_timeout_secs, 120) AS lock_timeout_secs, \
      created_at, updated_at";
 
 const JOB_GROUP_COLUMNS: &str =
@@ -74,6 +82,12 @@ fn map_repo(r: sqlx::postgres::PgRow) -> Repo {
         global_pre_script_scope: r.get("global_pre_script_scope"),
         global_post_script: r.get("global_post_script"),
         global_post_script_scope: r.get("global_post_script_scope"),
+        global_pre_script_lock_enabled: r.get("global_pre_script_lock_enabled"),
+        global_pre_script_lock_key: r.get("global_pre_script_lock_key"),
+        global_pre_script_lock_timeout_secs: r.get("global_pre_script_lock_timeout_secs"),
+        global_post_script_lock_enabled: r.get("global_post_script_lock_enabled"),
+        global_post_script_lock_key: r.get("global_post_script_lock_key"),
+        global_post_script_lock_timeout_secs: r.get("global_post_script_lock_timeout_secs"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -112,6 +126,9 @@ fn map_stage_script(r: sqlx::postgres::PgRow) -> StageScript {
         script_type: r.get("script_type"),
         script_scope: r.get("script_scope"),
         script: r.get("script"),
+        lock_enabled: r.get("lock_enabled"),
+        lock_key: r.get("lock_key"),
+        lock_timeout_secs: r.get("lock_timeout_secs"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
     }
@@ -723,6 +740,11 @@ impl Storage {
                 30,
                 "status_reason",
                 include_str!("../../../migrations/030_status_reason.sql"),
+            ),
+            (
+                31,
+                "script_locking",
+                include_str!("../../../migrations/031_script_locking.sql"),
             ),
         ];
 
@@ -1859,6 +1881,7 @@ impl Storage {
         Ok(row.map(map_stage_script))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_stage_script(
         &self,
         stage_config_id: Uuid,
@@ -1866,12 +1889,15 @@ impl Storage {
         script_scope: &str,
         script: &str,
         worker_id: Option<&str>,
+        lock_enabled: bool,
+        lock_key: Option<&str>,
+        lock_timeout_secs: i32,
     ) -> anyhow::Result<StageScript> {
         let q = format!(
             "INSERT INTO stage_scripts \
              (id, stage_config_id, worker_id, script_type, script_scope, script, \
-              created_at, updated_at) \
-             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, now(), now()) \
+              lock_enabled, lock_key, lock_timeout_secs, created_at, updated_at) \
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, now(), now()) \
              RETURNING {STAGE_SCRIPT_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1880,11 +1906,15 @@ impl Storage {
             .bind(script_type)
             .bind(script_scope)
             .bind(script)
+            .bind(lock_enabled)
+            .bind(lock_key)
+            .bind(lock_timeout_secs)
             .fetch_one(&self.pool)
             .await?;
         Ok(map_stage_script(row))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_stage_script(
         &self,
         id: Uuid,
@@ -1892,19 +1922,29 @@ impl Storage {
         script_scope: Option<&str>,
         script: Option<&str>,
         worker_id: Option<Option<&str>>,
+        lock_enabled: Option<bool>,
+        lock_key: Option<Option<&str>>,
+        lock_timeout_secs: Option<i32>,
     ) -> anyhow::Result<Option<StageScript>> {
         let q = format!(
             "UPDATE stage_scripts SET \
-             script_type  = COALESCE($2, script_type), \
-             script_scope = COALESCE($3, script_scope), \
-             script       = COALESCE($4, script), \
-             worker_id    = CASE WHEN $5 THEN $6 ELSE worker_id END, \
-             updated_at   = now() \
+             script_type       = COALESCE($2, script_type), \
+             script_scope      = COALESCE($3, script_scope), \
+             script            = COALESCE($4, script), \
+             worker_id         = CASE WHEN $5 THEN $6 ELSE worker_id END, \
+             lock_enabled      = COALESCE($7, lock_enabled), \
+             lock_key          = CASE WHEN $8 THEN $9 ELSE lock_key END, \
+             lock_timeout_secs = COALESCE($10, lock_timeout_secs), \
+             updated_at        = now() \
              WHERE id = $1 \
              RETURNING {STAGE_SCRIPT_COLUMNS}"
         );
         let (update_worker, new_worker): (bool, Option<&str>) = match worker_id {
             Some(w) => (true, w),
+            None => (false, None),
+        };
+        let (update_lock_key, new_lock_key): (bool, Option<&str>) = match lock_key {
+            Some(k) => (true, k),
             None => (false, None),
         };
         let row = sqlx::query(&q)
@@ -1914,6 +1954,10 @@ impl Storage {
             .bind(script)
             .bind(update_worker)
             .bind(new_worker)
+            .bind(lock_enabled)
+            .bind(update_lock_key)
+            .bind(new_lock_key)
+            .bind(lock_timeout_secs)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_stage_script))

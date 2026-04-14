@@ -17,6 +17,12 @@ pub struct Repo {
     pub global_pre_script_scope: String,
     pub global_post_script: Option<String>,
     pub global_post_script_scope: String,
+    pub global_pre_script_lock_enabled: bool,
+    pub global_pre_script_lock_key: Option<String>,
+    pub global_pre_script_lock_timeout_secs: i32,
+    pub global_post_script_lock_enabled: bool,
+    pub global_post_script_lock_key: Option<String>,
+    pub global_post_script_lock_timeout_secs: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -54,6 +60,9 @@ pub struct StageScript {
     pub script_type: String,  // "pre" or "post"
     pub script_scope: String, // "worker" or "master"
     pub script: String,
+    pub lock_enabled: bool,
+    pub lock_key: Option<String>,
+    pub lock_timeout_secs: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

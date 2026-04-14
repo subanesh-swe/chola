@@ -29,6 +29,8 @@ struct JobContext {
     stage_name: String,
     secret_values: Arc<Vec<String>>,
     environment: HashMap<String, String>,
+    pre_script_lock: crate::stage_runner::ScriptLockConfig,
+    post_script_lock: crate::stage_runner::ScriptLockConfig,
 }
 
 /// Outcome of a job or stage execution, used to build the final status report.
@@ -444,6 +446,12 @@ async fn handle_job_assignment(
         stage_name: assignment.stage_name.clone(),
         secret_values: Arc::new(secret_values),
         environment,
+        pre_script_lock: crate::stage_runner::ScriptLockConfig::from_proto(
+            assignment.pre_script_lock.clone(),
+        ),
+        post_script_lock: crate::stage_runner::ScriptLockConfig::from_proto(
+            assignment.post_script_lock.clone(),
+        ),
     };
 
     let job_client = client.clone();
@@ -744,6 +752,8 @@ async fn run_job_with_streaming(
                 ctx.max_duration_secs,
                 ctx.secret_values.clone(),
                 &ctx.environment,
+                &ctx.pre_script_lock,
+                &ctx.post_script_lock,
             )
             .await;
 
