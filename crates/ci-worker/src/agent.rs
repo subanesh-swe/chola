@@ -32,6 +32,7 @@ struct JobContext {
 }
 
 /// Outcome of a job or stage execution, used to build the final status report.
+#[derive(Clone)]
 struct StatusReport {
     state: JobState,
     message: String,
@@ -802,21 +803,38 @@ async fn run_job_with_streaming(
         }
     }
 
-    // Report completion
+    // Report completion (retry up to 3 times — exit code must reach controller)
     let final_message = format!("{} ({} bytes of logs)", report.message, log_bytes);
     let exit_code = report.exit_code;
     let final_state = report.state;
-    if let Err(e) = report_status(
-        job_client,
-        ctx,
-        StatusReport {
-            message: final_message,
-            ..report
-        },
-    )
-    .await
-    {
-        warn!("Failed to report final status for job {}: {e}", ctx.job_id);
+    let final_report = StatusReport {
+        message: final_message,
+        ..report
+    };
+    let mut reported = false;
+    for attempt in 0..3u8 {
+        match report_status(job_client, ctx, final_report.clone()).await {
+            Ok(_) => {
+                reported = true;
+                break;
+            }
+            Err(e) => {
+                warn!(
+                    "report_status attempt {}/3 failed for job {}: {e}",
+                    attempt + 1,
+                    ctx.job_id
+                );
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+    if !reported {
+        error!(
+            "Failed to report final status for job {} after 3 attempts (exit_code={})",
+            ctx.job_id, exit_code
+        );
     }
 
     info!("Job {} completed with exit code {}", ctx.job_id, exit_code);
