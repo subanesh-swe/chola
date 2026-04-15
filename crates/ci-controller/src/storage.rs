@@ -1635,6 +1635,7 @@ impl Storage {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_repo(
         &self,
         id: Uuid,
@@ -1648,6 +1649,12 @@ impl Storage {
         global_pre_script_scope: Option<&str>,
         global_post_script: Option<Option<&str>>,
         global_post_script_scope: Option<&str>,
+        global_pre_script_lock_enabled: Option<bool>,
+        global_pre_script_lock_key: Option<Option<&str>>,
+        global_pre_script_lock_timeout_secs: Option<i32>,
+        global_post_script_lock_enabled: Option<bool>,
+        global_post_script_lock_key: Option<Option<&str>>,
+        global_post_script_lock_timeout_secs: Option<i32>,
     ) -> anyhow::Result<Option<Repo>> {
         let q = format!(
             "UPDATE repos \
@@ -1661,6 +1668,12 @@ impl Storage {
                  global_pre_script_scope = COALESCE($10, global_pre_script_scope), \
                  global_post_script = CASE WHEN $11 THEN $12 ELSE global_post_script END, \
                  global_post_script_scope = COALESCE($13, global_post_script_scope), \
+                 global_pre_script_lock_enabled = COALESCE($14, global_pre_script_lock_enabled), \
+                 global_pre_script_lock_key = CASE WHEN $15 THEN $16 ELSE global_pre_script_lock_key END, \
+                 global_pre_script_lock_timeout_secs = COALESCE($17, global_pre_script_lock_timeout_secs), \
+                 global_post_script_lock_enabled = COALESCE($18, global_post_script_lock_enabled), \
+                 global_post_script_lock_key = CASE WHEN $19 THEN $20 ELSE global_post_script_lock_key END, \
+                 global_post_script_lock_timeout_secs = COALESCE($21, global_post_script_lock_timeout_secs), \
                  updated_at = now() \
              WHERE id = $1 \
              RETURNING {REPO_COLUMNS}"
@@ -1671,6 +1684,14 @@ impl Storage {
             None => (false, None),
         };
         let (post_provided, post_val) = match global_post_script {
+            Some(v) => (true, v),
+            None => (false, None),
+        };
+        let (pre_lock_key_provided, pre_lock_key_val) = match global_pre_script_lock_key {
+            Some(v) => (true, v),
+            None => (false, None),
+        };
+        let (post_lock_key_provided, post_lock_key_val) = match global_post_script_lock_key {
             Some(v) => (true, v),
             None => (false, None),
         };
@@ -1688,6 +1709,14 @@ impl Storage {
             .bind(post_provided)
             .bind(post_val)
             .bind(global_post_script_scope)
+            .bind(global_pre_script_lock_enabled)
+            .bind(pre_lock_key_provided)
+            .bind(pre_lock_key_val)
+            .bind(global_pre_script_lock_timeout_secs)
+            .bind(global_post_script_lock_enabled)
+            .bind(post_lock_key_provided)
+            .bind(post_lock_key_val)
+            .bind(global_post_script_lock_timeout_secs)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(map_repo))

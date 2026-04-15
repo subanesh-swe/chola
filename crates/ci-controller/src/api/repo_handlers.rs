@@ -40,6 +40,12 @@ pub struct UpdateRepoRequest {
     pub global_pre_script_scope: Option<String>,
     pub global_post_script: Option<Option<String>>,
     pub global_post_script_scope: Option<String>,
+    pub global_pre_script_lock_enabled: Option<bool>,
+    pub global_pre_script_lock_key: Option<Option<String>>,
+    pub global_pre_script_lock_timeout_secs: Option<i32>,
+    pub global_post_script_lock_enabled: Option<bool>,
+    pub global_post_script_lock_key: Option<Option<String>>,
+    pub global_post_script_lock_timeout_secs: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +186,12 @@ fn repo_to_json(r: &Repo) -> Value {
         "global_pre_script_scope": r.global_pre_script_scope,
         "global_post_script": r.global_post_script,
         "global_post_script_scope": r.global_post_script_scope,
+        "global_pre_script_lock_enabled": r.global_pre_script_lock_enabled,
+        "global_pre_script_lock_key": r.global_pre_script_lock_key,
+        "global_pre_script_lock_timeout_secs": r.global_pre_script_lock_timeout_secs,
+        "global_post_script_lock_enabled": r.global_post_script_lock_enabled,
+        "global_post_script_lock_key": r.global_post_script_lock_key,
+        "global_post_script_lock_timeout_secs": r.global_post_script_lock_timeout_secs,
         "created_at": r.created_at.to_rfc3339(),
         "updated_at": r.updated_at.to_rfc3339(),
     })
@@ -366,6 +378,16 @@ pub async fn update(
             body.global_pre_script_scope.as_deref(),
             body.global_post_script.as_ref().map(|v| v.as_deref()),
             body.global_post_script_scope.as_deref(),
+            body.global_pre_script_lock_enabled,
+            body.global_pre_script_lock_key
+                .as_ref()
+                .map(|v| v.as_deref()),
+            body.global_pre_script_lock_timeout_secs,
+            body.global_post_script_lock_enabled,
+            body.global_post_script_lock_key
+                .as_ref()
+                .map(|v| v.as_deref()),
+            body.global_post_script_lock_timeout_secs,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
