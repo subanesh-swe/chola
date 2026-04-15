@@ -44,6 +44,10 @@ service Orchestrator {
 
   // Client gets job group status with all stage states
   rpc GetJobGroupStatus (GetJobGroupStatusRequest) returns (GetJobGroupStatusResponse);
+
+  // Distributed lock (Redis-backed, for controller-scope script locking)
+  rpc AcquireLock (AcquireLockRequest) returns (AcquireLockResponse);
+  rpc ReleaseLock (ReleaseLockRequest) returns (ReleaseLockResponse);
 }
 
 // ============================================================================
@@ -146,6 +150,27 @@ message ScriptLockConfig {
   bool enabled = 1;
   string lock_key = 2;        // template: "{{WORKER_ID}}-{{REPO_NAME}}-pre"
   int32 timeout_secs = 3;     // total time for lock acquisition + script execution
+  string scope = 4;           // "worker" (flock, default) or "controller" (Redis via gRPC)
+}
+
+message AcquireLockRequest {
+  string lock_key = 1;        // resolved key (after template substitution)
+  int32 timeout_secs = 2;     // TTL for the lock in Redis
+  string holder_id = 3;       // unique ID of the lock holder (for release)
+}
+
+message AcquireLockResponse {
+  bool acquired = 1;
+  string message = 2;
+}
+
+message ReleaseLockRequest {
+  string lock_key = 1;
+  string holder_id = 2;
+}
+
+message ReleaseLockResponse {
+  bool released = 1;
 }
 
 message CancelDirective {
