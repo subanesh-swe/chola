@@ -57,14 +57,16 @@ const WORKER_COLUMNS: &str =
     "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
      supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at, labels, \
      system_info, worker_token_hash, registration_token_id, approved, description, \
-     COALESCE(priority, 0) AS priority, max_cpu, max_memory_mb, max_disk_mb";
+     COALESCE(priority, 0) AS priority, max_cpu, max_memory_mb, max_disk_mb, \
+     max_cpu_percent, max_memory_percent, max_disk_percent";
 
 /// Raw column list for INSERT (no COALESCE expressions).
 const WORKER_INSERT_COLUMNS: &str =
     "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
      supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at, labels, \
      system_info, worker_token_hash, registration_token_id, approved, description, \
-     priority, max_cpu, max_memory_mb, max_disk_mb";
+     priority, max_cpu, max_memory_mb, max_disk_mb, \
+     max_cpu_percent, max_memory_percent, max_disk_percent";
 
 const RESERVATION_COLUMNS: &str =
     "id, worker_id, job_group_id, reserved_at, expires_at, released_at, release_reason";
@@ -257,6 +259,9 @@ impl From<sqlx::postgres::PgRow> for WorkerRow {
             max_cpu: r.get("max_cpu"),
             max_memory_mb: r.get("max_memory_mb"),
             max_disk_mb: r.get("max_disk_mb"),
+            max_cpu_percent: r.get("max_cpu_percent"),
+            max_memory_percent: r.get("max_memory_percent"),
+            max_disk_percent: r.get("max_disk_percent"),
         }
     }
 }
@@ -330,6 +335,9 @@ pub struct WorkerRow {
     pub max_cpu: Option<i32>,
     pub max_memory_mb: Option<i64>,
     pub max_disk_mb: Option<i64>,
+    pub max_cpu_percent: Option<i32>,
+    pub max_memory_percent: Option<i32>,
+    pub max_disk_percent: Option<i32>,
 }
 
 /// Job row from the jobs table (database-level job, not the in-memory Job struct)
@@ -1215,7 +1223,7 @@ impl Storage {
     pub async fn upsert_worker(&self, worker: &WorkerRow) -> anyhow::Result<WorkerRow> {
         let q = format!(
             "INSERT INTO workers ({WORKER_INSERT_COLUMNS}) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) \
              ON CONFLICT (worker_id) DO UPDATE \
              SET hostname = EXCLUDED.hostname, \
                  total_cpu = EXCLUDED.total_cpu, \
@@ -1233,7 +1241,10 @@ impl Storage {
                  priority = COALESCE(EXCLUDED.priority, workers.priority), \
                  max_cpu = COALESCE(EXCLUDED.max_cpu, workers.max_cpu), \
                  max_memory_mb = COALESCE(EXCLUDED.max_memory_mb, workers.max_memory_mb), \
-                 max_disk_mb = COALESCE(EXCLUDED.max_disk_mb, workers.max_disk_mb) \
+                 max_disk_mb = COALESCE(EXCLUDED.max_disk_mb, workers.max_disk_mb), \
+                 max_cpu_percent = COALESCE(EXCLUDED.max_cpu_percent, workers.max_cpu_percent), \
+                 max_memory_percent = COALESCE(EXCLUDED.max_memory_percent, workers.max_memory_percent), \
+                 max_disk_percent = COALESCE(EXCLUDED.max_disk_percent, workers.max_disk_percent) \
              RETURNING {WORKER_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1258,6 +1269,9 @@ impl Storage {
             .bind(worker.max_cpu)
             .bind(worker.max_memory_mb)
             .bind(worker.max_disk_mb)
+            .bind(worker.max_cpu_percent)
+            .bind(worker.max_memory_percent)
+            .bind(worker.max_disk_percent)
             .fetch_one(&self.pool)
             .await?;
 
@@ -1301,6 +1315,9 @@ impl Storage {
         max_cpu: Option<i32>,
         max_memory_mb: Option<i64>,
         max_disk_mb: Option<i64>,
+        max_cpu_percent: Option<i32>,
+        max_memory_percent: Option<i32>,
+        max_disk_percent: Option<i32>,
     ) -> anyhow::Result<Option<WorkerRow>> {
         // Use CASE WHEN to allow setting columns to NULL (via 0 = clear):
         // - priority: COALESCE (0 is valid, NULL = don't change)
@@ -1310,7 +1327,10 @@ impl Storage {
              priority = COALESCE($2, priority), \
              max_cpu = CASE WHEN $3::bool THEN NULLIF($4, 0) ELSE max_cpu END, \
              max_memory_mb = CASE WHEN $5::bool THEN NULLIF($6::bigint, 0) ELSE max_memory_mb END, \
-             max_disk_mb = CASE WHEN $7::bool THEN NULLIF($8::bigint, 0) ELSE max_disk_mb END \
+             max_disk_mb = CASE WHEN $7::bool THEN NULLIF($8::bigint, 0) ELSE max_disk_mb END, \
+             max_cpu_percent = CASE WHEN $9::bool THEN NULLIF($10, 0) ELSE max_cpu_percent END, \
+             max_memory_percent = CASE WHEN $11::bool THEN NULLIF($12, 0) ELSE max_memory_percent END, \
+             max_disk_percent = CASE WHEN $13::bool THEN NULLIF($14, 0) ELSE max_disk_percent END \
              WHERE worker_id = $1 \
              RETURNING {WORKER_COLUMNS}"
         );
@@ -1323,6 +1343,12 @@ impl Storage {
             .bind(max_memory_mb.unwrap_or(0))
             .bind(max_disk_mb.is_some())
             .bind(max_disk_mb.unwrap_or(0))
+            .bind(max_cpu_percent.is_some())
+            .bind(max_cpu_percent.unwrap_or(0))
+            .bind(max_memory_percent.is_some())
+            .bind(max_memory_percent.unwrap_or(0))
+            .bind(max_disk_percent.is_some())
+            .bind(max_disk_percent.unwrap_or(0))
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(WorkerRow::from))
@@ -3739,15 +3765,19 @@ impl Storage {
         max_cpu: Option<i32>,
         max_memory_mb: Option<i64>,
         max_disk_mb: Option<i64>,
+        max_cpu_percent: Option<i32>,
+        max_memory_percent: Option<i32>,
+        max_disk_percent: Option<i32>,
     ) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
 
         // 1. Upsert worker row
         sqlx::query(
             "INSERT INTO workers (worker_id, hostname, status, registered_at, docker_enabled, \
-             labels, description, approved, priority, max_cpu, max_memory_mb, max_disk_mb) \
+             labels, description, approved, priority, max_cpu, max_memory_mb, max_disk_mb, \
+             max_cpu_percent, max_memory_percent, max_disk_percent) \
              VALUES ($1, $2, 'offline', now(), false, $3, $4, true, \
-                     COALESCE($5, 0), $6, $7, $8) \
+                     COALESCE($5, 0), $6, $7, $8, $9, $10, $11) \
              ON CONFLICT (worker_id) DO UPDATE \
              SET hostname = EXCLUDED.hostname, \
                  labels = EXCLUDED.labels, \
@@ -3755,7 +3785,10 @@ impl Storage {
                  priority = COALESCE(EXCLUDED.priority, workers.priority), \
                  max_cpu = COALESCE(EXCLUDED.max_cpu, workers.max_cpu), \
                  max_memory_mb = COALESCE(EXCLUDED.max_memory_mb, workers.max_memory_mb), \
-                 max_disk_mb = COALESCE(EXCLUDED.max_disk_mb, workers.max_disk_mb)",
+                 max_disk_mb = COALESCE(EXCLUDED.max_disk_mb, workers.max_disk_mb), \
+                 max_cpu_percent = COALESCE(EXCLUDED.max_cpu_percent, workers.max_cpu_percent), \
+                 max_memory_percent = COALESCE(EXCLUDED.max_memory_percent, workers.max_memory_percent), \
+                 max_disk_percent = COALESCE(EXCLUDED.max_disk_percent, workers.max_disk_percent)",
         )
         .bind(worker_id)
         .bind(hostname)
@@ -3765,6 +3798,9 @@ impl Storage {
         .bind(max_cpu)
         .bind(max_memory_mb)
         .bind(max_disk_mb)
+        .bind(max_cpu_percent)
+        .bind(max_memory_percent)
+        .bind(max_disk_percent)
         .execute(&mut *tx)
         .await?;
 

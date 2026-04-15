@@ -52,6 +52,9 @@ impl WorkerRegistry {
             max_cpu: None,
             max_memory_mb: None,
             max_disk_mb: None,
+            max_cpu_percent: None,
+            max_memory_percent: None,
+            max_disk_percent: None,
         };
 
         let state = WorkerState::new(info);
@@ -97,6 +100,9 @@ impl WorkerRegistry {
             max_cpu: None,
             max_memory_mb: None,
             max_disk_mb: None,
+            max_cpu_percent: None,
+            max_memory_percent: None,
+            max_disk_percent: None,
         };
 
         let state = WorkerState::new(info);
@@ -266,6 +272,9 @@ impl WorkerRegistry {
         max_cpu: Option<Option<u32>>,
         max_memory_mb: Option<Option<u64>>,
         max_disk_mb: Option<Option<u64>>,
+        max_cpu_percent: Option<Option<i32>>,
+        max_memory_percent: Option<Option<i32>>,
+        max_disk_percent: Option<Option<i32>>,
     ) -> bool {
         if let Some(worker) = self.workers.get_mut(worker_id) {
             if let Some(p) = priority {
@@ -279,6 +288,15 @@ impl WorkerRegistry {
             }
             if let Some(md) = max_disk_mb {
                 worker.info.max_disk_mb = md;
+            }
+            if let Some(mcp) = max_cpu_percent {
+                worker.info.max_cpu_percent = mcp;
+            }
+            if let Some(mmp) = max_memory_percent {
+                worker.info.max_memory_percent = mmp;
+            }
+            if let Some(mdp) = max_disk_percent {
+                worker.info.max_disk_percent = mdp;
             }
             true
         } else {

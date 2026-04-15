@@ -62,6 +62,12 @@ export interface Worker {
   max_memory_mb: number | null;
   /** Hard cap on disk in MB (null = no limit) */
   max_disk_mb: number | null;
+  /** Percentage cap on CPU (1-100, null = no limit) */
+  max_cpu_percent: number | null;
+  /** Percentage cap on memory (1-100, null = no limit) */
+  max_memory_percent: number | null;
+  /** Percentage cap on disk (1-100, null = no limit) */
+  max_disk_percent: number | null;
   /** Whether the worker has been approved (set via approve/reject API) */
   approved?: boolean;
   /** ID of the registration token used to register this worker */

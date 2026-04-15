@@ -112,6 +112,9 @@ pub async fn list(
                 "max_cpu": w.info.max_cpu,
                 "max_memory_mb": w.info.max_memory_mb,
                 "max_disk_mb": w.info.max_disk_mb,
+                "max_cpu_percent": w.info.max_cpu_percent,
+                "max_memory_percent": w.info.max_memory_percent,
+                "max_disk_percent": w.info.max_disk_percent,
                 "cpu_cap": w.cpu_cap(),
                 "memory_cap": w.memory_cap(),
                 "disk_cap": w.disk_cap(),
@@ -153,6 +156,9 @@ pub async fn list(
                         "max_cpu": row.max_cpu,
                         "max_memory_mb": row.max_memory_mb,
                         "max_disk_mb": row.max_disk_mb,
+                        "max_cpu_percent": row.max_cpu_percent,
+                        "max_memory_percent": row.max_memory_percent,
+                        "max_disk_percent": row.max_disk_percent,
                     }));
                 }
             }
@@ -220,6 +226,9 @@ pub async fn get_one(
         "max_cpu": w.info.max_cpu,
         "max_memory_mb": w.info.max_memory_mb,
         "max_disk_mb": w.info.max_disk_mb,
+        "max_cpu_percent": w.info.max_cpu_percent,
+        "max_memory_percent": w.info.max_memory_percent,
+        "max_disk_percent": w.info.max_disk_percent,
         "cpu_cap": w.cpu_cap(),
         "memory_cap": w.memory_cap(),
         "disk_cap": w.disk_cap(),
@@ -365,6 +374,9 @@ pub struct RegisterWorkerRequest {
     pub max_cpu: Option<i32>,
     pub max_memory_mb: Option<i64>,
     pub max_disk_mb: Option<i64>,
+    pub max_cpu_percent: Option<i32>,
+    pub max_memory_percent: Option<i32>,
+    pub max_disk_percent: Option<i32>,
 }
 
 pub async fn register_worker(
@@ -418,6 +430,9 @@ pub async fn register_worker(
             body.max_cpu,
             body.max_memory_mb,
             body.max_disk_mb,
+            body.max_cpu_percent,
+            body.max_memory_percent,
+            body.max_disk_percent,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -613,6 +628,12 @@ pub struct UpdateLimitsRequest {
     pub max_memory_mb: Option<i64>,
     /// Max disk MB chola may reserve. 0 or null = clear (use total_disk_mb).
     pub max_disk_mb: Option<i64>,
+    /// Max CPU as percentage of total (1-100). 0 or null = clear.
+    pub max_cpu_percent: Option<i32>,
+    /// Max memory as percentage of total (1-100). 0 or null = clear.
+    pub max_memory_percent: Option<i32>,
+    /// Max disk as percentage of total (1-100). 0 or null = clear.
+    pub max_disk_percent: Option<i32>,
 }
 
 /// PUT /api/v1/workers/:id/limits
@@ -636,6 +657,9 @@ pub async fn update_limits(
             body.max_cpu,
             body.max_memory_mb,
             body.max_disk_mb,
+            body.max_cpu_percent,
+            body.max_memory_percent,
+            body.max_disk_percent,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -653,12 +677,20 @@ pub async fn update_limits(
                 .map(|v| if v == 0 { None } else { Some(v as u64) }),
             body.max_disk_mb
                 .map(|v| if v == 0 { None } else { Some(v as u64) }),
+            body.max_cpu_percent
+                .map(|v| if v == 0 { None } else { Some(v) }),
+            body.max_memory_percent
+                .map(|v| if v == 0 { None } else { Some(v) }),
+            body.max_disk_percent
+                .map(|v| if v == 0 { None } else { Some(v) }),
         );
     }
 
     info!(
-        "Worker {} limits updated by {}: priority={:?} max_cpu={:?} max_memory_mb={:?} max_disk_mb={:?}",
-        id, auth_user.username, body.priority, body.max_cpu, body.max_memory_mb, body.max_disk_mb
+        "Worker {} limits updated by {}: priority={:?} max_cpu={:?} max_memory_mb={:?} max_disk_mb={:?} \
+         max_cpu_percent={:?} max_memory_percent={:?} max_disk_percent={:?}",
+        id, auth_user.username, body.priority, body.max_cpu, body.max_memory_mb, body.max_disk_mb,
+        body.max_cpu_percent, body.max_memory_percent, body.max_disk_percent
     );
 
     Ok(Json(json!({
@@ -667,5 +699,8 @@ pub async fn update_limits(
         "max_cpu": row.max_cpu,
         "max_memory_mb": row.max_memory_mb,
         "max_disk_mb": row.max_disk_mb,
+        "max_cpu_percent": row.max_cpu_percent,
+        "max_memory_percent": row.max_memory_percent,
+        "max_disk_percent": row.max_disk_percent,
     })))
 }
