@@ -6,8 +6,14 @@ export interface Repo {
   enabled: boolean;
   global_pre_script: string | null;
   global_pre_script_scope: string;
+  global_pre_script_lock_enabled: boolean;
+  global_pre_script_lock_key: string | null;
+  global_pre_script_lock_timeout_secs: number;
   global_post_script: string | null;
   global_post_script_scope: string;
+  global_post_script_lock_enabled: boolean;
+  global_post_script_lock_key: string | null;
+  global_post_script_lock_timeout_secs: number;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +43,9 @@ export interface StageScript {
   script_type: 'pre' | 'post';
   script_scope: 'worker' | 'master';
   script: string;
+  lock_enabled: boolean;
+  lock_key: string | null;
+  lock_timeout_secs: number;
   created_at: string;
   updated_at: string;
 }
@@ -48,8 +57,14 @@ export interface CreateRepoRequest {
   enabled?: boolean;
   global_pre_script?: string | null;
   global_pre_script_scope?: string;
+  global_pre_script_lock_enabled?: boolean;
+  global_pre_script_lock_key?: string | null;
+  global_pre_script_lock_timeout_secs?: number;
   global_post_script?: string | null;
   global_post_script_scope?: string;
+  global_post_script_lock_enabled?: boolean;
+  global_post_script_lock_key?: string | null;
+  global_post_script_lock_timeout_secs?: number;
 }
 
 export interface Webhook {
