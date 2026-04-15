@@ -46,11 +46,17 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
   const [scriptScope, setScriptScope] = useState<'worker' | 'master'>('worker');
   const [scriptContent, setScriptContent] = useState('');
   const [workerId, setWorkerId] = useState('');
+  const [lockEnabled, setLockEnabled] = useState(false);
+  const [lockKey, setLockKey] = useState('');
+  const [lockTimeoutSecs, setLockTimeoutSecs] = useState(120);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editType, setEditType] = useState<'pre' | 'post'>('pre');
   const [editScope, setEditScope] = useState<'worker' | 'master'>('worker');
   const [editContent, setEditContent] = useState('');
   const [editWorkerId, setEditWorkerId] = useState('');
+  const [editLockEnabled, setEditLockEnabled] = useState(false);
+  const [editLockKey, setEditLockKey] = useState('');
+  const [editLockTimeoutSecs, setEditLockTimeoutSecs] = useState(120);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
@@ -67,6 +73,9 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
     setScriptScope('worker');
     setScriptContent('');
     setWorkerId('');
+    setLockEnabled(false);
+    setLockKey('');
+    setLockTimeoutSecs(120);
   };
 
   const startEdit = (s: StageScript) => {
@@ -75,6 +84,9 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
     setEditScope(s.script_scope);
     setEditContent(s.script);
     setEditWorkerId(s.worker_id ?? '');
+    setEditLockEnabled(s.lock_enabled ?? false);
+    setEditLockKey(s.lock_key ?? '');
+    setEditLockTimeoutSecs(s.lock_timeout_secs ?? 120);
   };
 
   const cancelEdit = () => setEditingId(null);
@@ -85,6 +97,9 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
         script_type: scriptType,
         script_scope: scriptScope,
         script: scriptContent,
+        lock_enabled: lockEnabled,
+        lock_key: lockEnabled && lockKey.trim() ? lockKey.trim() : null,
+        lock_timeout_secs: lockEnabled ? lockTimeoutSecs : 120,
       };
       if (workerId.trim()) req.worker_id = workerId.trim();
       return createScript(repoId, stageId, req);
@@ -105,6 +120,9 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
         script_scope: editScope,
         script: editContent,
         worker_id: editWorkerId.trim() || undefined,
+        lock_enabled: editLockEnabled,
+        lock_key: editLockEnabled && editLockKey.trim() ? editLockKey.trim() : null,
+        lock_timeout_secs: editLockEnabled ? editLockTimeoutSecs : 120,
       }),
     onSuccess: () => {
       toast.success('Script updated');
@@ -174,6 +192,29 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                       placeholder="Leave blank for all workers" />
                   </div>
                   <div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" checked={editLockEnabled} onChange={(e) => setEditLockEnabled(e.target.checked)}
+                        className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                      <span className="text-xs text-slate-300">Enable Lock</span>
+                    </label>
+                    {editLockEnabled && (
+                      <div className="mt-2 space-y-2 pl-1">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Lock Key</label>
+                          <input value={editLockKey} onChange={(e) => setEditLockKey(e.target.value)}
+                            className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="{{WORKER_ID}}-{{REPO_NAME}}-pre" />
+                          <p className="text-xs text-slate-500 mt-0.5">Vars: {'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{STAGE_NAME}} {{JOB_GROUP_ID}}'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Timeout (secs)</label>
+                          <input type="number" min={1} value={editLockTimeoutSecs} onChange={(e) => setEditLockTimeoutSecs(Number(e.target.value))}
+                            className="w-28 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div>
                     <label className="block text-xs text-slate-400 mb-1">Script</label>
                     <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={4}
                       className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
@@ -211,6 +252,11 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                   </span>
                   {s.worker_id && (
                     <span className="text-xs text-slate-500 font-mono">worker: {s.worker_id}</span>
+                  )}
+                  {s.lock_enabled && (
+                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-orange-900/40 text-orange-300 border border-orange-700/50" title={s.lock_key ?? undefined}>
+                      LOCKED {s.lock_timeout_secs}s
+                    </span>
                   )}
                   {canManage && (
                     <div className="ml-auto flex gap-2">
@@ -265,6 +311,30 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                 <label className="block text-sm text-slate-300 mb-1">Worker ID (optional)</label>
                 <input value={workerId} onChange={(e) => setWorkerId(e.target.value)} className={inputCls}
                   placeholder="Leave blank to target all workers" />
+              </div>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" checked={lockEnabled} onChange={(e) => setLockEnabled(e.target.checked)}
+                    className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                  <span className="text-sm text-slate-300">Enable Lock</span>
+                </label>
+                {lockEnabled && (
+                  <div className="mt-2 space-y-2 pl-1 border-l-2 border-orange-700/40 pl-3">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Lock Key</label>
+                      <input value={lockKey} onChange={(e) => setLockKey(e.target.value)} className={inputCls}
+                        placeholder="{{WORKER_ID}}-{{REPO_NAME}}-pre" />
+                      <p className="text-xs text-slate-500 mt-1">
+                        Vars: {'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{STAGE_NAME}} {{JOB_GROUP_ID}}'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Timeout (secs)</label>
+                      <input type="number" min={1} value={lockTimeoutSecs} onChange={(e) => setLockTimeoutSecs(Number(e.target.value))}
+                        className="w-36 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm text-slate-300 mb-1">Script</label>
@@ -1218,8 +1288,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
 
   const [preScript, setPreScript] = useState<string>('');
   const [preScope, setPreScope] = useState<string>('worker');
+  const [preLockEnabled, setPreLockEnabled] = useState(false);
+  const [preLockKey, setPreLockKey] = useState('');
+  const [preLockTimeoutSecs, setPreLockTimeoutSecs] = useState(120);
   const [postScript, setPostScript] = useState<string>('');
   const [postScope, setPostScope] = useState<string>('worker');
+  const [postLockEnabled, setPostLockEnabled] = useState(false);
+  const [postLockKey, setPostLockKey] = useState('');
+  const [postLockTimeoutSecs, setPostLockTimeoutSecs] = useState(120);
   const [editing, setEditing] = useState(false);
 
   // Sync local state when repo data loads
@@ -1227,8 +1303,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
     if (repo) {
       setPreScript(repo.global_pre_script ?? '');
       setPreScope(repo.global_pre_script_scope ?? 'worker');
+      setPreLockEnabled(repo.global_pre_script_lock_enabled ?? false);
+      setPreLockKey(repo.global_pre_script_lock_key ?? '');
+      setPreLockTimeoutSecs(repo.global_pre_script_lock_timeout_secs ?? 120);
       setPostScript(repo.global_post_script ?? '');
       setPostScope(repo.global_post_script_scope ?? 'worker');
+      setPostLockEnabled(repo.global_post_script_lock_enabled ?? false);
+      setPostLockKey(repo.global_post_script_lock_key ?? '');
+      setPostLockTimeoutSecs(repo.global_post_script_lock_timeout_secs ?? 120);
     }
   }, [repo]);
 
@@ -1237,8 +1319,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
       updateRepo(repoId, {
         global_pre_script: preScript || null,
         global_pre_script_scope: preScope,
+        global_pre_script_lock_enabled: preLockEnabled,
+        global_pre_script_lock_key: preLockEnabled && preLockKey.trim() ? preLockKey.trim() : null,
+        global_pre_script_lock_timeout_secs: preLockEnabled ? preLockTimeoutSecs : 120,
         global_post_script: postScript || null,
         global_post_script_scope: postScope,
+        global_post_script_lock_enabled: postLockEnabled,
+        global_post_script_lock_key: postLockEnabled && postLockKey.trim() ? postLockKey.trim() : null,
+        global_post_script_lock_timeout_secs: postLockEnabled ? postLockTimeoutSecs : 120,
       }),
     onSuccess: () => {
       toast.success('Global scripts saved');
@@ -1296,16 +1384,46 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
             ) : (
               scopeBadge(preScope)
             )}
+            {!editing && preLockEnabled && (
+              <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30" title={preLockKey || undefined}>
+                LOCKED {preLockTimeoutSecs}s
+              </span>
+            )}
+            {editing && (
+              <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
+                <input type="checkbox" checked={preLockEnabled} onChange={(e) => setPreLockEnabled(e.target.checked)}
+                  className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                <span className="text-xs text-slate-300">Lock</span>
+              </label>
+            )}
             <span className="text-xs text-slate-500">Runs before first stage of every build</span>
           </div>
           {editing ? (
-            <textarea
-              value={preScript}
-              onChange={(e) => setPreScript(e.target.value)}
-              rows={6}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
-              placeholder="#!/bin/bash&#10;set -e&#10;# Workspace setup script..."
-            />
+            <>
+              <textarea
+                value={preScript}
+                onChange={(e) => setPreScript(e.target.value)}
+                rows={6}
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                placeholder="#!/bin/bash&#10;set -e&#10;# Workspace setup script..."
+              />
+              {preLockEnabled && (
+                <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-orange-700/40 pl-3">
+                  <div className="flex-1 min-w-48">
+                    <label className="block text-xs text-slate-400 mb-1">Lock Key</label>
+                    <input value={preLockKey} onChange={(e) => setPreLockKey(e.target.value)}
+                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="{{WORKER_ID}}-{{REPO_NAME}}-pre" />
+                    <p className="text-xs text-slate-500 mt-0.5">{'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{JOB_GROUP_ID}}'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Timeout (secs)</label>
+                    <input type="number" min={1} value={preLockTimeoutSecs} onChange={(e) => setPreLockTimeoutSecs(Number(e.target.value))}
+                      className="w-28 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                </div>
+              )}
+            </>
           ) : preScript ? (
             <pre className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
               {preScript}
@@ -1332,16 +1450,46 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
             ) : (
               scopeBadge(postScope)
             )}
+            {!editing && postLockEnabled && (
+              <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30" title={postLockKey || undefined}>
+                LOCKED {postLockTimeoutSecs}s
+              </span>
+            )}
+            {editing && (
+              <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
+                <input type="checkbox" checked={postLockEnabled} onChange={(e) => setPostLockEnabled(e.target.checked)}
+                  className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
+                <span className="text-xs text-slate-300">Lock</span>
+              </label>
+            )}
             <span className="text-xs text-slate-500">Runs after last stage of every build</span>
           </div>
           {editing ? (
-            <textarea
-              value={postScript}
-              onChange={(e) => setPostScript(e.target.value)}
-              rows={4}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
-              placeholder="#!/bin/bash&#10;# Cleanup, notifications..."
-            />
+            <>
+              <textarea
+                value={postScript}
+                onChange={(e) => setPostScript(e.target.value)}
+                rows={4}
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                placeholder="#!/bin/bash&#10;# Cleanup, notifications..."
+              />
+              {postLockEnabled && (
+                <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-orange-700/40 pl-3">
+                  <div className="flex-1 min-w-48">
+                    <label className="block text-xs text-slate-400 mb-1">Lock Key</label>
+                    <input value={postLockKey} onChange={(e) => setPostLockKey(e.target.value)}
+                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="{{WORKER_ID}}-{{REPO_NAME}}-post" />
+                    <p className="text-xs text-slate-500 mt-0.5">{'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{JOB_GROUP_ID}}'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Timeout (secs)</label>
+                    <input type="number" min={1} value={postLockTimeoutSecs} onChange={(e) => setPostLockTimeoutSecs(Number(e.target.value))}
+                      className="w-28 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                </div>
+              )}
+            </>
           ) : postScript ? (
             <pre className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
               {postScript}
@@ -1359,8 +1507,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                 setEditing(false);
                 setPreScript(repo?.global_pre_script ?? '');
                 setPreScope(repo?.global_pre_script_scope ?? 'worker');
+                setPreLockEnabled(repo?.global_pre_script_lock_enabled ?? false);
+                setPreLockKey(repo?.global_pre_script_lock_key ?? '');
+                setPreLockTimeoutSecs(repo?.global_pre_script_lock_timeout_secs ?? 120);
                 setPostScript(repo?.global_post_script ?? '');
                 setPostScope(repo?.global_post_script_scope ?? 'worker');
+                setPostLockEnabled(repo?.global_post_script_lock_enabled ?? false);
+                setPostLockKey(repo?.global_post_script_lock_key ?? '');
+                setPostLockTimeoutSecs(repo?.global_post_script_lock_timeout_secs ?? 120);
               }}
               className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700"
             >

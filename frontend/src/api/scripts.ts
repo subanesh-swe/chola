@@ -11,6 +11,9 @@ export interface CreateScriptRequest {
   script_scope: 'worker' | 'master';
   script: string;
   worker_id?: string;
+  lock_enabled?: boolean;
+  lock_key?: string | null;
+  lock_timeout_secs?: number;
 }
 
 export type UpdateScriptRequest = Partial<CreateScriptRequest>;
