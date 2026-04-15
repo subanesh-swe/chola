@@ -52,10 +52,19 @@ const JOB_COLUMNS: &str = "id, job_group_id, stage_config_id, stage_name, comman
      post_script, worker_id, state, exit_code, pre_exit_code, post_exit_code, \
      log_path, started_at, completed_at, retry_count, status_reason, created_at, updated_at";
 
+/// Column list for SELECT / RETURNING (contains COALESCE for nullable priority).
 const WORKER_COLUMNS: &str =
     "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
      supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at, labels, \
-     system_info, worker_token_hash, registration_token_id, approved, description";
+     system_info, worker_token_hash, registration_token_id, approved, description, \
+     COALESCE(priority, 0) AS priority, max_cpu, max_memory_mb, max_disk_mb";
+
+/// Raw column list for INSERT (no COALESCE expressions).
+const WORKER_INSERT_COLUMNS: &str =
+    "worker_id, hostname, total_cpu, total_memory_mb, total_disk_mb, disk_type, \
+     supported_job_types, docker_enabled, status, last_heartbeat_at, registered_at, labels, \
+     system_info, worker_token_hash, registration_token_id, approved, description, \
+     priority, max_cpu, max_memory_mb, max_disk_mb";
 
 const RESERVATION_COLUMNS: &str =
     "id, worker_id, job_group_id, reserved_at, expires_at, released_at, release_reason";
@@ -244,6 +253,10 @@ impl From<sqlx::postgres::PgRow> for WorkerRow {
             registration_token_id: r.get("registration_token_id"),
             approved: r.try_get("approved").unwrap_or(true),
             description: r.get("description"),
+            priority: r.try_get("priority").unwrap_or(0),
+            max_cpu: r.get("max_cpu"),
+            max_memory_mb: r.get("max_memory_mb"),
+            max_disk_mb: r.get("max_disk_mb"),
         }
     }
 }
@@ -313,6 +326,10 @@ pub struct WorkerRow {
     pub registration_token_id: Option<Uuid>,
     pub approved: bool,
     pub description: Option<String>,
+    pub priority: i32,
+    pub max_cpu: Option<i32>,
+    pub max_memory_mb: Option<i64>,
+    pub max_disk_mb: Option<i64>,
 }
 
 /// Job row from the jobs table (database-level job, not the in-memory Job struct)
@@ -484,6 +501,7 @@ pub struct DbLabelGroup {
     pub max_concurrent_jobs: i32,
     pub capabilities: Vec<String>,
     pub enabled: bool,
+    pub priority: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -501,6 +519,7 @@ impl From<sqlx::postgres::PgRow> for DbLabelGroup {
             max_concurrent_jobs: r.try_get("max_concurrent_jobs").unwrap_or(0),
             capabilities: r.try_get("capabilities").unwrap_or_default(),
             enabled: r.try_get("enabled").unwrap_or(true),
+            priority: r.try_get("priority").unwrap_or(0),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         }
@@ -512,7 +531,11 @@ const WORKER_TOKEN_COLUMNS: &str =
 
 const LABEL_GROUP_COLUMNS: &str =
     "id, name, match_labels, env_vars, pre_script, max_concurrent_jobs, \
-     capabilities, enabled, created_at, updated_at";
+     capabilities, enabled, COALESCE(priority, 0) AS priority, created_at, updated_at";
+
+const LABEL_GROUP_INSERT_COLUMNS: &str =
+    "name, match_labels, env_vars, pre_script, max_concurrent_jobs, \
+     capabilities, enabled, priority";
 
 impl Storage {
     /// Create a new Storage with a connection pool.
@@ -745,6 +768,11 @@ impl Storage {
                 31,
                 "script_locking",
                 include_str!("../../../migrations/031_script_locking.sql"),
+            ),
+            (
+                32,
+                "worker_priority_limits",
+                include_str!("../../../migrations/032_worker_priority_limits.sql"),
             ),
         ];
 
@@ -1186,8 +1214,8 @@ impl Storage {
 
     pub async fn upsert_worker(&self, worker: &WorkerRow) -> anyhow::Result<WorkerRow> {
         let q = format!(
-            "INSERT INTO workers ({WORKER_COLUMNS}) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+            "INSERT INTO workers ({WORKER_INSERT_COLUMNS}) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) \
              ON CONFLICT (worker_id) DO UPDATE \
              SET hostname = EXCLUDED.hostname, \
                  total_cpu = EXCLUDED.total_cpu, \
@@ -1201,7 +1229,11 @@ impl Storage {
                  labels = EXCLUDED.labels, \
                  worker_token_hash = COALESCE(EXCLUDED.worker_token_hash, workers.worker_token_hash), \
                  registration_token_id = COALESCE(EXCLUDED.registration_token_id, workers.registration_token_id), \
-                 description = COALESCE(EXCLUDED.description, workers.description) \
+                 description = COALESCE(EXCLUDED.description, workers.description), \
+                 priority = COALESCE(EXCLUDED.priority, workers.priority), \
+                 max_cpu = COALESCE(EXCLUDED.max_cpu, workers.max_cpu), \
+                 max_memory_mb = COALESCE(EXCLUDED.max_memory_mb, workers.max_memory_mb), \
+                 max_disk_mb = COALESCE(EXCLUDED.max_disk_mb, workers.max_disk_mb) \
              RETURNING {WORKER_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -1222,6 +1254,10 @@ impl Storage {
             .bind(worker.registration_token_id)
             .bind(worker.approved)
             .bind(&worker.description)
+            .bind(worker.priority)
+            .bind(worker.max_cpu)
+            .bind(worker.max_memory_mb)
+            .bind(worker.max_disk_mb)
             .fetch_one(&self.pool)
             .await?;
 
@@ -1252,6 +1288,44 @@ impl Storage {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Update scheduling priority and resource limits for a worker.
+    /// Pass None for any field to leave it unchanged.
+    /// Pass Some(0) for max_cpu/max_memory_mb/max_disk_mb to clear the limit
+    /// (the column is set to NULL, meaning "use total_* value").
+    pub async fn update_worker_priority_limits(
+        &self,
+        worker_id: &str,
+        priority: Option<i32>,
+        max_cpu: Option<i32>,
+        max_memory_mb: Option<i64>,
+        max_disk_mb: Option<i64>,
+    ) -> anyhow::Result<Option<WorkerRow>> {
+        // Use CASE WHEN to allow setting columns to NULL (via 0 = clear):
+        // - priority: COALESCE (0 is valid, NULL = don't change)
+        // - max_*: provided flag -> if true, use value (NULLIF to clear on 0)
+        let q = format!(
+            "UPDATE workers SET \
+             priority = COALESCE($2, priority), \
+             max_cpu = CASE WHEN $3::bool THEN NULLIF($4, 0) ELSE max_cpu END, \
+             max_memory_mb = CASE WHEN $5::bool THEN NULLIF($6::bigint, 0) ELSE max_memory_mb END, \
+             max_disk_mb = CASE WHEN $7::bool THEN NULLIF($8::bigint, 0) ELSE max_disk_mb END \
+             WHERE worker_id = $1 \
+             RETURNING {WORKER_COLUMNS}"
+        );
+        let row = sqlx::query(&q)
+            .bind(worker_id)
+            .bind(priority)
+            .bind(max_cpu.is_some())
+            .bind(max_cpu.unwrap_or(0))
+            .bind(max_memory_mb.is_some())
+            .bind(max_memory_mb.unwrap_or(0))
+            .bind(max_disk_mb.is_some())
+            .bind(max_disk_mb.unwrap_or(0))
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(WorkerRow::from))
     }
 
     pub async fn update_worker_status(
@@ -3661,22 +3735,36 @@ impl Storage {
         token_name: &str,
         token_hash: &str,
         created_by: &str,
+        priority: Option<i32>,
+        max_cpu: Option<i32>,
+        max_memory_mb: Option<i64>,
+        max_disk_mb: Option<i64>,
     ) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
 
         // 1. Upsert worker row
         sqlx::query(
-            "INSERT INTO workers (worker_id, hostname, status, registered_at, docker_enabled, labels, description, approved) \
-             VALUES ($1, $2, 'offline', now(), false, $3, $4, true) \
+            "INSERT INTO workers (worker_id, hostname, status, registered_at, docker_enabled, \
+             labels, description, approved, priority, max_cpu, max_memory_mb, max_disk_mb) \
+             VALUES ($1, $2, 'offline', now(), false, $3, $4, true, \
+                     COALESCE($5, 0), $6, $7, $8) \
              ON CONFLICT (worker_id) DO UPDATE \
              SET hostname = EXCLUDED.hostname, \
                  labels = EXCLUDED.labels, \
-                 description = COALESCE(EXCLUDED.description, workers.description)"
+                 description = COALESCE(EXCLUDED.description, workers.description), \
+                 priority = COALESCE(EXCLUDED.priority, workers.priority), \
+                 max_cpu = COALESCE(EXCLUDED.max_cpu, workers.max_cpu), \
+                 max_memory_mb = COALESCE(EXCLUDED.max_memory_mb, workers.max_memory_mb), \
+                 max_disk_mb = COALESCE(EXCLUDED.max_disk_mb, workers.max_disk_mb)",
         )
         .bind(worker_id)
         .bind(hostname)
         .bind(labels)
         .bind(description)
+        .bind(priority)
+        .bind(max_cpu)
+        .bind(max_memory_mb)
+        .bind(max_disk_mb)
         .execute(&mut *tx)
         .await?;
 
@@ -3710,14 +3798,15 @@ impl Storage {
         max_concurrent_jobs: Option<i32>,
         capabilities: &[String],
         enabled: bool,
+        priority: Option<i32>,
     ) -> anyhow::Result<DbLabelGroup> {
         let default_env = serde_json::json!({});
         let ev = env_vars.unwrap_or(&default_env);
         let mcj = max_concurrent_jobs.unwrap_or(0);
+        let pri = priority.unwrap_or(0);
         let q = format!(
-            "INSERT INTO label_groups (name, match_labels, env_vars, pre_script, \
-             max_concurrent_jobs, capabilities, enabled) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+            "INSERT INTO label_groups ({LABEL_GROUP_INSERT_COLUMNS}) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
              RETURNING {LABEL_GROUP_COLUMNS}"
         );
         let row = sqlx::query(&q)
@@ -3728,6 +3817,7 @@ impl Storage {
             .bind(mcj)
             .bind(capabilities)
             .bind(enabled)
+            .bind(pri)
             .fetch_one(&self.pool)
             .await?;
         Ok(DbLabelGroup::from(row))
@@ -3756,6 +3846,7 @@ impl Storage {
         max_concurrent_jobs: Option<i32>,
         capabilities: Option<&[String]>,
         enabled: Option<bool>,
+        priority: Option<i32>,
     ) -> anyhow::Result<Option<DbLabelGroup>> {
         let q = format!(
             "UPDATE label_groups SET \
@@ -3766,6 +3857,7 @@ impl Storage {
              max_concurrent_jobs = COALESCE($6, max_concurrent_jobs), \
              capabilities = COALESCE($7, capabilities), \
              enabled = COALESCE($8, enabled), \
+             priority = COALESCE($9, priority), \
              updated_at = now() \
              WHERE id = $1 \
              RETURNING {LABEL_GROUP_COLUMNS}"
@@ -3779,6 +3871,7 @@ impl Storage {
             .bind(max_concurrent_jobs)
             .bind(capabilities)
             .bind(enabled)
+            .bind(priority)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(DbLabelGroup::from))
