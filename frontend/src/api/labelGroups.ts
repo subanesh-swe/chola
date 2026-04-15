@@ -9,6 +9,8 @@ export interface LabelGroup {
   max_concurrent_jobs: number;
   capabilities: string[];
   enabled: boolean;
+  /** Scheduling priority for matched workers (0 = default) */
+  priority: number;
   created_at: string;
   updated_at: string;
 }
@@ -21,6 +23,7 @@ export interface LabelGroupRequest {
   max_concurrent_jobs?: number;
   capabilities?: string[];
   enabled?: boolean;
+  priority?: number;
 }
 
 export interface UpdateLabelGroupRequest {
@@ -31,6 +34,7 @@ export interface UpdateLabelGroupRequest {
   max_concurrent_jobs?: number;
   capabilities?: string[];
   enabled?: boolean;
+  priority?: number;
 }
 
 export const listLabelGroups = () =>

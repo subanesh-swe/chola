@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listWorkers, drainWorker, undrainWorker, deleteWorker, updateWorkerLabels, registerWorker, regenerateWorkerToken } from '../api/workers';
-import type { RegisterWorkerResponse, RegenerateTokenResponse } from '../api/workers';
+import { listWorkers, drainWorker, undrainWorker, deleteWorker, updateWorkerLabels, registerWorker, regenerateWorkerToken, updateWorkerLimits } from '../api/workers';
+import type { RegisterWorkerResponse, RegenerateTokenResponse, WorkerLimitsRequest } from '../api/workers';
 import {
   listBranchBlacklist,
   createBranchBlacklist,
@@ -162,6 +162,10 @@ function RegisterWorkerModal({
   const [description, setDescription] = useState('');
   const [labels, setLabels] = useState<string[]>([]);
   const [labelInput, setLabelInput] = useState('');
+  const [regPriority, setRegPriority] = useState('0');
+  const [regMaxCpu, setRegMaxCpu] = useState('');
+  const [regMaxMemGb, setRegMaxMemGb] = useState('');
+  const [regMaxDiskGb, setRegMaxDiskGb] = useState('');
 
   const registerMut = useMutation({
     mutationFn: () =>
@@ -170,6 +174,10 @@ function RegisterWorkerModal({
         hostname: hostname.trim(),
         labels: labels.length > 0 ? labels : undefined,
         description: description.trim() || undefined,
+        priority: parseInt(regPriority, 10) || 0,
+        max_cpu: regMaxCpu !== '' ? parseInt(regMaxCpu, 10) : undefined,
+        max_memory_mb: regMaxMemGb !== '' ? Math.round(parseFloat(regMaxMemGb) * 1024) : undefined,
+        max_disk_mb: regMaxDiskGb !== '' ? Math.round(parseFloat(regMaxDiskGb) * 1024) : undefined,
       }),
     onSuccess: (data) => {
       onSuccess(data);
@@ -271,6 +279,56 @@ function RegisterWorkerModal({
               className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               placeholder="Optional description for this worker"
             />
+          </div>
+          <div className="pt-2 border-t border-slate-700">
+            <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Resource Limits</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Priority</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={regPriority}
+                  onChange={(e) => setRegPriority(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max CPU (cores)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={regMaxCpu}
+                  onChange={(e) => setRegMaxCpu(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="no limit"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max Memory (GB)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={regMaxMemGb}
+                  onChange={(e) => setRegMaxMemGb(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="no limit"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max Disk (GB)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={regMaxDiskGb}
+                  onChange={(e) => setRegMaxDiskGb(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="no limit"
+                />
+              </div>
+            </div>
           </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
@@ -427,6 +485,82 @@ function InlineLabelsEditor({
         <button
           type="button"
           onClick={() => onSave(labels)}
+          disabled={isPending}
+          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          {isPending ? 'Saving...' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Inline Limits Editor ──────────────────────────────────────────────────────
+
+function InlineLimitsEditor({
+  workerId,
+  initial,
+  onSave,
+  onCancel,
+  isPending,
+}: {
+  workerId: string;
+  initial: WorkerLimitsRequest;
+  onSave: (limits: WorkerLimitsRequest) => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [priority, setPriority] = useState(String(initial.priority ?? 0));
+  const [maxCpu, setMaxCpu] = useState(initial.max_cpu != null ? String(initial.max_cpu) : '');
+  const [maxMemGb, setMaxMemGb] = useState(
+    initial.max_memory_mb != null ? String(parseFloat((initial.max_memory_mb / 1024).toFixed(1))) : '',
+  );
+  const [maxDiskGb, setMaxDiskGb] = useState(
+    initial.max_disk_mb != null ? String(parseFloat((initial.max_disk_mb / 1024).toFixed(1))) : '',
+  );
+
+  function save() {
+    onSave({
+      priority: parseInt(priority, 10) || 0,
+      max_cpu: maxCpu !== '' ? parseInt(maxCpu, 10) : null,
+      max_memory_mb: maxMemGb !== '' ? Math.round(parseFloat(maxMemGb) * 1024) : null,
+      max_disk_mb: maxDiskGb !== '' ? Math.round(parseFloat(maxDiskGb) * 1024) : null,
+    });
+  }
+
+  const inputCls = 'px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono w-24 focus:outline-none focus:ring-1 focus:ring-blue-500';
+
+  return (
+    <div className="mt-2 space-y-2" aria-label={`Edit limits for worker ${workerId}`}>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+        <div>
+          <label className="block text-[10px] text-slate-500 mb-0.5">Priority</label>
+          <input type="number" min="0" value={priority} onChange={(e) => setPriority(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-[10px] text-slate-500 mb-0.5">Max CPU (cores)</label>
+          <input type="number" min="1" value={maxCpu} onChange={(e) => setMaxCpu(e.target.value)} className={inputCls} placeholder="no limit" />
+        </div>
+        <div>
+          <label className="block text-[10px] text-slate-500 mb-0.5">Max Memory (GB)</label>
+          <input type="number" min="0" step="0.1" value={maxMemGb} onChange={(e) => setMaxMemGb(e.target.value)} className={inputCls} placeholder="no limit" />
+        </div>
+        <div>
+          <label className="block text-[10px] text-slate-500 mb-0.5">Max Disk (GB)</label>
+          <input type="number" min="0" step="0.1" value={maxDiskGb} onChange={(e) => setMaxDiskGb(e.target.value)} className={inputCls} placeholder="no limit" />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={save}
           disabled={isPending}
           className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
@@ -643,6 +777,7 @@ export default function WorkersPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [editingLabelsId, setEditingLabelsId] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState<string[]>([]);
+  const [editingLimitsId, setEditingLimitsId] = useState<string | null>(null);
   const { data, isLoading, isError } = useQuery({ queryKey: ['workers'], queryFn: () => listWorkers(), refetchInterval: 5000 });
 
   const drainMut = useMutation({
@@ -687,8 +822,19 @@ export default function WorkersPage() {
       toast.error((err as MutationError).userMessage || 'Failed to regenerate token');
     },
   });
+  const updateLimitsMut = useMutation({
+    mutationFn: ({ id, limits }: { id: string; limits: WorkerLimitsRequest }) =>
+      updateWorkerLimits(id, limits),
+    onSuccess: () => {
+      toast.success('Worker limits updated');
+      setEditingLimitsId(null);
+      qc.invalidateQueries({ queryKey: ['workers'] });
+    },
+    onError: (err: unknown) =>
+      toast.error((err as MutationError).userMessage || 'Failed to update limits'),
+  });
 
-  const workers = data?.data ?? [];
+  const workers = [...(data?.data ?? [])].sort((a, b) => a.worker_id.localeCompare(b.worker_id));
 
   return (
     <div className="space-y-4">
@@ -717,7 +863,14 @@ export default function WorkersPage() {
                 <div className="flex items-center gap-3 min-w-0">
                   <StatusBadge status={w.status} size="md" />
                   <div className="min-w-0">
-                    <p className="text-lg font-semibold text-white truncate">{w.worker_id}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-lg font-semibold text-white truncate">{w.worker_id}</p>
+                      {w.priority > 0 && (
+                        <span className="text-[11px] px-1.5 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/30 shrink-0">
+                          P:{w.priority}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm text-slate-400">{w.hostname} &middot; {w.disk_type} &middot; Docker: {w.docker_enabled ? 'Yes' : 'No'}</p>
                   </div>
                 </div>
@@ -781,22 +934,24 @@ export default function WorkersPage() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <ResourceBar
                         label={hasLastKnown ? 'CPU (last known)' : 'CPU'}
-                        total={w.total_cpu}
+                        total={w.max_cpu ?? w.total_cpu}
                         reserved={w.allocated_cpu}
                         used={w.last_heartbeat?.used_cpu_percent ?? 0}
                         unit="cores"
                         usedIsPercent
+                        hardwareTotal={w.max_cpu != null ? w.total_cpu : undefined}
                       />
                       <ResourceBar
                         label={hasLastKnown ? 'Memory (last known)' : 'Memory'}
-                        total={parseFloat((w.total_memory_mb / 1024).toFixed(1))}
+                        total={parseFloat(((w.max_memory_mb ?? w.total_memory_mb) / 1024).toFixed(1))}
                         reserved={parseFloat((w.allocated_memory_mb / 1024).toFixed(1))}
                         used={parseFloat(((w.last_heartbeat?.used_memory_mb ?? 0) / 1024).toFixed(1))}
                         unit="GB"
+                        hardwareTotal={w.max_memory_mb != null ? parseFloat((w.total_memory_mb / 1024).toFixed(1)) : undefined}
                       />
                       <DiskSection
                         usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
-                        totalDiskMb={w.total_disk_mb}
+                        totalDiskMb={w.max_disk_mb ?? w.total_disk_mb}
                         allocatedDiskMb={w.allocated_disk_mb}
                         diskDetails={w.last_heartbeat?.disk_details ?? w.disk_details ?? []}
                         expanded={expandedDisks.has(w.worker_id)}
@@ -896,6 +1051,44 @@ export default function WorkersPage() {
                   />
                 )}
               </div>
+              {/* Resource limits inline edit */}
+              {canManageWorkers && (
+                <div className="mt-3 pt-3 border-t border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500 font-medium">Limits:</span>
+                    {w.max_cpu != null && (
+                      <span className="text-xs text-slate-400">CPU: {w.max_cpu}</span>
+                    )}
+                    {w.max_memory_mb != null && (
+                      <span className="text-xs text-slate-400">Mem: {parseFloat((w.max_memory_mb / 1024).toFixed(1))} GB</span>
+                    )}
+                    {w.max_disk_mb != null && (
+                      <span className="text-xs text-slate-400">Disk: {parseFloat((w.max_disk_mb / 1024).toFixed(1))} GB</span>
+                    )}
+                    {w.max_cpu == null && w.max_memory_mb == null && w.max_disk_mb == null && (
+                      <span className="text-xs text-slate-600 italic">none</span>
+                    )}
+                    {editingLimitsId !== w.worker_id && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingLimitsId(w.worker_id)}
+                        className="text-xs text-slate-500 hover:text-slate-300 underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                      >
+                        Edit Limits
+                      </button>
+                    )}
+                  </div>
+                  {editingLimitsId === w.worker_id && (
+                    <InlineLimitsEditor
+                      workerId={w.worker_id}
+                      initial={{ priority: w.priority, max_cpu: w.max_cpu, max_memory_mb: w.max_memory_mb, max_disk_mb: w.max_disk_mb }}
+                      onSave={(limits) => updateLimitsMut.mutate({ id: w.worker_id, limits })}
+                      onCancel={() => setEditingLimitsId(null)}
+                      isPending={updateLimitsMut.isPending}
+                    />
+                  )}
+                </div>
+              )}
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
                 <span>Types: {w.supported_job_types.join(', ')}</span>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>

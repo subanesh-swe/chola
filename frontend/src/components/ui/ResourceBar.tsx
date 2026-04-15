@@ -6,6 +6,11 @@ interface Props {
   unit: string;
   /** When true, `used` is already a percentage (0-100) rather than an absolute value */
   usedIsPercent?: boolean;
+  /**
+   * Hardware total before any limit cap. When provided and different from `total`,
+   * the label shows "N limit / M total" instead of just "N total".
+   */
+  hardwareTotal?: number;
 }
 
 function getBarColor(percent: number): string {
@@ -21,15 +26,21 @@ export function ResourceBar({
   used,
   unit,
   usedIsPercent = false,
+  hardwareTotal,
 }: Props) {
   const clamp = (v: number) => Math.max(0, Math.min(v, 100));
   const safe = (v: number) => (isNaN(v) || v < 0 ? 0 : v);
   const reservedPct = total > 0 ? clamp((safe(reserved) / total) * 100) : 0;
   const usedPct = usedIsPercent ? clamp(safe(used)) : (total > 0 ? clamp((safe(used) / total) * 100) : 0);
 
+  const showBoth = hardwareTotal != null && hardwareTotal !== total;
+  const totalLabel = showBoth
+    ? `${total} limit / ${hardwareTotal} ${unit}`
+    : `${total} ${unit}`;
+
   return (
     <div className="space-y-1.5">
-      <div className="text-xs text-slate-400 font-medium">{label} ({total} {unit})</div>
+      <div className="text-xs text-slate-400 font-medium">{label} ({totalLabel})</div>
 
       {/* Reserved bar */}
       <div className="flex items-center gap-2">

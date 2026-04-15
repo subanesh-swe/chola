@@ -6,6 +6,10 @@ export interface RegisterWorkerRequest {
   hostname: string;
   labels?: string[];
   description?: string;
+  priority?: number;
+  max_cpu?: number;
+  max_memory_mb?: number;
+  max_disk_mb?: number;
 }
 
 export interface RegisterWorkerResponse {
@@ -48,3 +52,13 @@ export const regenerateWorkerToken = (workerId: string) =>
   apiClient
     .post<RegenerateTokenResponse>(`/workers/${workerId}/regenerate-token`)
     .then((r) => r.data);
+
+export interface WorkerLimitsRequest {
+  priority?: number;
+  max_cpu?: number | null;
+  max_memory_mb?: number | null;
+  max_disk_mb?: number | null;
+}
+
+export const updateWorkerLimits = (id: string, limits: WorkerLimitsRequest) =>
+  apiClient.put(`/workers/${id}/limits`, limits).then((r) => r.data);
