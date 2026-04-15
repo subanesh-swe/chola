@@ -138,7 +138,11 @@ async fn process_terminal_status(
             Ok(())
         }
         JobState::Failed => {
-            let code = status.exit_code;
+            let code = if status.exit_code == 0 {
+                1
+            } else {
+                status.exit_code
+            };
             eprintln!(
                 "Job {} failed (exit code: {}): {}",
                 job_id, code, status.message
@@ -164,7 +168,11 @@ async fn process_terminal_status(
                             Ok(())
                         }
                         JobState::Failed => {
-                            let code = final_status.exit_code;
+                            let code = if final_status.exit_code == 0 {
+                                1
+                            } else {
+                                final_status.exit_code
+                            };
                             eprintln!(
                                 "Job {} failed (exit code: {}): {}",
                                 job_id, code, final_status.message
@@ -330,7 +338,11 @@ pub async fn fallback_poll_status(client: &mut super::Client, job_id: &str) -> a
                             eprintln!("{}", status.output);
                             println!("{}", "-".repeat(60));
                         }
-                        let code = status.exit_code;
+                        let code = if status.exit_code == 0 {
+                            1
+                        } else {
+                            status.exit_code
+                        };
                         eprintln!(
                             "Job {} failed (exit code: {}): {}",
                             status.job_id, code, status.message

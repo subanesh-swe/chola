@@ -253,10 +253,12 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                   {s.worker_id && (
                     <span className="text-xs text-slate-500 font-mono">worker: {s.worker_id}</span>
                   )}
-                  {s.lock_enabled && (
-                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-orange-900/40 text-orange-300 border border-orange-700/50" title={s.lock_key ?? undefined}>
-                      LOCKED {s.lock_timeout_secs}s
+                  {s.lock_enabled ? (
+                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-orange-900/40 text-orange-300 border border-orange-700/50">
+                      LOCK {s.lock_key || '(default)'} — {s.lock_timeout_secs}s
                     </span>
+                  ) : (
+                    <span className="text-xs text-slate-600">No lock</span>
                   )}
                   {canManage && (
                     <div className="ml-auto flex gap-2">
@@ -1384,10 +1386,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
             ) : (
               scopeBadge(preScope)
             )}
-            {!editing && preLockEnabled && (
-              <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30" title={preLockKey || undefined}>
-                LOCKED {preLockTimeoutSecs}s
-              </span>
+            {!editing && (
+              preLockEnabled ? (
+                <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30">
+                  LOCK {preLockKey || '(default key)'} — {preLockTimeoutSecs}s
+                </span>
+              ) : (
+                <span className="text-xs text-slate-600">No lock</span>
+              )
             )}
             {editing && (
               <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
@@ -1450,10 +1456,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
             ) : (
               scopeBadge(postScope)
             )}
-            {!editing && postLockEnabled && (
-              <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30" title={postLockKey || undefined}>
-                LOCKED {postLockTimeoutSecs}s
-              </span>
+            {!editing && (
+              postLockEnabled ? (
+                <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30">
+                  LOCK {postLockKey || '(default key)'} — {postLockTimeoutSecs}s
+                </span>
+              ) : (
+                <span className="text-xs text-slate-600">No lock</span>
+              )
             )}
             {editing && (
               <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
