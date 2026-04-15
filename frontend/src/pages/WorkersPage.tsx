@@ -15,6 +15,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { usePermission } from '../hooks/usePermission';
 import { toast } from 'sonner';
 import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo, WorkerActiveGroup } from '../types';
+import type { Worker as CholaWorker } from '../types/worker';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 
@@ -144,6 +145,63 @@ function DiskSection({
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Resource bars with effective caps ─────────────────────────────────────────
+
+function ResourceBarsSection({ w, hasLastKnown, expandedDisks, setExpandedDisks }: {
+  w: CholaWorker;
+  hasLastKnown: boolean;
+  expandedDisks: Set<string>;
+  setExpandedDisks: React.Dispatch<React.SetStateAction<Set<string>>>;
+}) {
+  const cpuCap = Math.min(
+    w.max_cpu ?? w.total_cpu,
+    w.max_cpu_percent != null ? Math.floor(w.total_cpu * w.max_cpu_percent / 100) : w.total_cpu
+  );
+  const memCapMb = Math.min(
+    w.max_memory_mb ?? w.total_memory_mb,
+    w.max_memory_percent != null ? Math.floor(w.total_memory_mb * w.max_memory_percent / 100) : w.total_memory_mb
+  );
+  const diskCapMb = Math.min(
+    w.max_disk_mb ?? w.total_disk_mb,
+    w.max_disk_percent != null ? Math.floor(w.total_disk_mb * w.max_disk_percent / 100) : w.total_disk_mb
+  );
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <ResourceBar
+        label={hasLastKnown ? 'CPU (last known)' : 'CPU'}
+        total={cpuCap}
+        reserved={w.allocated_cpu}
+        used={w.last_heartbeat?.used_cpu_percent ?? 0}
+        unit="cores"
+        usedIsPercent
+        hardwareTotal={cpuCap < w.total_cpu ? w.total_cpu : undefined}
+      />
+      <ResourceBar
+        label={hasLastKnown ? 'Memory (last known)' : 'Memory'}
+        total={parseFloat((memCapMb / 1024).toFixed(1))}
+        reserved={parseFloat((w.allocated_memory_mb / 1024).toFixed(1))}
+        used={parseFloat(((w.last_heartbeat?.used_memory_mb ?? 0) / 1024).toFixed(1))}
+        unit="GB"
+        hardwareTotal={memCapMb < w.total_memory_mb ? parseFloat((w.total_memory_mb / 1024).toFixed(1)) : undefined}
+      />
+      <DiskSection
+        usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
+        totalDiskMb={diskCapMb}
+        allocatedDiskMb={w.allocated_disk_mb}
+        diskDetails={w.last_heartbeat?.disk_details ?? w.disk_details ?? []}
+        expanded={expandedDisks.has(w.worker_id)}
+        onToggle={() => setExpandedDisks(prev => {
+          const next = new Set(prev);
+          if (next.has(w.worker_id)) next.delete(w.worker_id);
+          else next.add(w.worker_id);
+          return next;
+        })}
+      />
     </div>
   );
 }
@@ -575,14 +633,15 @@ function InlineLimitsEditor({
   const [maxDiskPct, setMaxDiskPct] = useState(initial.max_disk_percent != null ? String(initial.max_disk_percent) : '');
 
   function save() {
+    // Send 0 to clear a limit (backend NULLIF converts 0 → NULL in DB)
     onSave({
       priority: parseInt(priority, 10) || 0,
-      max_cpu: maxCpu !== '' ? parseInt(maxCpu, 10) : null,
-      max_cpu_percent: maxCpuPct !== '' ? parseInt(maxCpuPct, 10) : null,
-      max_memory_mb: maxMemGb !== '' ? Math.round(parseFloat(maxMemGb) * 1024) : null,
-      max_memory_percent: maxMemPct !== '' ? parseInt(maxMemPct, 10) : null,
-      max_disk_mb: maxDiskGb !== '' ? Math.round(parseFloat(maxDiskGb) * 1024) : null,
-      max_disk_percent: maxDiskPct !== '' ? parseInt(maxDiskPct, 10) : null,
+      max_cpu: maxCpu !== '' ? parseInt(maxCpu, 10) : 0,
+      max_cpu_percent: maxCpuPct !== '' ? parseInt(maxCpuPct, 10) : 0,
+      max_memory_mb: maxMemGb !== '' ? Math.round(parseFloat(maxMemGb) * 1024) : 0,
+      max_memory_percent: maxMemPct !== '' ? parseInt(maxMemPct, 10) : 0,
+      max_disk_mb: maxDiskGb !== '' ? Math.round(parseFloat(maxDiskGb) * 1024) : 0,
+      max_disk_percent: maxDiskPct !== '' ? parseInt(maxDiskPct, 10) : 0,
     });
   }
 
@@ -997,38 +1056,7 @@ export default function WorkersPage() {
                         Last known values (worker offline)
                       </p>
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <ResourceBar
-                        label={hasLastKnown ? 'CPU (last known)' : 'CPU'}
-                        total={w.max_cpu ?? w.total_cpu}
-                        reserved={w.allocated_cpu}
-                        used={w.last_heartbeat?.used_cpu_percent ?? 0}
-                        unit="cores"
-                        usedIsPercent
-                        hardwareTotal={w.max_cpu != null ? w.total_cpu : undefined}
-                      />
-                      <ResourceBar
-                        label={hasLastKnown ? 'Memory (last known)' : 'Memory'}
-                        total={parseFloat(((w.max_memory_mb ?? w.total_memory_mb) / 1024).toFixed(1))}
-                        reserved={parseFloat((w.allocated_memory_mb / 1024).toFixed(1))}
-                        used={parseFloat(((w.last_heartbeat?.used_memory_mb ?? 0) / 1024).toFixed(1))}
-                        unit="GB"
-                        hardwareTotal={w.max_memory_mb != null ? parseFloat((w.total_memory_mb / 1024).toFixed(1)) : undefined}
-                      />
-                      <DiskSection
-                        usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
-                        totalDiskMb={w.max_disk_mb ?? w.total_disk_mb}
-                        allocatedDiskMb={w.allocated_disk_mb}
-                        diskDetails={w.last_heartbeat?.disk_details ?? w.disk_details ?? []}
-                        expanded={expandedDisks.has(w.worker_id)}
-                        onToggle={() => setExpandedDisks(prev => {
-                          const next = new Set(prev);
-                          if (next.has(w.worker_id)) next.delete(w.worker_id);
-                          else next.add(w.worker_id);
-                          return next;
-                        })}
-                      />
-                    </div>
+                    <ResourceBarsSection w={w} hasLastKnown={hasLastKnown} expandedDisks={expandedDisks} setExpandedDisks={setExpandedDisks} />
                   </div>
                 );
               })()}

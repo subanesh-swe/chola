@@ -200,16 +200,12 @@ impl WorkerState {
         }
     }
 
-    /// Available disk in MB (from heartbeat), capped by max_disk_mb if set.
+    /// Available disk in MB (from heartbeat), capped by effective disk limit.
     pub fn free_disk_mb(&self) -> u64 {
         let physical_free = match &self.last_heartbeat {
             Some(hb) => self.info.total_disk_mb.saturating_sub(hb.used_disk_mb),
             None => self.info.total_disk_mb,
         };
-        // Cap by max_disk_mb if configured
-        match self.info.max_disk_mb {
-            Some(max) => physical_free.min(max),
-            None => physical_free,
-        }
+        physical_free.min(self.disk_cap())
     }
 }
