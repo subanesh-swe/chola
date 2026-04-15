@@ -163,4 +163,20 @@ impl GrpcClient {
             .await?;
         Ok(resp.into_inner())
     }
+
+    pub async fn acquire_lock(
+        &self,
+        req: tonic::Request<ci_core::proto::orchestrator::AcquireLockRequest>,
+    ) -> Result<tonic::Response<ci_core::proto::orchestrator::AcquireLockResponse>, tonic::Status>
+    {
+        self.client.clone().acquire_lock(req).await
+    }
+
+    pub async fn release_lock(
+        &self,
+        req: tonic::Request<ci_core::proto::orchestrator::ReleaseLockRequest>,
+    ) -> Result<tonic::Response<ci_core::proto::orchestrator::ReleaseLockResponse>, tonic::Status>
+    {
+        self.client.clone().release_lock(req).await
+    }
 }

@@ -8,13 +8,13 @@ use tracing::{error, info, warn};
 use ci_core::models::job::{Job, JobType};
 use ci_core::proto::orchestrator::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
-    CancelDirective, CancelJobRequest, CancelJobResponse, GetJobGroupStatusRequest,
-    GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse, HeartbeatAck,
-    HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest, LogAck,
-    LogChunk, LogResumeDirective, ReconnectRequest, ReconnectResponse, RegisterRequest,
-    RegisterResponse, ReserveWorkerRequest, ReserveWorkerResponse, ScriptLockConfig,
-    SubmitJobRequest, SubmitJobResponse, SubmitStageRequest, SubmitStageResponse,
-    WatchJobLogsRequest,
+    AcquireLockRequest, AcquireLockResponse, CancelDirective, CancelJobRequest, CancelJobResponse,
+    GetJobGroupStatusRequest, GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse,
+    HeartbeatAck, HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest,
+    LogAck, LogChunk, LogResumeDirective, ReconnectRequest, ReconnectResponse, RegisterRequest,
+    RegisterResponse, ReleaseLockRequest, ReleaseLockResponse, ReserveWorkerRequest,
+    ReserveWorkerResponse, ScriptLockConfig, SubmitJobRequest, SubmitJobResponse,
+    SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
 };
 
 use crate::dag;
@@ -166,6 +166,7 @@ pub async fn dispatch_global_post_script(
             enabled: true,
             lock_key: repo.global_post_script_lock_key.clone().unwrap_or_default(),
             timeout_secs: repo.global_post_script_lock_timeout_secs,
+            scope: repo.global_post_script_scope.clone(),
         })
     } else {
         None
@@ -977,11 +978,13 @@ async fn do_submit_stage(
                 enabled: true,
                 lock_key: s.lock_key.clone().unwrap_or_default(),
                 timeout_secs: s.lock_timeout_secs,
+                scope: s.script_scope.clone(),
             });
             let post_lk = post_s.filter(|s| s.lock_enabled).map(|s| ScriptLockConfig {
                 enabled: true,
                 lock_key: s.lock_key.clone().unwrap_or_default(),
                 timeout_secs: s.lock_timeout_secs,
+                scope: s.script_scope.clone(),
             });
             (pre, post, pre_lk, post_lk)
         } else {
@@ -1018,6 +1021,7 @@ async fn do_submit_stage(
                                         .clone()
                                         .unwrap_or_default(),
                                     timeout_secs: repo.global_pre_script_lock_timeout_secs,
+                                    scope: repo.global_pre_script_scope.clone(),
                                 });
                             }
                         }
@@ -2589,6 +2593,54 @@ impl Orchestrator for OrchestratorService {
             "Job group {} not found",
             req.job_group_id
         )))
+    }
+
+    async fn acquire_lock(
+        &self,
+        request: Request<AcquireLockRequest>,
+    ) -> Result<Response<AcquireLockResponse>, Status> {
+        let req = request.into_inner();
+
+        let redis = self
+            .state
+            .redis_store
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("Redis not configured"))?;
+
+        let ttl = req.timeout_secs.max(1) as u64;
+        let acquired = redis
+            .acquire_lock_with_holder(&req.lock_key, &req.holder_id, ttl)
+            .await
+            .map_err(|e| Status::internal(format!("Redis error: {}", e)))?;
+
+        Ok(Response::new(AcquireLockResponse {
+            acquired,
+            message: if acquired {
+                "Lock acquired".into()
+            } else {
+                "Lock held by another".into()
+            },
+        }))
+    }
+
+    async fn release_lock(
+        &self,
+        request: Request<ReleaseLockRequest>,
+    ) -> Result<Response<ReleaseLockResponse>, Status> {
+        let req = request.into_inner();
+
+        let redis = self
+            .state
+            .redis_store
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("Redis not configured"))?;
+
+        let released = redis
+            .release_lock_with_holder(&req.lock_key, &req.holder_id)
+            .await
+            .map_err(|e| Status::internal(format!("Redis error: {}", e)))?;
+
+        Ok(Response::new(ReleaseLockResponse { released }))
     }
 }
 

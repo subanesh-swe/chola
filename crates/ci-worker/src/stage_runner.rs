@@ -12,6 +12,7 @@ pub struct ScriptLockConfig {
     pub enabled: bool,
     pub lock_key: String,
     pub timeout_secs: i32,
+    pub scope: String, // "worker" (flock) or "controller" (Redis via gRPC)
 }
 
 impl ScriptLockConfig {
@@ -21,6 +22,11 @@ impl ScriptLockConfig {
                 enabled: true,
                 lock_key: p.lock_key,
                 timeout_secs: p.timeout_secs,
+                scope: if p.scope.is_empty() {
+                    "worker".into()
+                } else {
+                    p.scope
+                },
             },
             _ => Self::default(),
         }
@@ -48,8 +54,73 @@ impl ScriptLockConfig {
     }
 }
 
-/// Acquire a file lock (flock) with timeout. Returns the lock file handle on success.
-/// Lock files are created under /tmp/chola-locks/.
+fn lock_ts() -> String {
+    chrono::Utc::now().format("%H:%M:%S%.3f").to_string()
+}
+
+async fn lock_log(log_tx: &mpsc::Sender<LogLine>, msg: String, is_stderr: bool) {
+    let _ = log_tx
+        .send(LogLine {
+            line: format!("[LOCK {}] {}", lock_ts(), msg),
+            is_stderr,
+        })
+        .await;
+}
+
+/// Lock guard that auto-releases on drop.
+/// For flock: dropping the File releases the lock.
+/// For controller (gRPC): calls ReleaseLock RPC on drop (best-effort).
+pub enum LockGuard {
+    Flock(std::fs::File),
+    Controller {
+        lock_key: String,
+        holder_id: String,
+        client: crate::grpc_client::GrpcClient,
+    },
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        if let LockGuard::Controller {
+            lock_key,
+            holder_id,
+            client,
+        } = self
+        {
+            let key = lock_key.clone();
+            let hid = holder_id.clone();
+            let c = client.clone();
+            // Fire-and-forget async release (can't await in Drop)
+            tokio::spawn(async move {
+                let req = tonic::Request::new(ci_core::proto::orchestrator::ReleaseLockRequest {
+                    lock_key: key.clone(),
+                    holder_id: hid,
+                });
+                if let Err(e) = c.release_lock(req).await {
+                    tracing::warn!("Failed to release controller lock {}: {}", key, e);
+                }
+            });
+        }
+    }
+}
+
+/// Acquire a lock — dispatches to flock (worker) or gRPC+Redis (controller).
+async fn acquire_lock(
+    config: &ScriptLockConfig,
+    resolved_key: &str,
+    log_tx: &mpsc::Sender<LogLine>,
+    grpc_client: Option<&crate::grpc_client::GrpcClient>,
+) -> anyhow::Result<LockGuard> {
+    if config.scope == "controller" {
+        acquire_controller_lock(resolved_key, config.timeout_secs, log_tx, grpc_client).await
+    } else {
+        acquire_flock(resolved_key, config.timeout_secs, log_tx)
+            .await
+            .map(LockGuard::Flock)
+    }
+}
+
+/// Acquire a file lock (flock) with timeout.
 async fn acquire_flock(
     resolved_key: &str,
     timeout_secs: i32,
@@ -60,7 +131,6 @@ async fn acquire_flock(
     let lock_dir = PathBuf::from("/tmp/chola-locks");
     fs::create_dir_all(&lock_dir)?;
 
-    // Sanitize lock key for filename (max 200 chars to stay under ext4 255 limit)
     let safe_key: String = resolved_key
         .chars()
         .map(|c| {
@@ -74,15 +144,15 @@ async fn acquire_flock(
         .collect();
     let lock_path = lock_dir.join(format!("{}.lock", safe_key));
 
-    let _ = log_tx
-        .send(LogLine {
-            line: format!(
-                "[LOCK] Acquiring lock: {} (timeout {}s)",
-                resolved_key, timeout_secs
-            ),
-            is_stderr: false,
-        })
-        .await;
+    lock_log(
+        log_tx,
+        format!(
+            "Acquiring flock: {} (timeout {}s)",
+            resolved_key, timeout_secs
+        ),
+        false,
+    )
+    .await;
 
     let file = OpenOptions::new()
         .create(true)
@@ -94,33 +164,100 @@ async fn acquire_flock(
         tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs.max(1) as u64);
 
     loop {
-        // Try non-blocking flock
         let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
         let result = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
         if result == 0 {
-            let _ = log_tx
-                .send(LogLine {
-                    line: format!("[LOCK] Acquired: {}", resolved_key),
-                    is_stderr: false,
-                })
-                .await;
+            lock_log(log_tx, format!("Acquired flock: {}", resolved_key), false).await;
             return Ok(file);
         }
-        // Only retry on EWOULDBLOCK (lock held by another process).
-        // Any other errno (EBADF, ENOLCK, etc.) is a real error — fail immediately.
         let err = std::io::Error::last_os_error();
         if err.kind() != std::io::ErrorKind::WouldBlock {
             return Err(anyhow::anyhow!("flock failed: {}", err));
         }
-
         if tokio::time::Instant::now() >= deadline {
+            lock_log(
+                log_tx,
+                format!("Timeout after {}s: {}", timeout_secs, resolved_key),
+                true,
+            )
+            .await;
             return Err(anyhow::anyhow!(
-                "Lock timeout after {}s waiting for: {}",
+                "Lock timeout after {}s: {}",
                 timeout_secs,
                 resolved_key
             ));
         }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+}
 
+/// Acquire a controller-scope lock via gRPC (backed by Redis SET NX EX).
+async fn acquire_controller_lock(
+    resolved_key: &str,
+    timeout_secs: i32,
+    log_tx: &mpsc::Sender<LogLine>,
+    grpc_client: Option<&crate::grpc_client::GrpcClient>,
+) -> anyhow::Result<LockGuard> {
+    let client =
+        grpc_client.ok_or_else(|| anyhow::anyhow!("No gRPC client for controller lock"))?;
+    let holder_id = uuid::Uuid::new_v4().to_string();
+
+    lock_log(
+        log_tx,
+        format!(
+            "Acquiring controller lock: {} (timeout {}s, holder={})",
+            resolved_key,
+            timeout_secs,
+            &holder_id[..8]
+        ),
+        false,
+    )
+    .await;
+
+    let deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs.max(1) as u64);
+
+    loop {
+        let req = tonic::Request::new(ci_core::proto::orchestrator::AcquireLockRequest {
+            lock_key: resolved_key.to_string(),
+            timeout_secs,
+            holder_id: holder_id.clone(),
+        });
+        match client.acquire_lock(req).await {
+            Ok(resp) => {
+                let resp = resp.into_inner();
+                if resp.acquired {
+                    lock_log(
+                        log_tx,
+                        format!("Acquired controller lock: {}", resolved_key),
+                        false,
+                    )
+                    .await;
+                    return Ok(LockGuard::Controller {
+                        lock_key: resolved_key.to_string(),
+                        holder_id,
+                        client: client.clone(),
+                    });
+                }
+            }
+            Err(e) => {
+                lock_log(log_tx, format!("Lock RPC error: {}", e), true).await;
+            }
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            lock_log(
+                log_tx,
+                format!("Timeout after {}s: {}", timeout_secs, resolved_key),
+                true,
+            )
+            .await;
+            return Err(anyhow::anyhow!(
+                "Controller lock timeout after {}s: {}",
+                timeout_secs,
+                resolved_key
+            ));
+        }
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 }

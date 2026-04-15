@@ -315,6 +315,57 @@ impl RedisStore {
         Ok(released)
     }
 
+    /// Acquire a generic distributed lock using a caller-provided holder ID.
+    /// Returns true if the lock was acquired, false if held by another.
+    pub async fn acquire_lock_with_holder(
+        &self,
+        lock_name: &str,
+        holder_id: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.get_conn().await?;
+        let key = self.key(&["lock", lock_name]);
+        let result: Option<String> = redis::cmd("SET")
+            .arg(&key)
+            .arg(holder_id)
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_secs)
+            .query_async(&mut conn)
+            .await?;
+        Ok(result.is_some())
+    }
+
+    /// Release a generic distributed lock only if the holder matches.
+    /// Uses a Lua script for atomic check-and-delete.
+    /// Returns true if the lock was actually released.
+    pub async fn release_lock_with_holder(
+        &self,
+        lock_name: &str,
+        holder_id: &str,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.get_conn().await?;
+        let key = self.key(&["lock", lock_name]);
+
+        let script = redis::Script::new(
+            r#"
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('DEL', KEYS[1])
+                return 1
+            else
+                return 0
+            end
+            "#,
+        );
+
+        let result: i32 = script
+            .key(&key)
+            .arg(holder_id)
+            .invoke_async(&mut conn)
+            .await?;
+        Ok(result == 1)
+    }
+
     /// Unconditionally delete a generic distributed lock.
     /// Use only for administrative cleanup.
     pub async fn release_lock_force(&self, lock_name: &str) -> anyhow::Result<()> {
