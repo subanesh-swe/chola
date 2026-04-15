@@ -62,17 +62,23 @@ function getBarColor(percent: number): string {
 function DiskSection({
   usedDiskMb,
   totalDiskMb,
+  allocatedDiskMb,
   diskDetails,
   expanded,
   onToggle,
 }: {
   usedDiskMb: number;
   totalDiskMb: number;
+  allocatedDiskMb: number;
   diskDetails: DiskDetail[];
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const percent = totalDiskMb > 0 ? Math.min((usedDiskMb / totalDiskMb) * 100, 100) : 0;
+  const totalGb = parseFloat((totalDiskMb / 1024).toFixed(1));
+  const reservedGb = parseFloat((allocatedDiskMb / 1024).toFixed(1));
+  const usedGb = parseFloat((usedDiskMb / 1024).toFixed(1));
+  const reservedPct = totalGb > 0 ? Math.min(Math.max(0, reservedGb / totalGb) * 100, 100) : 0;
+  const usedPct = totalGb > 0 ? Math.min(Math.max(0, usedGb / totalGb) * 100, 100) : 0;
   const hasDetails = diskDetails.length > 0;
 
   return (
@@ -83,23 +89,33 @@ function DiskSection({
         type="button"
         aria-expanded={expanded}
       >
-        <div className="flex justify-between text-xs">
-          <span className="text-slate-400 flex items-center gap-1">
-            {hasDetails && (
-              <span className="text-[10px]">{expanded ? '\u25BC' : '\u25B6'}</span>
-            )}
-            Disk
-          </span>
-          <span className="text-slate-300">
-            {usedDiskMb.toLocaleString()} MB / {totalDiskMb.toLocaleString()} MB
-            <span className="text-slate-500 ml-1">({percent.toFixed(0)}%)</span>
-          </span>
+        <div className="text-xs text-slate-400 font-medium flex items-center gap-1">
+          {hasDetails && (
+            <span className="text-[10px]">{expanded ? '\u25BC' : '\u25B6'}</span>
+          )}
+          Disk ({totalGb} GB)
         </div>
-        <div className="h-2 bg-slate-700 rounded-full overflow-hidden mt-1">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${getBarColor(percent)}`}
-            style={{ width: `${percent}%` }}
-          />
+        <div className="mt-1 space-y-1">
+          {/* Reserved bar */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 w-14 shrink-0">Reserved</span>
+            <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+              {reservedPct > 0 && (
+                <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{ width: `${reservedPct}%` }} />
+              )}
+            </div>
+            <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">{reservedGb} / {totalGb} GB</span>
+          </div>
+          {/* Usage bar */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 w-14 shrink-0">Usage</span>
+            <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+              {usedPct > 0 && (
+                <div className={`h-full rounded-full transition-all duration-500 ${getBarColor(usedPct)}`} style={{ width: `${usedPct}%` }} />
+              )}
+            </div>
+            <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">{usedGb} / {totalGb} GB</span>
+          </div>
         </div>
       </button>
 
@@ -765,21 +781,23 @@ export default function WorkersPage() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <ResourceBar
                         label={hasLastKnown ? 'CPU (last known)' : 'CPU'}
+                        total={w.total_cpu}
+                        reserved={w.allocated_cpu}
                         used={w.last_heartbeat?.used_cpu_percent ?? 0}
-                        total={100}
-                        unit="%"
-                        allocated={w.total_cpu > 0 ? Math.min((w.allocated_cpu / w.total_cpu) * 100, 100) : 0}
+                        unit="cores"
+                        usedIsPercent
                       />
                       <ResourceBar
                         label={hasLastKnown ? 'Memory (last known)' : 'Memory'}
-                        used={w.last_heartbeat?.used_memory_mb ?? 0}
-                        total={w.total_memory_mb}
-                        unit=" MB"
-                        allocated={w.allocated_memory_mb}
+                        total={parseFloat((w.total_memory_mb / 1024).toFixed(1))}
+                        reserved={parseFloat((w.allocated_memory_mb / 1024).toFixed(1))}
+                        used={parseFloat(((w.last_heartbeat?.used_memory_mb ?? 0) / 1024).toFixed(1))}
+                        unit="GB"
                       />
                       <DiskSection
                         usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
                         totalDiskMb={w.total_disk_mb}
+                        allocatedDiskMb={w.allocated_disk_mb}
                         diskDetails={w.last_heartbeat?.disk_details ?? w.disk_details ?? []}
                         expanded={expandedDisks.has(w.worker_id)}
                         onToggle={() => setExpandedDisks(prev => {

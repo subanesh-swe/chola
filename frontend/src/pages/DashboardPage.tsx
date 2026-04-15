@@ -255,10 +255,12 @@ export default function DashboardPage() {
                   </div>
                   {w.last_heartbeat && w.total_cpu > 0 && (
                     <ResourceBar
-                      used={w.last_heartbeat.used_cpu_percent}
-                      total={100}
                       label="CPU"
-                      unit="%"
+                      total={w.total_cpu}
+                      reserved={w.allocated_cpu ?? 0}
+                      used={w.last_heartbeat.used_cpu_percent}
+                      unit="cores"
+                      usedIsPercent
                     />
                   )}
                 </div>
