@@ -102,11 +102,17 @@ impl WorkerState {
     }
 
     /// Try to allocate resources. Returns false if insufficient capacity.
+    /// CPU/memory: checked against total - allocated (reservation model).
+    /// Disk: checked against total - actual usage from heartbeat (usage model),
+    /// because disk consumption persists after jobs complete.
     pub fn allocate(&mut self, cpu: u32, mem: u64, disk: u64) -> bool {
         if self.allocated_cpu + cpu > self.info.total_cpu
             || self.allocated_memory_mb + mem > self.info.total_memory_mb
-            || self.allocated_disk_mb + disk > self.info.total_disk_mb
         {
+            return false;
+        }
+        // Disk uses actual free space, not reservation-based available
+        if disk > 0 && self.free_disk_mb() < disk {
             return false;
         }
         self.allocated_cpu += cpu;

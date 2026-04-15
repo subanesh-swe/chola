@@ -464,7 +464,7 @@ pub async fn do_reserve_worker(
                 }
                 w.available_cpu() >= needed_cpu
                     && w.available_memory_mb() >= needed_memory
-                    && w.available_disk_mb() >= needed_disk
+                    && w.free_disk_mb() >= needed_disk
             })
             .map(|w| w.info.worker_id.clone())
             .collect()
@@ -490,11 +490,11 @@ pub async fn do_reserve_worker(
         candidate_ids.sort_by(|a, b| {
             let free_a = registry
                 .get(a)
-                .map(|w| w.available_cpu() as u64 + w.available_memory_mb())
+                .map(|w| w.available_cpu() as u64 + w.available_memory_mb() + w.free_disk_mb())
                 .unwrap_or(0);
             let free_b = registry
                 .get(b)
-                .map(|w| w.available_cpu() as u64 + w.available_memory_mb())
+                .map(|w| w.available_cpu() as u64 + w.available_memory_mb() + w.free_disk_mb())
                 .unwrap_or(0);
             free_b.cmp(&free_a) // descending: most free first
         });
