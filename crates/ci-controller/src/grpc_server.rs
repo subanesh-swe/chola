@@ -1369,6 +1369,9 @@ impl Orchestrator for OrchestratorService {
                         Some(row.max_cpu.map(|v| v as u32)),
                         Some(row.max_memory_mb.map(|v| v as u64)),
                         Some(row.max_disk_mb.map(|v| v as u64)),
+                        Some(row.max_cpu_percent),
+                        Some(row.max_memory_percent),
+                        Some(row.max_disk_percent),
                     );
                 }
 
@@ -1417,6 +1420,9 @@ impl Orchestrator for OrchestratorService {
                             max_cpu: None,
                             max_memory_mb: None,
                             max_disk_mb: None,
+                            max_cpu_percent: None,
+                            max_memory_percent: None,
+                            max_disk_percent: None,
                         };
 
                         let persisted = st.upsert_worker(&worker_row).await.map_err(|e| {
@@ -1443,6 +1449,9 @@ impl Orchestrator for OrchestratorService {
                             Some(persisted.max_cpu.map(|v| v as u32)),
                             Some(persisted.max_memory_mb.map(|v| v as u64)),
                             Some(persisted.max_disk_mb.map(|v| v as u64)),
+                            Some(persisted.max_cpu_percent),
+                            Some(persisted.max_memory_percent),
+                            Some(persisted.max_disk_percent),
                         );
 
                         restore_allocations(&self.state, &mut registry, &worker_id).await;

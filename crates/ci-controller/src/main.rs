@@ -606,6 +606,9 @@ fn worker_row_to_state(row: &storage::WorkerRow) -> WorkerState {
         max_cpu: row.max_cpu.map(|v| v as u32),
         max_memory_mb: row.max_memory_mb.map(|v| v as u64),
         max_disk_mb: row.max_disk_mb.map(|v| v as u64),
+        max_cpu_percent: row.max_cpu_percent,
+        max_memory_percent: row.max_memory_percent,
+        max_disk_percent: row.max_disk_percent,
     };
     WorkerState {
         info,

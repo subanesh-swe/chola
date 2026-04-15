@@ -10,6 +10,9 @@ export interface RegisterWorkerRequest {
   max_cpu?: number;
   max_memory_mb?: number;
   max_disk_mb?: number;
+  max_cpu_percent?: number | null;
+  max_memory_percent?: number | null;
+  max_disk_percent?: number | null;
 }
 
 export interface RegisterWorkerResponse {
@@ -58,6 +61,9 @@ export interface WorkerLimitsRequest {
   max_cpu?: number | null;
   max_memory_mb?: number | null;
   max_disk_mb?: number | null;
+  max_cpu_percent?: number | null;
+  max_memory_percent?: number | null;
+  max_disk_percent?: number | null;
 }
 
 export const updateWorkerLimits = (id: string, limits: WorkerLimitsRequest) =>

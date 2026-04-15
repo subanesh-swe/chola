@@ -164,8 +164,11 @@ function RegisterWorkerModal({
   const [labelInput, setLabelInput] = useState('');
   const [regPriority, setRegPriority] = useState('0');
   const [regMaxCpu, setRegMaxCpu] = useState('');
+  const [regMaxCpuPct, setRegMaxCpuPct] = useState('');
   const [regMaxMemGb, setRegMaxMemGb] = useState('');
+  const [regMaxMemPct, setRegMaxMemPct] = useState('');
   const [regMaxDiskGb, setRegMaxDiskGb] = useState('');
+  const [regMaxDiskPct, setRegMaxDiskPct] = useState('');
 
   const registerMut = useMutation({
     mutationFn: () =>
@@ -176,8 +179,11 @@ function RegisterWorkerModal({
         description: description.trim() || undefined,
         priority: parseInt(regPriority, 10) || 0,
         max_cpu: regMaxCpu !== '' ? parseInt(regMaxCpu, 10) : undefined,
+        max_cpu_percent: regMaxCpuPct !== '' ? parseInt(regMaxCpuPct, 10) : undefined,
         max_memory_mb: regMaxMemGb !== '' ? Math.round(parseFloat(regMaxMemGb) * 1024) : undefined,
+        max_memory_percent: regMaxMemPct !== '' ? parseInt(regMaxMemPct, 10) : undefined,
         max_disk_mb: regMaxDiskGb !== '' ? Math.round(parseFloat(regMaxDiskGb) * 1024) : undefined,
+        max_disk_percent: regMaxDiskPct !== '' ? parseInt(regMaxDiskPct, 10) : undefined,
       }),
     onSuccess: (data) => {
       onSuccess(data);
@@ -282,51 +288,90 @@ function RegisterWorkerModal({
           </div>
           <div className="pt-2 border-t border-slate-700">
             <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Resource Limits</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Priority</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={regPriority}
-                  onChange={(e) => setRegPriority(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Max CPU (cores)</label>
+            <div className="mb-3">
+              <label className="block text-xs text-slate-400 mb-1">Priority</label>
+              <input
+                type="number"
+                min="0"
+                value={regPriority}
+                onChange={(e) => setRegPriority(e.target.value)}
+                className="w-28 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="space-y-2">
+              {/* CPU row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-400 w-16 shrink-0">Max CPU</span>
                 <input
                   type="number"
                   min="1"
                   value={regMaxCpu}
                   onChange={(e) => setRegMaxCpu(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="no limit"
                 />
+                <span className="text-xs text-slate-500">cores</span>
+                <span className="text-xs text-slate-600">or</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={regMaxCpuPct}
+                  onChange={(e) => setRegMaxCpuPct(e.target.value)}
+                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="no limit"
+                />
+                <span className="text-xs text-slate-500">%</span>
               </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Max Memory (GB)</label>
+              {/* Memory row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-400 w-16 shrink-0">Max Mem</span>
                 <input
                   type="number"
                   min="0"
                   step="0.1"
                   value={regMaxMemGb}
                   onChange={(e) => setRegMaxMemGb(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="no limit"
                 />
+                <span className="text-xs text-slate-500">GB</span>
+                <span className="text-xs text-slate-600">or</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={regMaxMemPct}
+                  onChange={(e) => setRegMaxMemPct(e.target.value)}
+                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="no limit"
+                />
+                <span className="text-xs text-slate-500">%</span>
               </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Max Disk (GB)</label>
+              {/* Disk row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-400 w-16 shrink-0">Max Disk</span>
                 <input
                   type="number"
                   min="0"
                   step="0.1"
                   value={regMaxDiskGb}
                   onChange={(e) => setRegMaxDiskGb(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="no limit"
                 />
+                <span className="text-xs text-slate-500">GB</span>
+                <span className="text-xs text-slate-600">or</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={regMaxDiskPct}
+                  onChange={(e) => setRegMaxDiskPct(e.target.value)}
+                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="no limit"
+                />
+                <span className="text-xs text-slate-500">%</span>
               </div>
             </div>
           </div>
@@ -519,42 +564,63 @@ function InlineLimitsEditor({
 }) {
   const [priority, setPriority] = useState(String(initial.priority ?? 0));
   const [maxCpu, setMaxCpu] = useState(initial.max_cpu != null ? String(initial.max_cpu) : '');
+  const [maxCpuPct, setMaxCpuPct] = useState(initial.max_cpu_percent != null ? String(initial.max_cpu_percent) : '');
   const [maxMemGb, setMaxMemGb] = useState(
     initial.max_memory_mb != null ? String(parseFloat((initial.max_memory_mb / 1024).toFixed(1))) : '',
   );
+  const [maxMemPct, setMaxMemPct] = useState(initial.max_memory_percent != null ? String(initial.max_memory_percent) : '');
   const [maxDiskGb, setMaxDiskGb] = useState(
     initial.max_disk_mb != null ? String(parseFloat((initial.max_disk_mb / 1024).toFixed(1))) : '',
   );
+  const [maxDiskPct, setMaxDiskPct] = useState(initial.max_disk_percent != null ? String(initial.max_disk_percent) : '');
 
   function save() {
     onSave({
       priority: parseInt(priority, 10) || 0,
       max_cpu: maxCpu !== '' ? parseInt(maxCpu, 10) : null,
+      max_cpu_percent: maxCpuPct !== '' ? parseInt(maxCpuPct, 10) : null,
       max_memory_mb: maxMemGb !== '' ? Math.round(parseFloat(maxMemGb) * 1024) : null,
+      max_memory_percent: maxMemPct !== '' ? parseInt(maxMemPct, 10) : null,
       max_disk_mb: maxDiskGb !== '' ? Math.round(parseFloat(maxDiskGb) * 1024) : null,
+      max_disk_percent: maxDiskPct !== '' ? parseInt(maxDiskPct, 10) : null,
     });
   }
 
-  const inputCls = 'px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono w-24 focus:outline-none focus:ring-1 focus:ring-blue-500';
+  const inputCls = 'px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono w-20 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   return (
     <div className="mt-2 space-y-2" aria-label={`Edit limits for worker ${workerId}`}>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-        <div>
-          <label className="block text-[10px] text-slate-500 mb-0.5">Priority</label>
-          <input type="number" min="0" value={priority} onChange={(e) => setPriority(e.target.value)} className={inputCls} />
-        </div>
-        <div>
-          <label className="block text-[10px] text-slate-500 mb-0.5">Max CPU (cores)</label>
+      <div className="mb-1.5">
+        <label className="block text-[10px] text-slate-500 mb-0.5">Priority</label>
+        <input type="number" min="0" value={priority} onChange={(e) => setPriority(e.target.value)} className={inputCls} />
+      </div>
+      <div className="space-y-1.5">
+        {/* CPU row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-slate-500 w-12 shrink-0">Max CPU</span>
           <input type="number" min="1" value={maxCpu} onChange={(e) => setMaxCpu(e.target.value)} className={inputCls} placeholder="no limit" />
+          <span className="text-[10px] text-slate-500">cores</span>
+          <span className="text-[10px] text-slate-600">or</span>
+          <input type="number" min="1" max="100" value={maxCpuPct} onChange={(e) => setMaxCpuPct(e.target.value)} className={inputCls} placeholder="no limit" />
+          <span className="text-[10px] text-slate-500">%</span>
         </div>
-        <div>
-          <label className="block text-[10px] text-slate-500 mb-0.5">Max Memory (GB)</label>
+        {/* Memory row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-slate-500 w-12 shrink-0">Max Mem</span>
           <input type="number" min="0" step="0.1" value={maxMemGb} onChange={(e) => setMaxMemGb(e.target.value)} className={inputCls} placeholder="no limit" />
+          <span className="text-[10px] text-slate-500">GB</span>
+          <span className="text-[10px] text-slate-600">or</span>
+          <input type="number" min="1" max="100" value={maxMemPct} onChange={(e) => setMaxMemPct(e.target.value)} className={inputCls} placeholder="no limit" />
+          <span className="text-[10px] text-slate-500">%</span>
         </div>
-        <div>
-          <label className="block text-[10px] text-slate-500 mb-0.5">Max Disk (GB)</label>
+        {/* Disk row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-slate-500 w-12 shrink-0">Max Disk</span>
           <input type="number" min="0" step="0.1" value={maxDiskGb} onChange={(e) => setMaxDiskGb(e.target.value)} className={inputCls} placeholder="no limit" />
+          <span className="text-[10px] text-slate-500">GB</span>
+          <span className="text-[10px] text-slate-600">or</span>
+          <input type="number" min="1" max="100" value={maxDiskPct} onChange={(e) => setMaxDiskPct(e.target.value)} className={inputCls} placeholder="no limit" />
+          <span className="text-[10px] text-slate-500">%</span>
         </div>
       </div>
       <div className="flex gap-2">
@@ -1054,20 +1120,32 @@ export default function WorkersPage() {
               {/* Resource limits inline edit */}
               {canManageWorkers && (
                 <div className="mt-3 pt-3 border-t border-slate-800">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-slate-500 font-medium">Limits:</span>
-                    {w.max_cpu != null && (
-                      <span className="text-xs text-slate-400">CPU: {w.max_cpu}</span>
-                    )}
-                    {w.max_memory_mb != null && (
-                      <span className="text-xs text-slate-400">Mem: {parseFloat((w.max_memory_mb / 1024).toFixed(1))} GB</span>
-                    )}
-                    {w.max_disk_mb != null && (
-                      <span className="text-xs text-slate-400">Disk: {parseFloat((w.max_disk_mb / 1024).toFixed(1))} GB</span>
-                    )}
-                    {w.max_cpu == null && w.max_memory_mb == null && w.max_disk_mb == null && (
-                      <span className="text-xs text-slate-600 italic">none</span>
-                    )}
+                    {(() => {
+                      const cpuParts = [
+                        w.max_cpu != null ? `${w.max_cpu} cores` : null,
+                        w.max_cpu_percent != null ? `${w.max_cpu_percent}%` : null,
+                      ].filter(Boolean);
+                      const memParts = [
+                        w.max_memory_mb != null ? `${parseFloat((w.max_memory_mb / 1024).toFixed(1))} GB` : null,
+                        w.max_memory_percent != null ? `${w.max_memory_percent}%` : null,
+                      ].filter(Boolean);
+                      const diskParts = [
+                        w.max_disk_mb != null ? `${parseFloat((w.max_disk_mb / 1024).toFixed(1))} GB` : null,
+                        w.max_disk_percent != null ? `${w.max_disk_percent}%` : null,
+                      ].filter(Boolean);
+                      const hasAny = cpuParts.length || memParts.length || diskParts.length;
+                      return hasAny ? (
+                        <>
+                          <span className="text-xs text-slate-400">CPU: {cpuParts.length ? cpuParts.join(' / ') : 'none'}</span>
+                          <span className="text-xs text-slate-400">Mem: {memParts.length ? memParts.join(' / ') : 'none'}</span>
+                          <span className="text-xs text-slate-400">Disk: {diskParts.length ? diskParts.join(' / ') : 'none'}</span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-600 italic">none</span>
+                      );
+                    })()}
                     {editingLimitsId !== w.worker_id && (
                       <button
                         type="button"
@@ -1081,7 +1159,7 @@ export default function WorkersPage() {
                   {editingLimitsId === w.worker_id && (
                     <InlineLimitsEditor
                       workerId={w.worker_id}
-                      initial={{ priority: w.priority, max_cpu: w.max_cpu, max_memory_mb: w.max_memory_mb, max_disk_mb: w.max_disk_mb }}
+                      initial={{ priority: w.priority, max_cpu: w.max_cpu, max_cpu_percent: w.max_cpu_percent, max_memory_mb: w.max_memory_mb, max_memory_percent: w.max_memory_percent, max_disk_mb: w.max_disk_mb, max_disk_percent: w.max_disk_percent }}
                       onSave={(limits) => updateLimitsMut.mutate({ id: w.worker_id, limits })}
                       onCancel={() => setEditingLimitsId(null)}
                       isPending={updateLimitsMut.isPending}

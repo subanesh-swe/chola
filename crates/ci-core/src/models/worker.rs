@@ -54,15 +54,24 @@ pub struct WorkerInfo {
     /// Scheduling priority. Higher = preferred. 0 = default.
     #[serde(default)]
     pub priority: i32,
-    /// Max CPU cores chola is allowed to reserve. None = use total_cpu.
+    /// Max CPU cores chola is allowed to reserve. None = no absolute limit.
     #[serde(default)]
     pub max_cpu: Option<u32>,
-    /// Max memory MB chola is allowed to reserve. None = use total_memory_mb.
+    /// Max memory MB chola is allowed to reserve. None = no absolute limit.
     #[serde(default)]
     pub max_memory_mb: Option<u64>,
-    /// Max disk MB chola is allowed to reserve. None = use total_disk_mb.
+    /// Max disk MB chola is allowed to reserve. None = no absolute limit.
     #[serde(default)]
     pub max_disk_mb: Option<u64>,
+    /// Max CPU as percentage of total (1-100). None = no percentage limit.
+    #[serde(default)]
+    pub max_cpu_percent: Option<i32>,
+    /// Max memory as percentage of total (1-100). None = no percentage limit.
+    #[serde(default)]
+    pub max_memory_percent: Option<i32>,
+    /// Max disk as percentage of total (1-100). None = no percentage limit.
+    #[serde(default)]
+    pub max_disk_percent: Option<i32>,
 }
 
 /// Dynamic worker resource snapshot (sent via heartbeat)
@@ -113,19 +122,37 @@ impl WorkerState {
         }
     }
 
-    /// Effective CPU cap: max_cpu if set, otherwise total_cpu.
+    /// Effective CPU cap: min(absolute, percentage) if both set, else whichever is set, else total.
     pub fn cpu_cap(&self) -> u32 {
-        self.info.max_cpu.unwrap_or(self.info.total_cpu)
+        let abs = self.info.max_cpu.unwrap_or(self.info.total_cpu);
+        let pct = self
+            .info
+            .max_cpu_percent
+            .map(|p| (self.info.total_cpu as u64 * p.clamp(1, 100) as u64 / 100) as u32)
+            .unwrap_or(self.info.total_cpu);
+        abs.min(pct)
     }
 
-    /// Effective memory cap: max_memory_mb if set, otherwise total_memory_mb.
+    /// Effective memory cap: min(absolute, percentage) if both set, else whichever is set, else total.
     pub fn memory_cap(&self) -> u64 {
-        self.info.max_memory_mb.unwrap_or(self.info.total_memory_mb)
+        let abs = self.info.max_memory_mb.unwrap_or(self.info.total_memory_mb);
+        let pct = self
+            .info
+            .max_memory_percent
+            .map(|p| self.info.total_memory_mb * p.clamp(1, 100) as u64 / 100)
+            .unwrap_or(self.info.total_memory_mb);
+        abs.min(pct)
     }
 
-    /// Effective disk cap: max_disk_mb if set, otherwise total_disk_mb.
+    /// Effective disk cap: min(absolute, percentage) if both set, else whichever is set, else total.
     pub fn disk_cap(&self) -> u64 {
-        self.info.max_disk_mb.unwrap_or(self.info.total_disk_mb)
+        let abs = self.info.max_disk_mb.unwrap_or(self.info.total_disk_mb);
+        let pct = self
+            .info
+            .max_disk_percent
+            .map(|p| self.info.total_disk_mb * p.clamp(1, 100) as u64 / 100)
+            .unwrap_or(self.info.total_disk_mb);
+        abs.min(pct)
     }
 
     /// Try to allocate resources. Returns false if insufficient capacity.
