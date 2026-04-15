@@ -184,6 +184,7 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
   const [maxConcurrent, setMaxConcurrent] = useState(
     String(initial?.max_concurrent_jobs ?? '0'),
   );
+  const [priority, setPriority] = useState(String(initial?.priority ?? '0'));
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const isEdit = !!initial;
 
@@ -209,6 +210,7 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
       env_vars: Object.keys(envVars).length > 0 ? envVars : undefined,
       pre_script: preScript || undefined,
       max_concurrent_jobs: parseInt(maxConcurrent, 10) || 0,
+      priority: parseInt(priority, 10) || 0,
       enabled,
     };
     if (isEdit) updateMut.mutate(data);
@@ -273,6 +275,17 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
               min="0"
               value={maxConcurrent}
               onChange={(e) => setMaxConcurrent(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">Priority (0 = default, higher = preferred)</label>
+            <input
+              type="number"
+              min="0"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
               className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -399,6 +412,11 @@ export default function LabelGroupsPage() {
                       >
                         {g.enabled ? 'Enabled' : 'Disabled'}
                       </span>
+                      {g.priority > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/30">
+                          P:{g.priority}
+                        </span>
+                      )}
                     </div>
 
                     {g.match_labels.length > 0 && (

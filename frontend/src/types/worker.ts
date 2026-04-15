@@ -54,6 +54,14 @@ export interface Worker {
   system_info?: WorkerSystemInfo | null;
   active_groups?: WorkerActiveGroup[];
   labels?: string[];
+  /** Scheduling priority — higher = preferred */
+  priority: number;
+  /** Hard cap on CPU cores (null = use total_cpu) */
+  max_cpu: number | null;
+  /** Hard cap on memory in MB (null = no limit) */
+  max_memory_mb: number | null;
+  /** Hard cap on disk in MB (null = no limit) */
+  max_disk_mb: number | null;
   /** Whether the worker has been approved (set via approve/reject API) */
   approved?: boolean;
   /** ID of the registration token used to register this worker */
