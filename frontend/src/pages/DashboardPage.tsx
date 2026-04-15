@@ -256,7 +256,8 @@ export default function DashboardPage() {
                   {w.last_heartbeat && w.total_cpu > 0 && (
                     <ResourceBar
                       label="CPU"
-                      total={w.total_cpu}
+                      limit={w.max_cpu ?? w.total_cpu}
+                      hardwareTotal={w.total_cpu}
                       reserved={w.allocated_cpu ?? 0}
                       used={w.last_heartbeat.used_cpu_percent}
                       unit="cores"
