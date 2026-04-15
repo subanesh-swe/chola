@@ -51,6 +51,18 @@ pub struct WorkerInfo {
     pub docker_enabled: bool,
     pub labels: Vec<String>,
     pub disk_details: Vec<DiskDetailInfo>,
+    /// Scheduling priority. Higher = preferred. 0 = default.
+    #[serde(default)]
+    pub priority: i32,
+    /// Max CPU cores chola is allowed to reserve. None = use total_cpu.
+    #[serde(default)]
+    pub max_cpu: Option<u32>,
+    /// Max memory MB chola is allowed to reserve. None = use total_memory_mb.
+    #[serde(default)]
+    pub max_memory_mb: Option<u64>,
+    /// Max disk MB chola is allowed to reserve. None = use total_disk_mb.
+    #[serde(default)]
+    pub max_disk_mb: Option<u64>,
 }
 
 /// Dynamic worker resource snapshot (sent via heartbeat)
@@ -101,17 +113,30 @@ impl WorkerState {
         }
     }
 
+    /// Effective CPU cap: max_cpu if set, otherwise total_cpu.
+    pub fn cpu_cap(&self) -> u32 {
+        self.info.max_cpu.unwrap_or(self.info.total_cpu)
+    }
+
+    /// Effective memory cap: max_memory_mb if set, otherwise total_memory_mb.
+    pub fn memory_cap(&self) -> u64 {
+        self.info.max_memory_mb.unwrap_or(self.info.total_memory_mb)
+    }
+
+    /// Effective disk cap: max_disk_mb if set, otherwise total_disk_mb.
+    pub fn disk_cap(&self) -> u64 {
+        self.info.max_disk_mb.unwrap_or(self.info.total_disk_mb)
+    }
+
     /// Try to allocate resources. Returns false if insufficient capacity.
-    /// CPU/memory: checked against total - allocated (reservation model).
-    /// Disk: checked against total - actual usage from heartbeat (usage model),
-    /// because disk consumption persists after jobs complete.
+    /// CPU/memory: checked against cap (max or total) - allocated.
+    /// Disk: checked against actual free space from heartbeat, capped by max_disk_mb.
     pub fn allocate(&mut self, cpu: u32, mem: u64, disk: u64) -> bool {
-        if self.allocated_cpu + cpu > self.info.total_cpu
-            || self.allocated_memory_mb + mem > self.info.total_memory_mb
+        if self.allocated_cpu + cpu > self.cpu_cap()
+            || self.allocated_memory_mb + mem > self.memory_cap()
         {
             return false;
         }
-        // Disk uses actual free space, not reservation-based available
         if disk > 0 && self.free_disk_mb() < disk {
             return false;
         }
@@ -129,19 +154,15 @@ impl WorkerState {
     }
 
     pub fn available_cpu(&self) -> u32 {
-        self.info.total_cpu.saturating_sub(self.allocated_cpu)
+        self.cpu_cap().saturating_sub(self.allocated_cpu)
     }
 
     pub fn available_memory_mb(&self) -> u64 {
-        self.info
-            .total_memory_mb
-            .saturating_sub(self.allocated_memory_mb)
+        self.memory_cap().saturating_sub(self.allocated_memory_mb)
     }
 
     pub fn available_disk_mb(&self) -> u64 {
-        self.info
-            .total_disk_mb
-            .saturating_sub(self.allocated_disk_mb)
+        self.disk_cap().saturating_sub(self.allocated_disk_mb)
     }
 
     /// Available memory in MB (from heartbeat)
@@ -152,11 +173,16 @@ impl WorkerState {
         }
     }
 
-    /// Available disk in MB (from heartbeat)
+    /// Available disk in MB (from heartbeat), capped by max_disk_mb if set.
     pub fn free_disk_mb(&self) -> u64 {
-        match &self.last_heartbeat {
+        let physical_free = match &self.last_heartbeat {
             Some(hb) => self.info.total_disk_mb.saturating_sub(hb.used_disk_mb),
             None => self.info.total_disk_mb,
+        };
+        // Cap by max_disk_mb if configured
+        match self.info.max_disk_mb {
+            Some(max) => physical_free.min(max),
+            None => physical_free,
         }
     }
 }

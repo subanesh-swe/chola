@@ -602,6 +602,10 @@ fn worker_row_to_state(row: &storage::WorkerRow) -> WorkerState {
         docker_enabled: row.docker_enabled,
         labels: Vec::new(),
         disk_details: Vec::new(),
+        priority: row.priority,
+        max_cpu: row.max_cpu.map(|v| v as u32),
+        max_memory_mb: row.max_memory_mb.map(|v| v as u64),
+        max_disk_mb: row.max_disk_mb.map(|v| v as u64),
     };
     WorkerState {
         info,

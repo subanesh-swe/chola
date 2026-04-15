@@ -108,6 +108,13 @@ pub async fn list(
                 "system_info": w.system_info,
                 "active_groups": active_groups,
                 "labels": w.info.labels,
+                "priority": w.info.priority,
+                "max_cpu": w.info.max_cpu,
+                "max_memory_mb": w.info.max_memory_mb,
+                "max_disk_mb": w.info.max_disk_mb,
+                "cpu_cap": w.cpu_cap(),
+                "memory_cap": w.memory_cap(),
+                "disk_cap": w.disk_cap(),
             })
         })
         .collect();
@@ -142,6 +149,10 @@ pub async fn list(
                         "active_groups": [],
                         "labels": row.labels,
                         "description": row.description,
+                        "priority": row.priority,
+                        "max_cpu": row.max_cpu,
+                        "max_memory_mb": row.max_memory_mb,
+                        "max_disk_mb": row.max_disk_mb,
                     }));
                 }
             }
@@ -205,6 +216,13 @@ pub async fn get_one(
         "disk_details": w.info.disk_details,
         "system_info": w.system_info,
         "labels": w.info.labels,
+        "priority": w.info.priority,
+        "max_cpu": w.info.max_cpu,
+        "max_memory_mb": w.info.max_memory_mb,
+        "max_disk_mb": w.info.max_disk_mb,
+        "cpu_cap": w.cpu_cap(),
+        "memory_cap": w.memory_cap(),
+        "disk_cap": w.disk_cap(),
     })))
 }
 
@@ -343,6 +361,10 @@ pub struct RegisterWorkerRequest {
     pub hostname: String,
     pub labels: Option<Vec<String>>,
     pub description: Option<String>,
+    pub priority: Option<i32>,
+    pub max_cpu: Option<i32>,
+    pub max_memory_mb: Option<i64>,
+    pub max_disk_mb: Option<i64>,
 }
 
 pub async fn register_worker(
@@ -392,6 +414,10 @@ pub async fn register_worker(
             &token_name,
             &token_hash,
             &auth_user.username,
+            body.priority,
+            body.max_cpu,
+            body.max_memory_mb,
+            body.max_disk_mb,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -575,4 +601,71 @@ pub async fn undrain(
         ))),
         None => Err(ApiError::NotFound(format!("Worker '{}' not found", id))),
     }
+}
+
+/// Request body for PUT /api/v1/workers/:id/limits
+#[derive(Deserialize)]
+pub struct UpdateLimitsRequest {
+    pub priority: Option<i32>,
+    /// Max CPU cores chola may reserve. 0 or null = clear (use total_cpu).
+    pub max_cpu: Option<i32>,
+    /// Max memory MB chola may reserve. 0 or null = clear (use total_memory_mb).
+    pub max_memory_mb: Option<i64>,
+    /// Max disk MB chola may reserve. 0 or null = clear (use total_disk_mb).
+    pub max_disk_mb: Option<i64>,
+}
+
+/// PUT /api/v1/workers/:id/limits
+pub async fn update_limits(
+    State(state): State<Arc<ControllerState>>,
+    auth_user: AuthUser,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateLimitsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !auth_user.role.can_manage_workers() {
+        return Err(ApiError::Forbidden("Insufficient permissions".into()));
+    }
+
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+
+    // Persist to DB
+    let row = storage
+        .update_worker_priority_limits(
+            &id,
+            body.priority,
+            body.max_cpu,
+            body.max_memory_mb,
+            body.max_disk_mb,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Worker '{}' not found", id)))?;
+
+    // Update in-memory registry if worker is live
+    {
+        let mut registry = state.worker_registry.write().await;
+        registry.update_priority_limits(
+            &id,
+            body.priority,
+            body.max_cpu
+                .map(|v| if v == 0 { None } else { Some(v as u32) }),
+            body.max_memory_mb
+                .map(|v| if v == 0 { None } else { Some(v as u64) }),
+            body.max_disk_mb
+                .map(|v| if v == 0 { None } else { Some(v as u64) }),
+        );
+    }
+
+    info!(
+        "Worker {} limits updated by {}: priority={:?} max_cpu={:?} max_memory_mb={:?} max_disk_mb={:?}",
+        id, auth_user.username, body.priority, body.max_cpu, body.max_memory_mb, body.max_disk_mb
+    );
+
+    Ok(Json(json!({
+        "worker_id": row.worker_id,
+        "priority": row.priority,
+        "max_cpu": row.max_cpu,
+        "max_memory_mb": row.max_memory_mb,
+        "max_disk_mb": row.max_disk_mb,
+    })))
 }

@@ -187,6 +187,7 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
             "/workers/{id}/metadata",
             put(worker_handlers::update_metadata),
         )
+        .route("/workers/{id}/limits", put(worker_handlers::update_limits))
         // Worker tokens
         .route(
             "/worker-tokens",

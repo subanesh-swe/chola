@@ -48,6 +48,10 @@ impl WorkerRegistry {
             docker_enabled: req.docker_enabled,
             labels: req.labels.clone(),
             disk_details,
+            priority: 0,
+            max_cpu: None,
+            max_memory_mb: None,
+            max_disk_mb: None,
         };
 
         let state = WorkerState::new(info);
@@ -89,6 +93,10 @@ impl WorkerRegistry {
             docker_enabled: req.docker_enabled,
             labels: req.labels.clone(),
             disk_details,
+            priority: 0,
+            max_cpu: None,
+            max_memory_mb: None,
+            max_disk_mb: None,
         };
 
         let state = WorkerState::new(info);
@@ -248,6 +256,34 @@ impl WorkerRegistry {
         }
 
         timed_out
+    }
+
+    /// Update priority and resource limits for a worker. Returns true if found.
+    pub fn update_priority_limits(
+        &mut self,
+        worker_id: &str,
+        priority: Option<i32>,
+        max_cpu: Option<Option<u32>>,
+        max_memory_mb: Option<Option<u64>>,
+        max_disk_mb: Option<Option<u64>>,
+    ) -> bool {
+        if let Some(worker) = self.workers.get_mut(worker_id) {
+            if let Some(p) = priority {
+                worker.info.priority = p;
+            }
+            if let Some(mc) = max_cpu {
+                worker.info.max_cpu = mc;
+            }
+            if let Some(mm) = max_memory_mb {
+                worker.info.max_memory_mb = mm;
+            }
+            if let Some(md) = max_disk_mb {
+                worker.info.max_disk_mb = md;
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Remove a worker entirely from the registry.

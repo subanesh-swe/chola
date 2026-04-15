@@ -486,17 +486,21 @@ pub async fn do_reserve_worker(
     let has_resource_req = needed_cpu > 0 || needed_memory > 0 || needed_disk > 0;
     let worker_id = {
         let mut registry = state.worker_registry.write().await;
-        // Sort candidates: most free resources first
+        // Sort candidates: highest priority first, then most free resources
         candidate_ids.sort_by(|a, b| {
-            let free_a = registry
-                .get(a)
-                .map(|w| w.available_cpu() as u64 + w.available_memory_mb() + w.free_disk_mb())
-                .unwrap_or(0);
-            let free_b = registry
-                .get(b)
-                .map(|w| w.available_cpu() as u64 + w.available_memory_mb() + w.free_disk_mb())
-                .unwrap_or(0);
-            free_b.cmp(&free_a) // descending: most free first
+            let wa = registry.get(a);
+            let wb = registry.get(b);
+            let pri_a = wa.map(|w| w.info.priority).unwrap_or(0);
+            let pri_b = wb.map(|w| w.info.priority).unwrap_or(0);
+            pri_b.cmp(&pri_a).then_with(|| {
+                let free_a = wa
+                    .map(|w| w.available_cpu() as u64 + w.available_memory_mb() + w.free_disk_mb())
+                    .unwrap_or(0);
+                let free_b = wb
+                    .map(|w| w.available_cpu() as u64 + w.available_memory_mb() + w.free_disk_mb())
+                    .unwrap_or(0);
+                free_b.cmp(&free_a)
+            })
         });
         let mut selected = None;
         for wid in &candidate_ids {
@@ -1334,19 +1338,20 @@ impl Orchestrator for OrchestratorService {
                     }
                 };
 
-                // Check worker approval status.
-                match st.get_worker(&worker_id).await {
+                // Check worker approval status and load DB-set limits.
+                let db_row = match st.get_worker(&worker_id).await {
                     Ok(Some(row)) if !row.approved => {
                         return Err(Status::permission_denied("Worker is not approved"));
                     }
+                    Ok(Some(row)) => Some(row),
+                    Ok(None) => None,
                     Err(e) => {
                         return Err(Status::internal(format!(
                             "Worker approval check failed: {}",
                             e
                         )));
                     }
-                    _ => {}
-                }
+                };
 
                 // Cache token hash so the interceptor accepts subsequent RPCs.
                 if let Ok(mut guard) = self.state.token_hashes.write() {
@@ -1355,6 +1360,18 @@ impl Orchestrator for OrchestratorService {
 
                 let mut registry = self.state.worker_registry.write().await;
                 registry.register_with_id(&worker_id, &req);
+
+                // Apply admin-set priority/limits from DB to in-memory state
+                if let Some(row) = &db_row {
+                    registry.update_priority_limits(
+                        &worker_id,
+                        Some(row.priority),
+                        Some(row.max_cpu.map(|v| v as u32)),
+                        Some(row.max_memory_mb.map(|v| v as u64)),
+                        Some(row.max_disk_mb.map(|v| v as u64)),
+                    );
+                }
+
                 restore_allocations(&self.state, &mut registry, &worker_id).await;
                 drop(registry);
 
@@ -1396,9 +1413,13 @@ impl Orchestrator for OrchestratorService {
                             registration_token_id: Some(token.id),
                             approved: true,
                             description: None,
+                            priority: 0,
+                            max_cpu: None,
+                            max_memory_mb: None,
+                            max_disk_mb: None,
                         };
 
-                        st.upsert_worker(&worker_row).await.map_err(|e| {
+                        let persisted = st.upsert_worker(&worker_row).await.map_err(|e| {
                             Status::internal(format!("Failed to persist worker: {}", e))
                         })?;
 
@@ -1414,6 +1435,16 @@ impl Orchestrator for OrchestratorService {
                         let worker_id = req.worker_id.clone();
                         let mut registry = self.state.worker_registry.write().await;
                         registry.register(&req);
+
+                        // Apply DB-preserved priority/limits to in-memory state
+                        registry.update_priority_limits(
+                            &worker_id,
+                            Some(persisted.priority),
+                            Some(persisted.max_cpu.map(|v| v as u32)),
+                            Some(persisted.max_memory_mb.map(|v| v as u64)),
+                            Some(persisted.max_disk_mb.map(|v| v as u64)),
+                        );
+
                         restore_allocations(&self.state, &mut registry, &worker_id).await;
                         drop(registry);
 

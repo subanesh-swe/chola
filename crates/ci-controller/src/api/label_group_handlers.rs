@@ -22,6 +22,7 @@ pub struct LabelGroupRequest {
     pub max_concurrent_jobs: Option<i32>,
     pub capabilities: Option<Vec<String>>,
     pub enabled: Option<bool>,
+    pub priority: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +34,7 @@ pub struct UpdateLabelGroupRequest {
     pub max_concurrent_jobs: Option<i32>,
     pub capabilities: Option<Vec<String>>,
     pub enabled: Option<bool>,
+    pub priority: Option<i32>,
 }
 
 /// POST /api/v1/label-groups
@@ -59,6 +61,7 @@ pub async fn create(
             body.max_concurrent_jobs,
             body.capabilities.as_deref().unwrap_or(&[]),
             body.enabled.unwrap_or(true),
+            body.priority,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -121,6 +124,7 @@ pub async fn update(
             body.max_concurrent_jobs,
             body.capabilities.as_deref(),
             body.enabled,
+            body.priority,
         )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -158,6 +162,7 @@ fn label_group_to_json(g: &crate::storage::DbLabelGroup) -> Value {
         "max_concurrent_jobs": g.max_concurrent_jobs,
         "capabilities": g.capabilities,
         "enabled": g.enabled,
+        "priority": g.priority,
         "created_at": g.created_at.to_rfc3339(),
         "updated_at": g.updated_at.to_rfc3339(),
     })
