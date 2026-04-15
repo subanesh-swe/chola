@@ -174,20 +174,20 @@ function ResourceBarsSection({ w, hasLastKnown, expandedDisks, setExpandedDisks 
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <ResourceBar
         label={hasLastKnown ? 'CPU (last known)' : 'CPU'}
-        total={cpuCap}
+        limit={cpuCap}
+        hardwareTotal={w.total_cpu}
         reserved={w.allocated_cpu}
         used={w.last_heartbeat?.used_cpu_percent ?? 0}
         unit="cores"
         usedIsPercent
-        hardwareTotal={cpuCap < w.total_cpu ? w.total_cpu : undefined}
       />
       <ResourceBar
         label={hasLastKnown ? 'Memory (last known)' : 'Memory'}
-        total={parseFloat((memCapMb / 1024).toFixed(1))}
+        limit={parseFloat((memCapMb / 1024).toFixed(1))}
+        hardwareTotal={parseFloat((w.total_memory_mb / 1024).toFixed(1))}
         reserved={parseFloat((w.allocated_memory_mb / 1024).toFixed(1))}
         used={parseFloat(((w.last_heartbeat?.used_memory_mb ?? 0) / 1024).toFixed(1))}
         unit="GB"
-        hardwareTotal={memCapMb < w.total_memory_mb ? parseFloat((w.total_memory_mb / 1024).toFixed(1)) : undefined}
       />
       <DiskSection
         usedDiskMb={w.last_heartbeat?.used_disk_mb ?? 0}
