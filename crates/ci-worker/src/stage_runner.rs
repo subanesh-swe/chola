@@ -60,7 +60,7 @@ async fn acquire_flock(
     let lock_dir = PathBuf::from("/tmp/chola-locks");
     fs::create_dir_all(&lock_dir)?;
 
-    // Sanitize lock key for filename
+    // Sanitize lock key for filename (max 200 chars to stay under ext4 255 limit)
     let safe_key: String = resolved_key
         .chars()
         .map(|c| {
@@ -70,6 +70,7 @@ async fn acquire_flock(
                 '_'
             }
         })
+        .take(200)
         .collect();
     let lock_path = lock_dir.join(format!("{}.lock", safe_key));
 
@@ -225,10 +226,23 @@ impl StageRunner {
                             .await;
                         pre_exit_code = Some(-1);
                         command_exit_code = -1;
+                        post_exit_code = self
+                            .run_post_script(
+                                post_script,
+                                work_dir,
+                                log_path,
+                                &log_tx,
+                                &secret_values,
+                                environment,
+                                command_exit_code,
+                                false,
+                                post_script_lock,
+                            )
+                            .await;
                         return Ok(StageResult {
                             pre_exit_code,
                             command_exit_code,
-                            post_exit_code: None,
+                            post_exit_code,
                             final_state: StageState::Failed,
                         });
                     }

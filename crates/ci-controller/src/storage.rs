@@ -1728,33 +1728,6 @@ impl Storage {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Returns (pre_script, pre_scope, post_script, post_scope) for a repo.
-    pub async fn get_global_scripts(
-        &self,
-        repo_id: Uuid,
-    ) -> anyhow::Result<(Option<String>, String, Option<String>, String)> {
-        let row = sqlx::query(
-            "SELECT global_pre_script, \
-                    COALESCE(global_pre_script_scope, 'worker') AS global_pre_script_scope, \
-                    global_post_script, \
-                    COALESCE(global_post_script_scope, 'worker') AS global_post_script_scope \
-             FROM repos WHERE id = $1",
-        )
-        .bind(repo_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(r) => Ok((
-                r.get("global_pre_script"),
-                r.get("global_pre_script_scope"),
-                r.get("global_post_script"),
-                r.get("global_post_script_scope"),
-            )),
-            None => Ok((None, "worker".to_string(), None, "worker".to_string())),
-        }
-    }
-
     // ========================================================================
     // Stage Configs (additional CRUD)
     // ========================================================================
