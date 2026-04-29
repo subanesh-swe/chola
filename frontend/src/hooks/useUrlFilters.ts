@@ -34,27 +34,31 @@ function parseStates(raw: string | null): string[] {
   return raw.split(',').filter(Boolean);
 }
 
+function parseFilters(p: URLSearchParams): BuildFilters {
+  return {
+    state: parseStates(p.get('state')),
+    repo: p.get('repo') ?? '',
+    branch: p.get('branch') ?? '',
+    dateFrom: p.get('dateFrom') ?? '',
+    dateTo: p.get('dateTo') ?? '',
+    stage: p.get('stage') ?? '',
+    exitCode: p.get('exitCode') ?? '',
+    page: Number(p.get('page') ?? '1') || 1,
+    sortKey: p.get('sortKey') ?? '',
+    sortDir: (p.get('sortDir') as SortDir) ?? 'desc',
+  };
+}
+
 export function useUrlFilters() {
   const [params, setParams] = useSearchParams();
 
-  const filters: BuildFilters = {
-    state: parseStates(params.get('state')),
-    repo: params.get('repo') ?? '',
-    branch: params.get('branch') ?? '',
-    dateFrom: params.get('dateFrom') ?? '',
-    dateTo: params.get('dateTo') ?? '',
-    stage: params.get('stage') ?? '',
-    exitCode: params.get('exitCode') ?? '',
-    page: Number(params.get('page') ?? '1') || 1,
-    sortKey: params.get('sortKey') ?? '',
-    sortDir: (params.get('sortDir') as SortDir) ?? 'desc',
-  };
+  const filters: BuildFilters = parseFilters(params);
 
   const setFilters = useCallback(
     (patch: Partial<BuildFilters>) => {
       setParams((prev) => {
         const next = new URLSearchParams(prev);
-        const merged = { ...filters, ...patch };
+        const merged = { ...parseFilters(prev), ...patch };
 
         if (merged.state.length) next.set('state', merged.state.join(','));
         else next.delete('state');
@@ -89,8 +93,7 @@ export function useUrlFilters() {
         return next;
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [params, setParams],
+    [setParams],
   );
 
   const resetFilters = useCallback(() => {
