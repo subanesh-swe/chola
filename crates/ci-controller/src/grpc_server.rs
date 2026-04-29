@@ -2055,21 +2055,12 @@ impl Orchestrator for OrchestratorService {
             Some(job) => {
                 let state = job_state_to_proto(job.state);
 
-                // Get log data from aggregator
-                let log_aggregator = self.state.log_aggregator.read().await;
-                let log_output = log_aggregator.get_log_string(&req.job_id);
-                drop(log_aggregator);
-
-                // Prefer stored output if available, otherwise use streamed logs
-                let output = job.output.clone().unwrap_or(log_output);
-
                 Ok(Response::new(GetJobStatusResponse {
                     found: true,
                     job_id: job.job_id.clone(),
                     state,
                     message: format!("Job state: {}", job.state),
                     exit_code: job.exit_code.unwrap_or(0),
-                    output,
                 }))
             }
             None => {
@@ -2095,7 +2086,6 @@ impl Orchestrator for OrchestratorService {
                                 .status_reason
                                 .unwrap_or_else(|| format!("Job state: {}", db_job.state)),
                             exit_code: db_job.exit_code.unwrap_or(0),
-                            output: String::new(),
                         }));
                     }
                 }
@@ -2105,7 +2095,6 @@ impl Orchestrator for OrchestratorService {
                     state: ci_core::proto::orchestrator::JobState::Unknown as i32,
                     message: "Job not found".to_string(),
                     exit_code: 0,
-                    output: String::new(),
                 }))
             }
         }
