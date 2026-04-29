@@ -33,6 +33,9 @@ export const updateStageConfig = (repoId: string, stageId: string, data: Partial
 export const deleteStageConfig = (repoId: string, stageId: string) =>
   apiClient.delete(`/repos/${repoId}/stages/${stageId}`).then((r) => r.data);
 
+export const getStageNames = (repoId: string): Promise<string[]> =>
+  apiClient.get<{ stages: string[] }>(`/repos/${repoId}/stage-names`).then((r) => r.data.stages);
+
 export const listWebhooks = (repoId: string) =>
   apiClient.get<{ webhooks: import('../types').Webhook[]; count: number }>(`/repos/${repoId}/webhooks`).then((r) => r.data);
 
