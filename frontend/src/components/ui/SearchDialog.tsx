@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { listBuilds } from '../../api/builds';
+import { listBuildsRaw } from '../../api/builds';
 import { listWorkers } from '../../api/workers';
 import { listRepos } from '../../api/repos';
 import { SearchResult, type SearchResultItem } from './SearchResult';
@@ -40,7 +40,7 @@ export function SearchDialog({ open, onClose }: Props) {
 
   const [buildsQ, workersQ, reposQ] = useQueries({
     queries: [
-      { queryKey: ['builds-all'], queryFn: () => listBuilds({ limit: 200 }), staleTime: 30000 },
+      { queryKey: ['builds-all'], queryFn: () => listBuildsRaw({ limit: 200 }), staleTime: 30000 },
       { queryKey: ['workers'], queryFn: () => listWorkers(), staleTime: 10000 },
       { queryKey: ['repos'], queryFn: () => listRepos(), staleTime: 60000 },
     ],

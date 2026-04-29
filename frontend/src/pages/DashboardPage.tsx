@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getDashboardSummary } from '../api/dashboard';
-import { listBuilds } from '../api/builds';
+import { listBuildsRaw } from '../api/builds';
 import { listWorkers } from '../api/workers';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
@@ -99,7 +99,7 @@ export default function DashboardPage() {
   });
   const { data: builds, isLoading: buildsLoading, isError: buildsError } = useQuery({
     queryKey: ['builds', 'recent'],
-    queryFn: () => listBuilds({ limit: 10 }),
+    queryFn: () => listBuildsRaw({ limit: 10 }),
     refetchInterval: 5000,
   });
   const { data: workersData, isLoading: workersLoading, isError: workersError } = useQuery({

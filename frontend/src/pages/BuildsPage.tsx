@@ -1,44 +1,41 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
+import { listRepos } from '../api/repos';
+import { useUrlFilters } from '../hooks/useUrlFilters';
+import { FilterBar } from '../components/ui/FilterBar';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 
-const PAGE_SIZE = 20;
-const states = ['', 'pending', 'reserved', 'running', 'success', 'failed', 'cancelled'];
-
 export default function BuildsPage() {
   const nav = useNavigate();
-  const [page, setPage] = useState(1);
-  const [stateFilter, setStateFilter] = useState('');
+  const { filters, setFilters, resetFilters } = useUrlFilters();
+
+  const { data: reposData } = useQuery({
+    queryKey: ['repos'],
+    queryFn: () => listRepos({ limit: 100 }),
+  });
+  const repos = reposData?.data ?? [];
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['builds', page, stateFilter],
-    queryFn: () => listBuilds({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, state: stateFilter || undefined }),
+    queryKey: ['builds', filters],
+    queryFn: () => listBuilds(filters),
     refetchInterval: 5000,
   });
 
   const builds = data?.data ?? [];
   const total = data?.pagination.total ?? 0;
+  const PAGE_SIZE = 20;
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const page = filters.page;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl font-bold text-white">Builds</h2>
-        <div className="flex items-center gap-2">
-          <label htmlFor="state-filter" className="text-sm text-slate-400">State:</label>
-          <select
-            id="state-filter"
-            value={stateFilter}
-            onChange={e => { setStateFilter(e.target.value); setPage(1); }}
-            className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {states.map(s => <option key={s} value={s}>{s || 'All'}</option>)}
-          </select>
-        </div>
       </div>
+
+      <FilterBar filters={filters} repos={repos} onChange={setFilters} onReset={resetFilters} />
 
       {isError && (
         <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
@@ -126,7 +123,7 @@ export default function BuildsPage() {
       {totalPages > 1 && (
         <div className="flex justify-center gap-2">
           <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
+            onClick={() => setFilters({ page: Math.max(1, page - 1) })}
             disabled={page <= 1}
             className="px-3 py-1 text-sm rounded-lg text-slate-300 hover:bg-slate-800 disabled:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
@@ -134,7 +131,7 @@ export default function BuildsPage() {
           </button>
           <span className="px-3 py-1 text-sm text-slate-400">{page} / {totalPages}</span>
           <button
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            onClick={() => setFilters({ page: Math.min(totalPages, page + 1) })}
             disabled={page >= totalPages}
             className="px-3 py-1 text-sm rounded-lg text-slate-300 hover:bg-slate-800 disabled:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
