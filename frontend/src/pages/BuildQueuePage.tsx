@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { listBuilds } from '../api/builds';
+import { listBuildsRaw } from '../api/builds';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 
@@ -9,13 +9,13 @@ export default function BuildQueuePage() {
 
   const pendingQ = useQuery({
     queryKey: ['queue', 'pending'],
-    queryFn: () => listBuilds({ limit: 100, state: 'pending' }),
+    queryFn: () => listBuildsRaw({ limit: 100, state: 'pending' }),
     refetchInterval: 5000,
   });
 
   const reservedQ = useQuery({
     queryKey: ['queue', 'reserved'],
-    queryFn: () => listBuilds({ limit: 100, state: 'reserved' }),
+    queryFn: () => listBuildsRaw({ limit: 100, state: 'reserved' }),
     refetchInterval: 5000,
   });
 
