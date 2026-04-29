@@ -433,6 +433,21 @@ pub async fn list_stages(
     Ok(Json(json!({ "stages": list, "count": list.len() })))
 }
 
+/// GET /api/v1/repos/:id/stage-names — distinct stage names for filter dropdown.
+/// Returns a flat list of strings, alphabetically sorted.
+pub async fn list_stage_names(
+    State(state): State<Arc<ControllerState>>,
+    _auth_user: AuthUser,
+    Path(repo_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+    let names = storage
+        .list_stages_for_repo(repo_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(json!({ "stages": names })))
+}
+
 /// POST /api/v1/repos/:id/stages
 pub async fn create_stage(
     State(state): State<Arc<ControllerState>>,
