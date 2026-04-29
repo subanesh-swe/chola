@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 
 use crate::auth::middleware::AuthUser;
 use crate::state::ControllerState;
+use crate::storage::{AnalyticsFilters, AnalyticsWindow};
 
 use super::error::ApiError;
 
@@ -36,15 +37,22 @@ pub async fn get_analytics(
 ) -> Result<Json<Value>, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let days = params.days.unwrap_or(30).clamp(1, 365);
+    let filters = AnalyticsFilters {
+        window: AnalyticsWindow::LastDays(days),
+        repo_id: None,
+        branch: None,
+        stage_name: None,
+        exit_code: None,
+    };
 
     let (build_trends, duration_trends, slowest_stages, failing_repos, worker_util, queue_wait) =
         tokio::try_join!(
-            storage.get_build_trends(days),
-            storage.get_duration_trends(days),
-            storage.get_slowest_stages(days, 10),
-            storage.get_most_failing_repos(days, 10),
+            storage.get_build_trends(&filters),
+            storage.get_duration_trends(&filters),
+            storage.get_slowest_stages(&filters, 10),
+            storage.get_most_failing_repos(&filters, 10),
             storage.get_worker_utilization(),
-            storage.get_queue_wait_trends(days),
+            storage.get_queue_wait_trends(&filters),
         )
         .map_err(|e| ApiError::Internal(format!("Analytics query failed: {}", e)))?;
 
