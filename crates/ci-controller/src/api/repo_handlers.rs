@@ -434,13 +434,20 @@ pub async fn list_stages(
 }
 
 /// GET /api/v1/repos/:id/stage-names — distinct stage names for filter dropdown.
-/// Returns a flat list of strings, alphabetically sorted.
+/// Returns a flat list of strings, alphabetically sorted. 404 if repo missing.
 pub async fn list_stage_names(
     State(state): State<Arc<ControllerState>>,
     _auth_user: AuthUser,
     Path(repo_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
+    // Verify the repo exists; otherwise list_stages_for_repo silently returns []
+    // and we'd 200 on a non-existent UUID.
+    storage
+        .get_repo(repo_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Repo not found".into()))?;
     let names = storage
         .list_stages_for_repo(repo_id)
         .await
@@ -562,5 +569,34 @@ pub async fn delete_stage(
         Ok(Json(json!({"deleted": true})))
     } else {
         Err(ApiError::NotFound("Stage config not found".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    /// Pins the contract that `list_stage_names` relies on: when the repo lookup
+    /// returns `None`, the handler returns `ApiError::NotFound("Repo not found")`,
+    /// which `IntoResponse` maps to HTTP 404 with the body `{"error":"Repo not found"}`.
+    /// Full-stack handler test would require a live `ControllerState` (DB + Redis);
+    /// this guards the response shape we depend on.
+    #[tokio::test]
+    async fn not_found_repo_maps_to_404_json() {
+        let err = ApiError::NotFound("Repo not found".into());
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(
+            body_str.contains("\"error\""),
+            "expected JSON error envelope, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("Repo not found"),
+            "expected message in body, got: {body_str}"
+        );
     }
 }
