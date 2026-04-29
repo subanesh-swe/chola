@@ -420,6 +420,202 @@ pub struct NotificationConfig {
 // Analytics structs
 // ============================================================================
 
+/// Time window for analytics queries — explicit `[from, to]` range or fallback
+/// to "last N days" (relative to NOW()).
+#[derive(Debug, Clone)]
+pub enum AnalyticsWindow {
+    Range {
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    },
+    LastDays(i32),
+}
+
+/// Filters threaded into every analytics query. `exit_code = Some(-1)` means
+/// "any non-zero" (matches subtask-3's sentinel convention in
+/// `list_job_groups_paginated`).
+#[derive(Debug, Clone)]
+pub struct AnalyticsFilters {
+    pub window: AnalyticsWindow,
+    pub repo_id: Option<Uuid>,
+    pub branch: Option<String>,
+    pub stage_name: Option<String>,
+    pub exit_code: Option<i32>,
+}
+
+/// Build artefact: a WHERE clause string and the bind index following the last
+/// filter param (caller appends additional binds like LIMIT at this index).
+pub struct AnalyticsPlan {
+    pub where_clause: String,
+    pub next_idx: usize,
+}
+
+type PgQuery<'q> = sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>;
+
+impl AnalyticsFilters {
+    /// Plan a WHERE clause where filters apply directly to a `job_groups` table
+    /// (alias `prefix`, empty string for unaliased). `extras` are extra clauses
+    /// AND-ed in (e.g. `completed_at IS NOT NULL`).
+    pub fn plan_for_job_groups(&self, prefix: &str, extras: &[&str]) -> AnalyticsPlan {
+        let p = if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{prefix}.")
+        };
+        let mut clauses: Vec<String> = extras.iter().map(|s| s.to_string()).collect();
+        let mut idx: usize = 0;
+        let mut next = || {
+            idx += 1;
+            idx
+        };
+
+        // Time window
+        match &self.window {
+            AnalyticsWindow::Range { .. } => {
+                clauses.push(format!("{p}created_at >= ${}", next()));
+                clauses.push(format!("{p}created_at <= ${}", next()));
+            }
+            AnalyticsWindow::LastDays(_) => {
+                clauses.push(format!(
+                    "{p}created_at > NOW() - make_interval(days => ${})",
+                    next()
+                ));
+            }
+        }
+
+        if self.repo_id.is_some() {
+            clauses.push(format!("{p}repo_id = ${}", next()));
+        }
+        if self.branch.is_some() {
+            clauses.push(format!("{p}branch = ${}", next()));
+        }
+        if self.stage_name.is_some() {
+            clauses.push(format!(
+                "EXISTS (SELECT 1 FROM jobs j_f WHERE j_f.job_group_id = {p}id \
+                 AND j_f.stage_name = ${})",
+                next()
+            ));
+        }
+        if let Some(code) = self.exit_code {
+            if code == -1 {
+                clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM jobs j_f WHERE j_f.job_group_id = {p}id \
+                     AND j_f.exit_code IS NOT NULL AND j_f.exit_code != 0)"
+                ));
+            } else {
+                clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM jobs j_f WHERE j_f.job_group_id = {p}id \
+                     AND j_f.exit_code = ${})",
+                    next()
+                ));
+            }
+        }
+
+        let where_clause = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        AnalyticsPlan {
+            where_clause,
+            next_idx: idx + 1,
+        }
+    }
+
+    /// Plan a WHERE clause for a query rooted at `jobs` joined with
+    /// `stage_configs` (alias `sc`) and `job_groups` (alias `jg`).
+    pub fn plan_for_jobs(
+        &self,
+        j: &str,
+        sc: &str,
+        jg: &str,
+        extras: &[&str],
+    ) -> AnalyticsPlan {
+        let mut clauses: Vec<String> = extras.iter().map(|s| s.to_string()).collect();
+        let mut idx: usize = 0;
+        let mut next = || {
+            idx += 1;
+            idx
+        };
+
+        match &self.window {
+            AnalyticsWindow::Range { .. } => {
+                clauses.push(format!("{j}.created_at >= ${}", next()));
+                clauses.push(format!("{j}.created_at <= ${}", next()));
+            }
+            AnalyticsWindow::LastDays(_) => {
+                clauses.push(format!(
+                    "{j}.created_at > NOW() - make_interval(days => ${})",
+                    next()
+                ));
+            }
+        }
+
+        if self.repo_id.is_some() {
+            clauses.push(format!("{sc}.repo_id = ${}", next()));
+        }
+        if self.branch.is_some() {
+            clauses.push(format!("{jg}.branch = ${}", next()));
+        }
+        if self.stage_name.is_some() {
+            clauses.push(format!("{j}.stage_name = ${}", next()));
+        }
+        if let Some(code) = self.exit_code {
+            if code == -1 {
+                clauses.push(format!(
+                    "{j}.exit_code IS NOT NULL AND {j}.exit_code != 0"
+                ));
+            } else {
+                clauses.push(format!("{j}.exit_code = ${}", next()));
+            }
+        }
+
+        let where_clause = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        AnalyticsPlan {
+            where_clause,
+            next_idx: idx + 1,
+        }
+    }
+
+    /// Apply binds in the same order plan_for_job_groups appended params.
+    pub fn bind_for_job_groups<'q>(&'q self, mut q: PgQuery<'q>) -> PgQuery<'q> {
+        match &self.window {
+            AnalyticsWindow::Range { from, to } => {
+                q = q.bind(*from).bind(*to);
+            }
+            AnalyticsWindow::LastDays(days) => {
+                q = q.bind(*days);
+            }
+        }
+        if let Some(rid) = self.repo_id {
+            q = q.bind(rid);
+        }
+        if let Some(ref b) = self.branch {
+            q = q.bind(b.clone());
+        }
+        if let Some(ref s) = self.stage_name {
+            q = q.bind(s.clone());
+        }
+        if let Some(code) = self.exit_code {
+            if code != -1 {
+                q = q.bind(code);
+            }
+        }
+        q
+    }
+
+    /// Apply binds for plan_for_jobs (same order as plan).
+    pub fn bind_for_jobs<'q>(&'q self, q: PgQuery<'q>) -> PgQuery<'q> {
+        // Same bind order as job_groups variant — repo_id/branch/stage_name/exit_code
+        // are applied identically; only the column references in the SQL differ.
+        self.bind_for_job_groups(q)
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct BuildTrendPoint {
     pub date: String,
@@ -3145,16 +3341,23 @@ impl Storage {
     // Analytics
     // ========================================================================
 
-    pub async fn get_build_trends(&self, days: i32) -> anyhow::Result<Vec<BuildTrendPoint>> {
+    pub async fn get_build_trends(
+        &self,
+        filters: &AnalyticsFilters,
+    ) -> anyhow::Result<Vec<BuildTrendPoint>> {
+        let plan = filters.plan_for_job_groups("", &[]);
         let q = format!(
             "SELECT DATE(created_at)::text as date, COUNT(*)::bigint as total, \
              COUNT(*) FILTER (WHERE state = 'success')::bigint as success, \
              COUNT(*) FILTER (WHERE state = 'failed')::bigint as failed \
-             FROM {s}.job_groups WHERE created_at > NOW() - make_interval(days => $1) \
+             FROM {s}.job_groups {wc} \
              GROUP BY DATE(created_at) ORDER BY date",
-            s = self.schema
+            s = self.schema,
+            wc = plan.where_clause
         );
-        let rows = sqlx::query(&q).bind(days).fetch_all(&self.pool).await?;
+        let mut query = sqlx::query(&q);
+        query = filters.bind_for_job_groups(query);
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| BuildTrendPoint {
@@ -3166,16 +3369,23 @@ impl Storage {
             .collect())
     }
 
-    pub async fn get_duration_trends(&self, days: i32) -> anyhow::Result<Vec<DurationTrendPoint>> {
+    pub async fn get_duration_trends(
+        &self,
+        filters: &AnalyticsFilters,
+    ) -> anyhow::Result<Vec<DurationTrendPoint>> {
+        let plan = filters.plan_for_job_groups("", &["completed_at IS NOT NULL"]);
         let q = format!(
             "SELECT DATE(created_at)::text as date, \
              COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)))::bigint, 0) as avg_duration_secs, \
              COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)))::bigint, 0) as p95_duration_secs \
-             FROM {s}.job_groups WHERE completed_at IS NOT NULL AND created_at > NOW() - make_interval(days => $1) \
+             FROM {s}.job_groups {wc} \
              GROUP BY DATE(created_at) ORDER BY date",
-            s = self.schema
+            s = self.schema,
+            wc = plan.where_clause
         );
-        let rows = sqlx::query(&q).bind(days).fetch_all(&self.pool).await?;
+        let mut query = sqlx::query(&q);
+        query = filters.bind_for_job_groups(query);
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| DurationTrendPoint {
@@ -3188,24 +3398,31 @@ impl Storage {
 
     pub async fn get_slowest_stages(
         &self,
-        days: i32,
+        filters: &AnalyticsFilters,
         limit: i32,
     ) -> anyhow::Result<Vec<SlowStage>> {
+        let plan = filters.plan_for_jobs(
+            "j",
+            "sc",
+            "jg",
+            &["j.completed_at IS NOT NULL", "j.started_at IS NOT NULL"],
+        );
+        let limit_idx = plan.next_idx;
         let q = format!(
             "SELECT sc.stage_name, r.repo_name, \
              COALESCE(AVG(EXTRACT(EPOCH FROM (j.completed_at - j.started_at)))::bigint, 0) as avg_secs \
              FROM {s}.jobs j JOIN {s}.stage_configs sc ON j.stage_config_id = sc.id \
              JOIN {s}.repos r ON sc.repo_id = r.id \
-             WHERE j.completed_at IS NOT NULL AND j.started_at IS NOT NULL \
-             AND j.created_at > NOW() - make_interval(days => $1) \
-             GROUP BY sc.stage_name, r.repo_name ORDER BY avg_secs DESC LIMIT $2",
-            s = self.schema
+             LEFT JOIN {s}.job_groups jg ON j.job_group_id = jg.id \
+             {wc} \
+             GROUP BY sc.stage_name, r.repo_name ORDER BY avg_secs DESC LIMIT ${limit_idx}",
+            s = self.schema,
+            wc = plan.where_clause
         );
-        let rows = sqlx::query(&q)
-            .bind(days)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
+        let mut query = sqlx::query(&q);
+        query = filters.bind_for_jobs(query);
+        query = query.bind(limit);
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| SlowStage {
@@ -3218,22 +3435,24 @@ impl Storage {
 
     pub async fn get_most_failing_repos(
         &self,
-        days: i32,
+        filters: &AnalyticsFilters,
         limit: i32,
     ) -> anyhow::Result<Vec<FailingRepo>> {
+        let plan = filters.plan_for_job_groups("jg", &[]);
+        let limit_idx = plan.next_idx;
         let q = format!(
             "SELECT r.repo_name, COUNT(*)::bigint as total, \
              COUNT(*) FILTER (WHERE jg.state = 'failed')::bigint as failed \
              FROM {s}.job_groups jg JOIN {s}.repos r ON jg.repo_id = r.id \
-             WHERE jg.created_at > NOW() - make_interval(days => $1) \
-             GROUP BY r.repo_name ORDER BY failed DESC LIMIT $2",
-            s = self.schema
+             {wc} \
+             GROUP BY r.repo_name ORDER BY failed DESC LIMIT ${limit_idx}",
+            s = self.schema,
+            wc = plan.where_clause
         );
-        let rows = sqlx::query(&q)
-            .bind(days)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
+        let mut query = sqlx::query(&q);
+        query = filters.bind_for_job_groups(query);
+        query = query.bind(limit);
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| FailingRepo {
@@ -3267,15 +3486,25 @@ impl Storage {
             .collect())
     }
 
-    pub async fn get_queue_wait_trends(&self, days: i32) -> anyhow::Result<Vec<QueueWaitPoint>> {
+    pub async fn get_queue_wait_trends(
+        &self,
+        filters: &AnalyticsFilters,
+    ) -> anyhow::Result<Vec<QueueWaitPoint>> {
+        let plan = filters.plan_for_jobs("j", "sc", "jg", &["j.started_at IS NOT NULL"]);
         let q = format!(
-            "SELECT DATE(created_at)::text as date, \
-             COALESCE(AVG(EXTRACT(EPOCH FROM (started_at - created_at)))::bigint, 0) as avg_wait_secs \
-             FROM {s}.jobs WHERE started_at IS NOT NULL AND created_at > NOW() - make_interval(days => $1) \
-             GROUP BY DATE(created_at) ORDER BY date",
-            s = self.schema
+            "SELECT DATE(j.created_at)::text as date, \
+             COALESCE(AVG(EXTRACT(EPOCH FROM (j.started_at - j.created_at)))::bigint, 0) as avg_wait_secs \
+             FROM {s}.jobs j \
+             LEFT JOIN {s}.stage_configs sc ON j.stage_config_id = sc.id \
+             LEFT JOIN {s}.job_groups jg ON j.job_group_id = jg.id \
+             {wc} \
+             GROUP BY DATE(j.created_at) ORDER BY date",
+            s = self.schema,
+            wc = plan.where_clause
         );
-        let rows = sqlx::query(&q).bind(days).fetch_all(&self.pool).await?;
+        let mut query = sqlx::query(&q);
+        query = filters.bind_for_jobs(query);
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| QueueWaitPoint {
