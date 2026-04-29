@@ -1,7 +1,17 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { BuildFilters } from '../../hooks/useUrlFilters';
 import type { Repo } from '../../types';
+import { getStageNames } from '../../api/repos';
 
 const ALL_STATES = ['pending', 'reserved', 'running', 'success', 'failed', 'cancelled'];
+
+const EXIT_CODE_OPTIONS = [
+  { label: 'Any', value: '' },
+  { label: 'Success (0)', value: '0' },
+  { label: 'Non-zero', value: 'nonzero' },
+  { label: 'Custom...', value: 'custom' },
+];
 
 interface Props {
   filters: BuildFilters;
@@ -26,7 +36,7 @@ export function FilterBar({ filters, repos, onChange, onReset }: Props) {
         <label className="text-xs text-slate-400">Repo</label>
         <select
           value={filters.repo}
-          onChange={(e) => onChange({ repo: e.target.value, page: 1 })}
+          onChange={(e) => onChange({ repo: e.target.value, stage: '', page: 1 })}
           className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white min-w-[140px]"
         >
           <option value="">All repos</option>
@@ -48,6 +58,10 @@ export function FilterBar({ filters, repos, onChange, onReset }: Props) {
       </div>
 
       <DateRangeInputs filters={filters} onChange={onChange} />
+
+      <StageSelect repoId={filters.repo} value={filters.stage} onChange={(s) => onChange({ stage: s, page: 1 })} />
+
+      <ExitCodeSelect value={filters.exitCode} onChange={(v) => onChange({ exitCode: v, page: 1 })} />
 
       <button
         onClick={onReset}
@@ -104,5 +118,86 @@ function DateRangeInputs({ filters, onChange }: { filters: BuildFilters; onChang
         />
       </div>
     </>
+  );
+}
+
+function StageSelect({
+  repoId,
+  value,
+  onChange,
+}: {
+  repoId: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const { data: stages = [] } = useQuery({
+    queryKey: ['stage-names', repoId],
+    queryFn: () => getStageNames(repoId),
+    enabled: !!repoId,
+  });
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs text-slate-400">Stage</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={!repoId}
+        className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white min-w-[120px] disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <option value="">All stages</option>
+        {stages.map((s) => (
+          <option key={s} value={s}>{s}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ExitCodeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [customInput, setCustomInput] = useState('');
+
+  const isCustom = value !== '' && value !== '0' && value !== 'nonzero';
+  const selectValue = isCustom ? 'custom' : value;
+
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    if (v === 'custom') {
+      onChange(customInput || '');
+    } else {
+      onChange(v);
+    }
+  };
+
+  const handleCustomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setCustomInput(v);
+    onChange(v);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs text-slate-400">Exit code</label>
+      <div className="flex gap-1">
+        <select
+          value={selectValue}
+          onChange={handleSelectChange}
+          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white min-w-[110px]"
+        >
+          {EXIT_CODE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        {(selectValue === 'custom' || isCustom) && (
+          <input
+            type="number"
+            value={isCustom ? value : customInput}
+            onChange={handleCustomChange}
+            placeholder="code"
+            className="bg-slate-800 border border-slate-600 rounded-lg px-2 py-1.5 text-sm text-white w-16"
+          />
+        )}
+      </div>
+    </div>
   );
 }
