@@ -9,6 +9,8 @@ export interface BuildFilters {
   branch: string;
   dateFrom: string;
   dateTo: string;
+  stage: string;
+  exitCode: string;
   page: number;
   sortKey: string;
   sortDir: SortDir;
@@ -20,6 +22,8 @@ const DEFAULTS: BuildFilters = {
   branch: '',
   dateFrom: '',
   dateTo: '',
+  stage: '',
+  exitCode: '',
   page: 1,
   sortKey: '',
   sortDir: 'desc',
@@ -39,6 +43,8 @@ export function useUrlFilters() {
     branch: params.get('branch') ?? '',
     dateFrom: params.get('dateFrom') ?? '',
     dateTo: params.get('dateTo') ?? '',
+    stage: params.get('stage') ?? '',
+    exitCode: params.get('exitCode') ?? '',
     page: Number(params.get('page') ?? '1') || 1,
     sortKey: params.get('sortKey') ?? '',
     sortDir: (params.get('sortDir') as SortDir) ?? 'desc',
@@ -64,6 +70,12 @@ export function useUrlFilters() {
 
         if (merged.dateTo) next.set('dateTo', merged.dateTo);
         else next.delete('dateTo');
+
+        if (merged.stage) next.set('stage', merged.stage);
+        else next.delete('stage');
+
+        if (merged.exitCode) next.set('exitCode', merged.exitCode);
+        else next.delete('exitCode');
 
         if (merged.sortKey) next.set('sortKey', merged.sortKey);
         else next.delete('sortKey');
