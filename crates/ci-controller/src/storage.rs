@@ -1662,48 +1662,120 @@ impl Storage {
     // Dashboard / Listing helpers
     // ========================================================================
 
+    /// List job_groups with optional filters. `exit_code = Some(-1)` means
+    /// "any non-zero" (matches at least one job in the group with non-zero exit).
+    /// `stage_name` / `exit_code` filters use EXISTS subquery against `jobs` so
+    /// parent rows are never duplicated.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_job_groups_paginated(
         &self,
         limit: i64,
         offset: i64,
         state_filter: Option<&str>,
         repo_id_filter: Option<Uuid>,
+        branch_filter: Option<&str>,
+        date_from: Option<DateTime<Utc>>,
+        date_to: Option<DateTime<Utc>>,
+        stage_name_filter: Option<&str>,
+        exit_code_filter: Option<i32>,
     ) -> anyhow::Result<(Vec<JobGroup>, i64)> {
-        let (where_clause, bind_offset) = match (state_filter.is_some(), repo_id_filter.is_some()) {
-            (true, true) => ("WHERE state = $1 AND repo_id = $2".to_string(), 2),
-            (true, false) => ("WHERE state = $1".to_string(), 1),
-            (false, true) => ("WHERE repo_id = $1".to_string(), 1),
-            (false, false) => (String::new(), 0),
+        // Build WHERE fragments + remember bind order so count + data queries
+        // bind in lockstep.
+        let mut clauses: Vec<String> = Vec::new();
+        let mut idx: usize = 0;
+        let mut next = || {
+            idx += 1;
+            idx
+        };
+
+        if state_filter.is_some() {
+            clauses.push(format!("state = ${}", next()));
+        }
+        if repo_id_filter.is_some() {
+            clauses.push(format!("repo_id = ${}", next()));
+        }
+        if branch_filter.is_some() {
+            clauses.push(format!("branch = ${}", next()));
+        }
+        if date_from.is_some() {
+            clauses.push(format!("created_at >= ${}", next()));
+        }
+        if date_to.is_some() {
+            clauses.push(format!("created_at <= ${}", next()));
+        }
+        if stage_name_filter.is_some() {
+            clauses.push(format!(
+                "EXISTS (SELECT 1 FROM jobs j WHERE j.job_group_id = job_groups.id AND j.stage_name = ${})",
+                next()
+            ));
+        }
+        if let Some(code) = exit_code_filter {
+            if code == -1 {
+                // "any non-zero" — no bind required.
+                clauses.push(
+                    "EXISTS (SELECT 1 FROM jobs j WHERE j.job_group_id = job_groups.id \
+                     AND j.exit_code IS NOT NULL AND j.exit_code != 0)"
+                        .to_string(),
+                );
+            } else {
+                clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM jobs j WHERE j.job_group_id = job_groups.id AND j.exit_code = ${})",
+                    next()
+                ));
+            }
+        }
+
+        let where_clause = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
         };
 
         let count_q = format!("SELECT COUNT(*) FROM job_groups {where_clause}");
         let data_q = format!(
             "SELECT {JOB_GROUP_COLUMNS} FROM job_groups {where_clause} \
              ORDER BY priority DESC, created_at DESC LIMIT ${} OFFSET ${}",
-            bind_offset + 1,
-            bind_offset + 2
+            idx + 1,
+            idx + 2
         );
 
-        // Build count query
-        let mut count_query = sqlx::query_scalar::<_, i64>(&count_q);
-        if let Some(state) = state_filter {
-            count_query = count_query.bind(state.to_string());
+        // Apply filter binds in the same order clauses were pushed above.
+        // Macro avoids the closure lifetime mismatch between sqlx::query::Query
+        // and sqlx::query::QueryScalar generic parameters.
+        macro_rules! bind_filters {
+            ($q:expr) => {{
+                let mut q = $q;
+                if let Some(state) = state_filter {
+                    q = q.bind(state.to_string());
+                }
+                if let Some(repo_id) = repo_id_filter {
+                    q = q.bind(repo_id);
+                }
+                if let Some(branch) = branch_filter {
+                    q = q.bind(branch.to_string());
+                }
+                if let Some(from) = date_from {
+                    q = q.bind(from);
+                }
+                if let Some(to) = date_to {
+                    q = q.bind(to);
+                }
+                if let Some(stage) = stage_name_filter {
+                    q = q.bind(stage.to_string());
+                }
+                if let Some(code) = exit_code_filter {
+                    if code != -1 {
+                        q = q.bind(code);
+                    }
+                }
+                q
+            }};
         }
-        if let Some(repo_id) = repo_id_filter {
-            count_query = count_query.bind(repo_id);
-        }
+
+        let count_query = bind_filters!(sqlx::query_scalar::<_, i64>(&count_q));
         let total: i64 = count_query.fetch_one(&self.pool).await?;
 
-        // Build data query
-        let mut data_query = sqlx::query(&data_q);
-        if let Some(state) = state_filter {
-            data_query = data_query.bind(state.to_string());
-        }
-        if let Some(repo_id) = repo_id_filter {
-            data_query = data_query.bind(repo_id);
-        }
-        data_query = data_query.bind(limit).bind(offset);
-
+        let data_query = bind_filters!(sqlx::query(&data_q)).bind(limit).bind(offset);
         let rows = data_query.fetch_all(&self.pool).await?;
         let groups: Vec<JobGroup> = rows.into_iter().map(map_job_group).collect();
 
