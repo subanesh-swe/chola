@@ -97,6 +97,10 @@ pub fn api_router() -> Router<Arc<ControllerState>> {
             get(repo_handlers::list_stages).post(repo_handlers::create_stage),
         )
         .route(
+            "/repos/{id}/stage-names",
+            get(repo_handlers::list_stage_names),
+        )
+        .route(
             "/repos/{repo_id}/stages/{stage_id}",
             put(repo_handlers::update_stage).delete(repo_handlers::delete_stage),
         )
