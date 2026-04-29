@@ -74,9 +74,16 @@ impl GrpcClient {
         }
 
         let channel = endpoint.connect().await?;
+        // Raise gRPC message-size limits to 64 MiB on both directions.
+        // Defense-in-depth against the 4 MiB tonic default: worker→controller
+        // `JobStatusUpdate.output` (proto field 7) is unbounded today, and
+        // pre/post-script merge logs can push large payloads. See
+        // `local/plans/exit-code-and-filters-progress.md` (Fix 1b).
         let client = OrchestratorClient::new(channel)
             .send_compressed(tonic::codec::CompressionEncoding::Gzip)
-            .accept_compressed(tonic::codec::CompressionEncoding::Gzip);
+            .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
+            .max_decoding_message_size(64 * 1024 * 1024)
+            .max_encoding_message_size(64 * 1024 * 1024);
         Ok(Self { client, auth_token })
     }
 
