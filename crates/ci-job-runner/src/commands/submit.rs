@@ -6,6 +6,10 @@ use ci_core::proto::orchestrator::{
 };
 use tracing::{info, warn};
 
+/// Sentinel exit code: status unknown after retries (controller unreachable or no response).
+/// Exit 0 = success, 1 = job failed, 2 = status unknown / controller unreachable.
+pub const STATUS_UNKNOWN_EXIT: i32 = 2;
+
 pub async fn execute(
     client: &mut super::Client,
     job_id: String,
@@ -118,10 +122,10 @@ pub async fn exit_with_job_status(client: &mut super::Client, job_id: &str) -> a
         }
     }
     eprintln!(
-        "Job {} status unknown after 3 retries: {}",
-        job_id, last_err
+        "Status unknown after 3 retries — controller did not respond. Job may still be running. (last error: {})",
+        last_err
     );
-    std::process::exit(1)
+    std::process::exit(STATUS_UNKNOWN_EXIT)
 }
 
 /// Process a job status response: exit with the correct code based on state.
@@ -299,8 +303,10 @@ pub async fn fallback_poll_status(client: &mut super::Client, job_id: &str) -> a
 
     loop {
         if tokio::time::Instant::now() > deadline {
-            eprintln!("Timeout waiting for job {} status", job_id);
-            std::process::exit(1);
+            eprintln!(
+                "Status unknown after timeout — controller did not respond. Job may still be running."
+            );
+            std::process::exit(STATUS_UNKNOWN_EXIT);
         }
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -322,10 +328,10 @@ pub async fn fallback_poll_status(client: &mut super::Client, job_id: &str) -> a
                 match state {
                     JobState::Success => {
                         println!("{}", "-".repeat(60));
-                        if !status.output.is_empty() {
-                            println!("{}", status.output);
-                            println!("{}", "-".repeat(60));
-                        }
+                        eprintln!(
+                            "Output unavailable from get_job_status — fetch logs via `chola-job-runner logs {}`",
+                            status.job_id
+                        );
                         info!(
                             "Job {} completed successfully (exit code: {})",
                             status.job_id, status.exit_code
@@ -334,10 +340,10 @@ pub async fn fallback_poll_status(client: &mut super::Client, job_id: &str) -> a
                     }
                     JobState::Failed => {
                         println!("{}", "-".repeat(60));
-                        if !status.output.is_empty() {
-                            eprintln!("{}", status.output);
-                            println!("{}", "-".repeat(60));
-                        }
+                        eprintln!(
+                            "Output unavailable from get_job_status — fetch logs via `chola-job-runner logs {}`",
+                            status.job_id
+                        );
                         let code = if status.exit_code == 0 {
                             1
                         } else {
@@ -357,7 +363,11 @@ pub async fn fallback_poll_status(client: &mut super::Client, job_id: &str) -> a
                 }
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Failed to query job status: {}", e));
+                eprintln!(
+                    "Status unknown after transport error — controller did not respond. Job may still be running. (error: {})",
+                    e
+                );
+                std::process::exit(STATUS_UNKNOWN_EXIT);
             }
         }
     }
