@@ -900,6 +900,19 @@ impl Storage {
         Ok(row.map(map_stage_config))
     }
 
+    /// Returns distinct stage_name values for a repo, alphabetically sorted.
+    /// Powers the stage filter dropdown on /builds and /analytics.
+    pub async fn list_stages_for_repo(&self, repo_id: Uuid) -> anyhow::Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT stage_name FROM stage_configs \
+             WHERE repo_id = $1 ORDER BY stage_name",
+        )
+        .bind(repo_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(s,)| s).collect())
+    }
+
     // ========================================================================
     // Stage Scripts
     // ========================================================================
