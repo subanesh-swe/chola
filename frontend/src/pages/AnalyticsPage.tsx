@@ -1,6 +1,8 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getAnalytics } from '../api/analytics';
+import { listRepos } from '../api/repos';
+import { useUrlFilters } from '../hooks/useUrlFilters';
+import { FilterBar } from '../components/ui/FilterBar';
 import type { SlowStage, FailingRepo, WorkerUtilization } from '../types';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
@@ -17,10 +19,22 @@ const COLORS = {
 };
 
 const RANGE_OPTIONS = [
-  { label: '7d', value: 7 },
-  { label: '30d', value: 30 },
-  { label: '90d', value: 90 },
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
 ];
+
+function subDaysIso(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function activeDays(dateFrom: string): number | null {
+  if (!dateFrom) return null;
+  const diff = Math.round((Date.now() - new Date(dateFrom).getTime()) / 86400000);
+  return diff;
+}
 
 function fmtDuration(secs: number): string {
   if (secs < 60) return `${secs}s`;
@@ -130,13 +144,26 @@ function WorkerUtilChart({ data }: { data: WorkerUtilization[] }) {
 }
 
 export default function AnalyticsPage() {
-  const [days, setDays] = useState(30);
+  const { filters, setFilters, resetFilters } = useUrlFilters();
+
+  const { data: reposData } = useQuery({
+    queryKey: ['repos'],
+    queryFn: () => listRepos({ limit: 100 }),
+  });
+  const repos = reposData?.data ?? [];
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['analytics', days],
-    queryFn: () => getAnalytics(days),
+    queryKey: ['analytics', filters],
+    queryFn: () => getAnalytics(filters),
     refetchInterval: 30000,
   });
+
+  const days = activeDays(filters.dateFrom);
+  const activePreset = RANGE_OPTIONS.find((o) => days !== null && Math.abs(days - o.days) <= 1)?.days ?? null;
+
+  const setPreset = (n: number) => {
+    setFilters({ dateFrom: subDaysIso(n), dateTo: '' });
+  };
 
   if (isError) {
     return (
@@ -171,15 +198,15 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl font-bold text-white">Analytics</h2>
         <div className="flex gap-1 bg-slate-800 rounded-lg p-0.5">
           {RANGE_OPTIONS.map((opt) => (
             <button
-              key={opt.value}
-              onClick={() => setDays(opt.value)}
+              key={opt.days}
+              onClick={() => setPreset(opt.days)}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                days === opt.value
+                activePreset === opt.days
                   ? 'bg-blue-600 text-white'
                   : 'text-slate-400 hover:text-white'
               }`}
@@ -190,12 +217,14 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
+      <FilterBar filters={filters} repos={repos} onChange={setFilters} onReset={resetFilters} />
+
       {/* Summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Total Builds"
           value={summary.total_builds}
-          sub={`Last ${days} days`}
+          sub={days !== null ? `Last ${days} days` : 'All time'}
           color="border-blue-500/30"
         />
         <StatCard
@@ -262,7 +291,7 @@ export default function AnalyticsPage() {
         <ChartCard title="Slowest Stages">
           <SlowestStagesChart data={slowest_stages} />
         </ChartCard>
-        <ChartCard title={`Most Failing Repos (${days}d)`}>
+        <ChartCard title={`Most Failing Repos${days !== null ? ` (${days}d)` : ''}`}>
           <FailingReposChart data={failing_repos} />
         </ChartCard>
       </div>
