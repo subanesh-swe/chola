@@ -5,6 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
@@ -27,6 +28,17 @@ pub struct ListParams {
     pub offset: Option<i64>,
     pub state: Option<String>,
     pub repo_id: Option<Uuid>,
+    pub branch: Option<String>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+    pub stage_name: Option<String>,
+    pub exit_code: Option<i32>,
+}
+
+fn parse_rfc3339(field: &str, value: &str) -> Result<DateTime<Utc>, ApiError> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| ApiError::BadRequest(format!("Invalid {field} (expected RFC3339): {e}")))
 }
 
 // ── Request bodies ───────────────────────────────────────────────────────────
@@ -53,9 +65,15 @@ pub struct TriggerRequest {
         ("offset" = Option<i64>, Query, description = "Offset"),
         ("state" = Option<String>, Query, description = "Filter by state"),
         ("repo_id" = Option<uuid::Uuid>, Query, description = "Filter by repo"),
+        ("branch" = Option<String>, Query, description = "Filter by branch"),
+        ("date_from" = Option<String>, Query, description = "Filter by created_at >= RFC3339"),
+        ("date_to" = Option<String>, Query, description = "Filter by created_at <= RFC3339"),
+        ("stage_name" = Option<String>, Query, description = "Only groups with at least one job for this stage"),
+        ("exit_code" = Option<i32>, Query, description = "Only groups with at least one job with this exit_code"),
     ),
     responses(
         (status = 200, description = "Paginated job group list"),
+        (status = 400, description = "Bad request"),
         (status = 401, description = "Unauthorized"),
     ),
     security(("bearer_auth" = []))
@@ -69,8 +87,29 @@ pub async fn list(
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
+    let date_from = params
+        .date_from
+        .as_deref()
+        .map(|v| parse_rfc3339("date_from", v))
+        .transpose()?;
+    let date_to = params
+        .date_to
+        .as_deref()
+        .map(|v| parse_rfc3339("date_to", v))
+        .transpose()?;
+
     let (groups, total) = storage
-        .list_job_groups_paginated(limit, offset, params.state.as_deref(), params.repo_id)
+        .list_job_groups_paginated(
+            limit,
+            offset,
+            params.state.as_deref(),
+            params.repo_id,
+            params.branch.as_deref(),
+            date_from,
+            date_to,
+            params.stage_name.as_deref(),
+            params.exit_code,
+        )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
