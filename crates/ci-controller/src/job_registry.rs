@@ -39,9 +39,6 @@ impl JobRegistry {
             info!("Job {} state: {} -> {}", job.job_id, job.state, new_state);
             job.state = new_state;
             job.exit_code = Some(update.exit_code);
-            if !update.output.is_empty() {
-                job.output = Some(update.output.clone());
-            }
             // Set status_reason for terminal states
             job.status_reason = match new_state {
                 JobState::Success => Some("Completed successfully (exit code 0)".to_string()),
