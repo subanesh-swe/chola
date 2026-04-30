@@ -36,7 +36,5 @@ pub async fn connect(controller: &str, auth_token: Option<&str>) -> anyhow::Resu
     let interceptor = AuthInterceptor {
         token: auth_token.map(|t| t.to_string()),
     };
-    Ok(OrchestratorClient::with_interceptor(channel, interceptor)
-        .max_decoding_message_size(64 * 1024 * 1024)
-        .max_encoding_message_size(64 * 1024 * 1024))
+    Ok(OrchestratorClient::with_interceptor(channel, interceptor))
 }
