@@ -552,7 +552,6 @@ async fn report_status(
             message: report.message,
             exit_code: report.exit_code,
             timestamp_unix: chrono::Utc::now().timestamp(),
-            output: String::new(),
             job_group_id: ctx.job_group_id.clone(),
             stage_name: ctx.stage_name.clone(),
             phase: report.phase,
