@@ -2906,9 +2906,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
     let interceptor = auth_interceptor(auth_config, token_hashes);
     let grpc_service = OrchestratorServer::new(service)
         .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
-        .send_compressed(tonic::codec::CompressionEncoding::Gzip)
-        .max_decoding_message_size(64 * 1024 * 1024)
-        .max_encoding_message_size(64 * 1024 * 1024);
+        .send_compressed(tonic::codec::CompressionEncoding::Gzip);
     let server = InterceptedService::new(grpc_service, interceptor);
 
     info!("Controller gRPC server listening on {}", addr);
