@@ -39,3 +39,4 @@ local/
 frontend/node_modules/
 frontend/dist/
 .env
+frontend/tsconfig.tsbuildinfo
