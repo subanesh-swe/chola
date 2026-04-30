@@ -348,6 +348,16 @@ impl StageRunner {
         if !pre_script.is_empty() {
             info!("Running pre_script");
 
+            // Phase budget = lock acquisition + script execution (proto-documented).
+            // Only enforced when the lock config carries a positive timeout.
+            let pre_phase_start = std::time::Instant::now();
+            let pre_phase_budget_secs: Option<u64> =
+                if pre_script_lock.enabled && pre_script_lock.timeout_secs > 0 {
+                    Some(pre_script_lock.timeout_secs as u64)
+                } else {
+                    None
+                };
+
             // Acquire lock if configured (held until _pre_lock_guard is dropped)
             let _pre_lock_guard = if pre_script_lock.enabled {
                 let resolved = pre_script_lock.resolve_key(environment);
@@ -398,21 +408,47 @@ impl StageRunner {
                 })
                 .await;
 
-            // Create a dummy cancel_rx for pre_script (no cancellation during pre)
-            let (_dummy_cancel_tx, dummy_cancel_rx) = mpsc::channel(1);
-            match self
+            // Wire a cancel channel that the phase-timeout task uses to send
+            // SIGTERM into the executor. Mirrors the command-phase pattern below.
+            let (pre_cancel_tx, pre_cancel_rx) = mpsc::channel::<i32>(1);
+            let pre_timeout_handle = pre_phase_budget_secs.map(|total| {
+                let elapsed = pre_phase_start.elapsed().as_secs();
+                let remaining = total.saturating_sub(elapsed);
+                let cancel_tx = pre_cancel_tx.clone();
+                let log_tx = log_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(remaining)).await;
+                    let _ = log_tx
+                        .send(LogLine {
+                            line: format!(
+                                "[PRE] Phase timeout {}s exceeded — sending SIGTERM",
+                                total
+                            ),
+                            is_stderr: true,
+                        })
+                        .await;
+                    let _ = cancel_tx.send(15).await; // SIGTERM
+                })
+            });
+
+            let exec_result = self
                 .executor
                 .execute_streaming(
                     pre_script,
                     work_dir,
                     log_path,
                     log_tx.clone(),
-                    dummy_cancel_rx,
+                    pre_cancel_rx,
                     secret_values.clone(),
                     environment,
                 )
-                .await
-            {
+                .await;
+
+            if let Some(h) = pre_timeout_handle {
+                h.abort();
+            }
+
+            match exec_result {
                 Ok(result) => {
                     pre_exit_code = Some(result.exit_code);
                     if result.exit_code != 0 {
@@ -620,6 +656,16 @@ impl StageRunner {
 
         info!("Running post_script (MUST complete)");
 
+        // Phase budget = lock acquisition + script execution (proto-documented).
+        // Only enforced when the lock config carries a positive timeout.
+        let post_phase_start = std::time::Instant::now();
+        let post_phase_budget_secs: Option<u64> =
+            if lock_config.enabled && lock_config.timeout_secs > 0 {
+                Some(lock_config.timeout_secs as u64)
+            } else {
+                None
+            };
+
         // Acquire lock if configured
         let _post_lock_guard = if lock_config.enabled {
             let resolved = lock_config.resolve_key(environment);
@@ -659,20 +705,43 @@ impl StageRunner {
             if was_cancelled { "true" } else { "false" }.into(),
         );
 
-        let (_dummy_cancel_tx, dummy_cancel_rx) = mpsc::channel(1);
-        match self
+        // Wire a cancel channel that the phase-timeout task uses to send SIGTERM.
+        let (post_cancel_tx, post_cancel_rx) = mpsc::channel::<i32>(1);
+        let post_timeout_handle = post_phase_budget_secs.map(|total| {
+            let elapsed = post_phase_start.elapsed().as_secs();
+            let remaining = total.saturating_sub(elapsed);
+            let cancel_tx = post_cancel_tx.clone();
+            let log_tx = log_tx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(remaining)).await;
+                let _ = log_tx
+                    .send(LogLine {
+                        line: format!("[POST] Phase timeout {}s exceeded — sending SIGTERM", total),
+                        is_stderr: true,
+                    })
+                    .await;
+                let _ = cancel_tx.send(15).await; // SIGTERM
+            })
+        });
+
+        let exec_result = self
             .executor
             .execute_streaming(
                 post_script,
                 work_dir,
                 log_path,
                 log_tx.clone(),
-                dummy_cancel_rx,
+                post_cancel_rx,
                 secret_values.clone(),
                 &post_env,
             )
-            .await
-        {
+            .await;
+
+        if let Some(h) = post_timeout_handle {
+            h.abort();
+        }
+
+        match exec_result {
             Ok(result) => {
                 if result.exit_code != 0 {
                     warn!("Post-script failed with exit code {}", result.exit_code);
