@@ -190,7 +190,8 @@ message JobStatusUpdate {
   string message = 4;
   int32 exit_code = 5;
   int64 timestamp_unix = 6;
-  string output = 7;
+  reserved 7;
+  reserved "output";
   string job_group_id = 8;
   string stage_name = 9;
   string phase = 10;  // "pre_script", "command", "post_script"
