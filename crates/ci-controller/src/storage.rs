@@ -524,13 +524,7 @@ impl AnalyticsFilters {
 
     /// Plan a WHERE clause for a query rooted at `jobs` joined with
     /// `stage_configs` (alias `sc`) and `job_groups` (alias `jg`).
-    pub fn plan_for_jobs(
-        &self,
-        j: &str,
-        sc: &str,
-        jg: &str,
-        extras: &[&str],
-    ) -> AnalyticsPlan {
+    pub fn plan_for_jobs(&self, j: &str, sc: &str, jg: &str, extras: &[&str]) -> AnalyticsPlan {
         let mut clauses: Vec<String> = extras.iter().map(|s| s.to_string()).collect();
         let mut idx: usize = 0;
         let mut next = || {
@@ -562,9 +556,7 @@ impl AnalyticsFilters {
         }
         if let Some(code) = self.exit_code {
             if code == -1 {
-                clauses.push(format!(
-                    "{j}.exit_code IS NOT NULL AND {j}.exit_code != 0"
-                ));
+                clauses.push(format!("{j}.exit_code IS NOT NULL AND {j}.exit_code != 0"));
             } else {
                 clauses.push(format!("{j}.exit_code = ${}", next()));
             }
