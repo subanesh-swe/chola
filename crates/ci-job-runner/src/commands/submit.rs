@@ -10,6 +10,13 @@ use tracing::{info, warn};
 /// Exit 0 = success, 1 = job failed, 2 = status unknown / controller unreachable.
 pub const STATUS_UNKNOWN_EXIT: i32 = 2;
 
+/// Total wall-clock budget for retrying `get_job_status` after a transport error.
+/// Sized to absorb typical controller restarts (cargo-watch rebuild, k8s pod restart,
+/// systemd binary swap) without losing the job's exit code.
+const STATUS_RETRY_BUDGET_SECS: u64 = 60;
+/// Cap on per-iteration backoff (exponential up to this, then constant).
+const STATUS_RETRY_MAX_BACKOFF_SECS: u64 = 8;
+
 pub async fn execute(
     client: &mut super::Client,
     job_id: String,
@@ -98,32 +105,48 @@ pub async fn stream_logs(
 
 /// Query the controller for the final job status and exit with its exit code.
 /// If the job is not yet terminal, polls until it reaches a terminal state
-/// (with a 5-minute timeout). Retries up to 3 times on transport errors.
+/// (with a 5-minute timeout).
+///
+/// On transport errors, retries with exponential backoff (1s, 2s, 4s, 8s, 8s, ...)
+/// up to `STATUS_RETRY_BUDGET_SECS`. The controller-side handler has a DB fallback
+/// (commit 6426846), so as long as the controller comes back online within the
+/// budget, the runner will retrieve the persisted exit_code.
 pub async fn exit_with_job_status(client: &mut super::Client, job_id: &str) -> anyhow::Result<()> {
-    // Try up to 3 times (handles transient transport errors after stream close)
-    let mut last_err = String::new();
-    for attempt in 0..3u8 {
+    let deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(STATUS_RETRY_BUDGET_SECS);
+    let mut backoff_secs: u64 = 1;
+    let mut attempt: u32 = 0;
+
+    let last_err = loop {
+        attempt += 1;
         let request = tonic::Request::new(GetJobStatusRequest {
             job_id: job_id.to_string(),
         });
         match client.get_job_status(request).await {
             Ok(resp) => return process_terminal_status(client, job_id, resp.into_inner()).await,
             Err(e) => {
-                last_err = e.to_string();
-                if attempt < 2 {
-                    warn!(
-                        "get_job_status attempt {}/3 failed: {}, retrying...",
-                        attempt + 1,
-                        e
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                let err_str = e.to_string();
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    break err_str;
                 }
+                let remaining = deadline - now;
+                let sleep_dur = tokio::time::Duration::from_secs(backoff_secs).min(remaining);
+                warn!(
+                    "get_job_status attempt {} failed: {}, retrying in {:.1}s (budget remaining: {:.0}s)...",
+                    attempt,
+                    e,
+                    sleep_dur.as_secs_f64(),
+                    remaining.as_secs_f64()
+                );
+                tokio::time::sleep(sleep_dur).await;
+                backoff_secs = (backoff_secs * 2).min(STATUS_RETRY_MAX_BACKOFF_SECS);
             }
         }
-    }
+    };
     eprintln!(
-        "Status unknown after 3 retries — controller did not respond. Job may still be running. (last error: {})",
-        last_err
+        "Status unknown after {} attempts over {}s — controller did not respond. Job may still be running. (last error: {})",
+        attempt, STATUS_RETRY_BUDGET_SECS, last_err
     );
     std::process::exit(STATUS_UNKNOWN_EXIT)
 }
