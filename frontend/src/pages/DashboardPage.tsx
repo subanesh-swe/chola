@@ -5,7 +5,7 @@ import { listWorkers } from '../api/workers';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { Sparkline } from '../components/ui/Sparkline';
-import { DashboardSkeleton } from '../components/ui/PageSkeleton';
+import { DashboardSkeleton, TableSkeleton } from '../components/ui/PageSkeleton';
 import { ResourceBar } from '../components/ui/ResourceBar';
 import { useNavigate } from 'react-router-dom';
 import { useRef } from 'react';
@@ -45,7 +45,8 @@ function StatCardWithSparkline({
           <p className="text-2xl font-bold text-white mt-0.5">{value}</p>
           {subtext && <p className="text-xs text-slate-500 mt-0.5">{subtext}</p>}
         </div>
-        <div className="opacity-70">
+        {/* item 8: min-h to prevent layout shift on first load */}
+        <div className="opacity-70 min-h-[28px]">
           <Sparkline data={trend} color={sparkColor} width={80} height={28} />
         </div>
       </div>
@@ -194,6 +195,10 @@ export default function DashboardPage() {
               View all
             </button>
           </div>
+          {/* item 48: skeleton for recent builds section during sub-query load */}
+          {buildsLoading ? (
+            <TableSkeleton rows={5} cols={3} />
+          ) : null}
           <div className="divide-y divide-slate-800">
             {(recentBuilds as Array<{ job_group_id: string; repo_name?: string; branch: string | null; state: string; created_at: string; commit_sha?: string | null }>).slice(0, 8).map((b) => (
               <div

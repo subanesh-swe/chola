@@ -6,6 +6,7 @@ import { useUrlFilters } from '../hooks/useUrlFilters';
 import { FilterBar } from '../components/ui/FilterBar';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
+import { TableSkeleton } from '../components/ui/PageSkeleton';
 
 export default function BuildsPage() {
   const { filters, setFilters, resetFilters } = useUrlFilters();
@@ -53,8 +54,9 @@ export default function BuildsPage() {
         </div>
       )}
       <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        {/* item 11: table skeleton instead of Loading text */}
         {isLoading ? (
-          <div className="p-8 text-center text-slate-400">Loading...</div>
+          <TableSkeleton rows={6} cols={6} />
         ) : (
           <>
             {/* Desktop table */}

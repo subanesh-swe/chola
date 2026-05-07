@@ -72,6 +72,9 @@ const enumStyleMap: Record<string, string> = {
   connected: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   disconnected: 'bg-red-500/20 text-red-400 border-red-500/30',
   draining: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  // repo enabled/disabled (item 31)
+  enabled: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+  disabled: 'bg-slate-700 text-slate-400 border-slate-600',
 };
 
 const pulseStatuses = new Set(['running', 'assigned', 'JOB_STATE_RUNNING', 'JOB_STATE_ASSIGNED', 'JOB_GROUP_STATE_RUNNING']);

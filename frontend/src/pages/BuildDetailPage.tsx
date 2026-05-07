@@ -13,6 +13,7 @@ import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
 import { formatSecs, formatBytes } from '../utils/format';
+import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { toast } from 'sonner';
 import type { Job, JobGroup, ArchivedChildren, MutationError } from '../types';
 
@@ -332,7 +333,8 @@ export default function BuildDetailPage() {
     onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to retry stage'),
   });
 
-  if (isLoading) return <div className="text-slate-400">Loading...</div>;
+  // item 15: use skeleton instead of plain text
+  if (isLoading) return <PageSkeleton rows={4} />;
   if (isError) return (
     <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
       Failed to load build. Please try again.

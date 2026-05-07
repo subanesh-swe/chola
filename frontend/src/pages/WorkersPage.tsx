@@ -976,7 +976,14 @@ export default function WorkersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Workers ({workers.length})</h2>
+        {/* item 21: skeleton for count badge while loading */}
+        <h2 className="text-2xl font-bold text-white">
+          Workers
+          {isLoading
+            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
+            : <span className="ml-1">({workers.length})</span>
+          }
+        </h2>
         {canManageWorkers && (
           <button
             onClick={() => setShowRegisterModal(true)}
