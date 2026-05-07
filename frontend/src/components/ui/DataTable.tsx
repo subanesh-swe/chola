@@ -17,8 +17,6 @@ interface Props<T> {
   onRowClick?: (row: T) => void;
   /** When set, each row becomes a real anchor (supports middle-click / Cmd+click). */
   rowHref?: (row: T) => string;
-  /** Provides a meaningful aria-label for the row link (first cell). Falls back to keyExtractor. */
-  rowAriaLabel?: (row: T) => string;
   emptyMessage?: string;
   loading?: boolean;
 }
@@ -29,7 +27,6 @@ export function DataTable<T>({
   keyExtractor,
   onRowClick,
   rowHref,
-  rowAriaLabel,
   emptyMessage = 'No data',
   loading = false,
 }: Props<T>) {
@@ -117,17 +114,15 @@ export function DataTable<T>({
                     tabIndex={onRowClick && !rowHref ? 0 : undefined}
                     className={clsx(
                       'transition-colors',
-                      // item 46: active bg for touch feedback
-                      isClickable && 'hover:bg-surface-hover/50 active:bg-surface-hover',
-                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent',
+                      isClickable && 'hover:bg-slate-800/50',
+                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
                     )}
                   >
-                    {/* Stretched link relies on row-level position:relative; supported in Safari 16+, Chromium 88+, Firefox 90+. */}
-                    {columns.map((col, colIdx) => (
+                    {columns.map((col) => (
                       <td
                         key={col.key}
                         className={clsx(
-                          'text-sm text-secondary',
+                          'text-sm text-slate-200',
                           href ? 'p-0' : 'px-4 py-3',
                           col.className,
                         )}
@@ -135,11 +130,7 @@ export function DataTable<T>({
                         {href ? (
                           <Link
                             to={href}
-                            // First cell carries the accessible label; subsequent cells are duplicates — hide from AT.
-                            aria-label={colIdx === 0 ? (rowAriaLabel?.(row) ?? keyExtractor(row)) : undefined}
-                            aria-hidden={colIdx !== 0 ? true : undefined}
-                            tabIndex={colIdx !== 0 ? -1 : undefined}
-                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent"
+                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
                           >
                             {col.render(row)}
                           </Link>
