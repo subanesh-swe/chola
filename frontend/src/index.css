@@ -1,11 +1,103 @@
 @import "tailwindcss";
 
+/* -----------------------------------------------------------------------
+   Tailwind v4 theme extension — CSS-var palette mapped to utility classes
+   ----------------------------------------------------------------------- */
+@theme {
+  --color-app: var(--bg-app);
+  --color-surface: var(--bg-surface);
+  --color-surface-2: var(--bg-surface-2);
+  --color-border-app: var(--border);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+}
+
+/* -----------------------------------------------------------------------
+   Base palette CSS variables
+   Each theme sets values on [data-theme] applied to <html>.
+   Accent variables are orthogonal and can be stacked:
+     <html data-theme="dark" data-accent="emerald">
+   ----------------------------------------------------------------------- */
+
+/* --- dark (DEFAULT) --------------------------------------------------- */
+[data-theme="dark"],
+:root {
+  --bg-app:       #020617; /* slate-950 */
+  --bg-surface:   #0f172a; /* slate-900 */
+  --bg-surface-2: #1e293b; /* slate-800 */
+  --border:       #334155; /* slate-700 */
+  --text-primary:   #f1f5f9; /* slate-100 */
+  --text-secondary: #cbd5e1; /* slate-300 */
+  --text-muted:     #94a3b8; /* slate-400 */
+}
+
+/* --- light ------------------------------------------------------------ */
+[data-theme="light"] {
+  --bg-app:       #f8fafc; /* slate-50 */
+  --bg-surface:   #ffffff;
+  --bg-surface-2: #f1f5f9; /* slate-100 */
+  --border:       #e2e8f0; /* slate-200 */
+  --text-primary:   #0f172a; /* slate-900 */
+  --text-secondary: #334155; /* slate-700 */
+  --text-muted:     #64748b; /* slate-500 */
+}
+
+/* --- system: inherits from prefers-color-scheme ----------------------- */
+@media (prefers-color-scheme: light) {
+  [data-theme="system"] {
+    --bg-app:       #f8fafc;
+    --bg-surface:   #ffffff;
+    --bg-surface-2: #f1f5f9;
+    --border:       #e2e8f0;
+    --text-primary:   #0f172a;
+    --text-secondary: #334155;
+    --text-muted:     #64748b;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --bg-app:       #020617;
+    --bg-surface:   #0f172a;
+    --bg-surface-2: #1e293b;
+    --border:       #334155;
+    --text-primary:   #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-muted:     #94a3b8;
+  }
+}
+
+/* --- accent: indigo (DEFAULT) ----------------------------------------- */
+:root,
+[data-accent="indigo"] {
+  --accent:       #4f46e5; /* indigo-600 */
+  --accent-hover: #4338ca; /* indigo-700 */
+}
+
+/* --- accent: emerald -------------------------------------------------- */
+[data-accent="emerald"] {
+  --accent:       #059669; /* emerald-600 */
+  --accent-hover: #047857; /* emerald-700 */
+}
+
+/* --- accent: rose ----------------------------------------------------- */
+[data-accent="rose"] {
+  --accent:       #e11d48; /* rose-600 */
+  --accent-hover: #be123c; /* rose-700 */
+}
+
+/* -----------------------------------------------------------------------
+   Base styles
+   ----------------------------------------------------------------------- */
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #e2e8f0;
-  background-color: #020617;
+  color: var(--text-primary);
+  background-color: var(--bg-app);
 }
 
 body {
@@ -19,12 +111,12 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: var(--bg-surface-2);
 }
 ::-webkit-scrollbar-thumb {
-  background: #475569;
+  background: var(--border);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: var(--text-muted);
 }
