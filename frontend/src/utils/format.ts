@@ -20,14 +20,11 @@ export function formatBytesFromBytes(bytes: number): string {
   return formatBytes(bytes / (1024 * 1024));
 }
 
-/**
- * Input: seconds (number | null | undefined).
- * Returns "30s", "5m", "2h 30m", "—" for null/undefined/0.
- */
+/** Returns "0s" for 0, "5m"/"2h 30m" for positives, "—" for null/undefined. */
 export function formatSecs(secs: number | null | undefined): string {
   if (secs == null) return '—';
   const total = Math.max(0, Math.floor(secs));
-  if (total === 0) return '—';
+  if (total === 0) return '0s';
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
