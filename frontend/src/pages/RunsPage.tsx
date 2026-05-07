@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 import { listRuns, type Run } from '../api/runs';
 import { DataTable, type Column } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -82,7 +81,6 @@ const columns: Column<Run>[] = [
 ];
 
 export default function RunsPage() {
-  const nav = useNavigate();
   const [page, setPage] = useState(1);
   const [stateFilter, setStateFilter] = useState('');
   const [workerFilter, setWorkerFilter] = useState('');
@@ -160,7 +158,7 @@ export default function RunsPage() {
         data={runs}
         columns={columns}
         keyExtractor={(r) => r.id}
-        onRowClick={(r) => nav(`/builds/${r.job_group_id}`)}
+        rowHref={(r) => `/builds/${r.job_group_id}`}
         emptyMessage="No runs found"
         loading={isLoading}
       />

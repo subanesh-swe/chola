@@ -1,12 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { listBuildsRaw } from '../api/builds';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 
 export default function BuildQueuePage() {
-  const nav = useNavigate();
-
   const pendingQ = useQuery({
     queryKey: ['queue', 'pending'],
     queryFn: () => listBuildsRaw({ limit: 100, state: 'pending' }),
@@ -71,31 +69,51 @@ export default function BuildQueuePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {queueItems.map((job, idx) => (
-                    <tr
-                      key={job.job_group_id}
-                      onClick={() => nav(`/builds/${job.job_group_id}`)}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') nav(`/builds/${job.job_group_id}`); }}
-                      tabIndex={0}
-                      role="row"
-                      aria-label={`Queue position ${idx + 1}: ${job.branch ?? 'unknown branch'}`}
-                      className="cursor-pointer hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
-                    >
-                      <td className="px-4 py-3 text-sm text-slate-500 tabular-nums">{idx + 1}</td>
-                      <td className="px-4 py-3"><StatusBadge status={job.state} /></td>
-                      <td className="px-4 py-3 text-sm text-slate-300 font-mono">{job.job_group_id.slice(0, 8)}</td>
-                      <td className="px-4 py-3 text-sm text-slate-300 max-w-[180px] truncate">
-                        {job.repo_name ?? job.repo_id?.slice(0, 8) ?? '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-200">{job.branch ?? '-'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400 font-mono">
-                        {job.reserved_worker_id ? job.reserved_worker_id.slice(0, 8) : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <TimeAgo date={job.created_at} className="text-slate-500" />
-                      </td>
-                    </tr>
-                  ))}
+                  {queueItems.map((job, idx) => {
+                    const href = `/builds/${job.job_group_id}`;
+                    return (
+                      <tr
+                        key={job.job_group_id}
+                        className="hover:bg-slate-800/50 transition-colors"
+                      >
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-500 tabular-nums focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {idx + 1}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            <StatusBadge status={job.state} />
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {job.job_group_id.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 max-w-[180px] truncate focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {job.repo_name ?? job.repo_id?.slice(0, 8) ?? '-'}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {job.branch ?? '-'}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {job.reserved_worker_id ? job.reserved_worker_id.slice(0, 8) : '-'}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            <TimeAgo date={job.created_at} className="text-slate-500" />
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {!queueItems.length && (
                     <tr>
                       <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
@@ -110,11 +128,11 @@ export default function BuildQueuePage() {
             {/* Mobile stacked cards */}
             <div className="sm:hidden divide-y divide-slate-800">
               {queueItems.map((job, idx) => (
-                <button
+                <Link
                   key={job.job_group_id}
-                  onClick={() => nav(`/builds/${job.job_group_id}`)}
+                  to={`/builds/${job.job_group_id}`}
                   aria-label={`Queue position ${idx + 1}: ${job.branch ?? 'unknown branch'}`}
-                  className="w-full text-left px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+                  className="block w-full px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
@@ -130,7 +148,7 @@ export default function BuildQueuePage() {
                       <span className="ml-2 font-mono">{job.reserved_worker_id.slice(0, 8)}</span>
                     )}
                   </div>
-                </button>
+                </Link>
               ))}
               {!queueItems.length && (
                 <div className="px-4 py-12 text-center text-slate-500">Queue is empty</div>

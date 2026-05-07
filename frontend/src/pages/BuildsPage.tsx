@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
 import { listRepos } from '../api/repos';
 import { useUrlFilters } from '../hooks/useUrlFilters';
@@ -8,7 +8,6 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 
 export default function BuildsPage() {
-  const nav = useNavigate();
   const { filters, setFilters, resetFilters } = useUrlFilters();
 
   const { data: reposData } = useQuery({
@@ -72,31 +71,49 @@ export default function BuildsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {builds.map(b => (
-                    <tr
-                      key={b.job_group_id}
-                      onClick={() => nav(`/builds/${b.job_group_id}`)}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') nav(`/builds/${b.job_group_id}`); }}
-                      tabIndex={0}
-                      role="row"
-                      className={`cursor-pointer hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset${b.archived ? ' opacity-60' : ''}`}
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <StatusBadge status={b.state} />
-                          {b.archived && <StatusBadge status="archived" />}
-                        </div>
-                        {b.status_reason && (
-                          <span className="block text-[10px] text-slate-500 truncate max-w-xs">{b.status_reason}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-300 font-mono">{b.job_group_id.slice(0, 8)}</td>
-                      <td className="px-4 py-3 text-sm text-slate-200">{b.branch || '-'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400 font-mono">{b.commit_sha?.slice(0, 7) || '-'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400">{b.reserved_worker_id || '-'}</td>
-                      <td className="px-4 py-3 text-sm"><TimeAgo date={b.created_at} className="text-slate-500" /></td>
-                    </tr>
-                  ))}
+                  {builds.map(b => {
+                    const href = `/builds/${b.job_group_id}`;
+                    return (
+                      <tr key={b.job_group_id} className={`hover:bg-slate-800/50 transition-colors${b.archived ? ' opacity-60' : ''}`}>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <StatusBadge status={b.state} />
+                              {b.archived && <StatusBadge status="archived" />}
+                            </div>
+                            {b.status_reason && (
+                              <span className="block text-[10px] text-slate-500 truncate max-w-xs">{b.status_reason}</span>
+                            )}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {b.job_group_id.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {b.branch || '-'}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {b.commit_sha?.slice(0, 7) || '-'}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            {b.reserved_worker_id || '-'}
+                          </Link>
+                        </td>
+                        <td className="p-0">
+                          <Link to={href} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                            <TimeAgo date={b.created_at} className="text-slate-500" />
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {!builds.length && (
                     <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No builds found</td></tr>
                   )}
@@ -107,10 +124,10 @@ export default function BuildsPage() {
             {/* Mobile stacked cards */}
             <div className="sm:hidden divide-y divide-slate-800">
               {builds.map(b => (
-                <button
+                <Link
                   key={b.job_group_id}
-                  onClick={() => nav(`/builds/${b.job_group_id}`)}
-                  className={`w-full text-left px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset${b.archived ? ' opacity-60' : ''}`}
+                  to={`/builds/${b.job_group_id}`}
+                  className={`block w-full px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset${b.archived ? ' opacity-60' : ''}`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
@@ -127,7 +144,7 @@ export default function BuildsPage() {
                     {b.branch || '-'}
                     {b.commit_sha && <span className="ml-2 font-mono text-slate-500">{b.commit_sha.slice(0, 7)}</span>}
                   </div>
-                </button>
+                </Link>
               ))}
               {!builds.length && (
                 <div className="px-4 py-8 text-center text-slate-500">No builds found</div>

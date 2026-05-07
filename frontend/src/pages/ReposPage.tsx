@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { listRepos, createRepo, deleteRepo } from '../api/repos';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
@@ -104,7 +104,6 @@ function AddRepoDialog({
 }
 
 export default function ReposPage() {
-  const nav = useNavigate();
   const qc = useQueryClient();
   const { canManageRepos } = usePermission();
   const [showAdd, setShowAdd] = useState(false);
@@ -134,10 +133,6 @@ export default function ReposPage() {
   });
 
   const repos = data?.data ?? [];
-
-  const handleRowKey = (e: KeyboardEvent<HTMLTableRowElement>, id: string) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nav(`/repos/${id}`); }
-  };
 
   return (
     <div className="space-y-4">
@@ -176,33 +171,52 @@ export default function ReposPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {repos.map((r) => (
-                  <tr
-                    key={r.id}
-                    onClick={() => nav(`/repos/${r.id}`)}
-                    onKeyDown={(e) => handleRowKey(e, r.id)}
-                    tabIndex={0}
-                    className="hover:bg-slate-800/50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-                    aria-label={`Repository ${r.repo_name}`}
-                  >
-                    <td className="px-4 py-3 text-sm text-blue-400 hover:underline">{r.repo_name}</td>
-                    <td className="px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs">{r.repo_url}</td>
-                    <td className="px-4 py-3 text-sm text-slate-300">{r.default_branch}</td>
-                    <td className="px-4 py-3"><StatusBadge status={r.enabled ? 'Connected' : 'Disconnected'} /></td>
-                    <td className="px-4 py-3 text-sm"><TimeAgo date={r.created_at} className="text-slate-500" /></td>
-                    {canManageRepos && (
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setDelId(r.id); }}
-                          aria-label={`Delete repository ${r.repo_name}`}
-                          className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
-                        >
-                          Delete
-                        </button>
+                {repos.map((r) => {
+                  const href = `/repos/${r.id}`;
+                  return (
+                    <tr
+                      key={r.id}
+                      className="hover:bg-slate-800/50 transition-colors"
+                    >
+                      <td className="p-0">
+                        <Link to={href} className="block px-4 py-3 text-sm text-blue-400 hover:underline focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          {r.repo_name}
+                        </Link>
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td className="p-0">
+                        <Link to={href} className="block px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          {r.repo_url}
+                        </Link>
+                      </td>
+                      <td className="p-0">
+                        <Link to={href} className="block px-4 py-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          {r.default_branch}
+                        </Link>
+                      </td>
+                      <td className="p-0">
+                        <Link to={href} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <StatusBadge status={r.enabled ? 'Connected' : 'Disconnected'} />
+                        </Link>
+                      </td>
+                      <td className="p-0">
+                        <Link to={href} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <TimeAgo date={r.created_at} className="text-slate-500" />
+                        </Link>
+                      </td>
+                      {canManageRepos && (
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDelId(r.id); }}
+                            aria-label={`Delete repository ${r.repo_name}`}
+                            className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
                 {!repos.length && (
                   <tr>
                     <td colSpan={canManageRepos ? 6 : 5} className="px-4 py-8 text-center text-slate-500">
