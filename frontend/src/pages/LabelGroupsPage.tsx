@@ -390,7 +390,7 @@ export default function LabelGroupsPage() {
         <div className="space-y-3">
           {groups.length === 0 ? (
             <EmptyState
-              message="No label groups"
+              title="No label groups"
               description="Create a label group to apply shared configuration to matched workers."
             />
           ) : (

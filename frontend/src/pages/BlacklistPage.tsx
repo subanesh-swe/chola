@@ -304,7 +304,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                 <tr>
                   <td colSpan={canManage ? 6 : 5} className="px-4 py-8 text-center">
                     <EmptyState
-                      message="No command blacklist rules"
+                      title="No command blacklist rules"
                       description="Add patterns to block forbidden commands."
                     />
                   </td>
@@ -579,7 +579,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                 <tr>
                   <td colSpan={canManage ? 6 : 5} className="px-4 py-8 text-center">
                     <EmptyState
-                      message="No branch blacklist rules"
+                      title="No branch blacklist rules"
                       description="Add patterns to restrict branches on specific workers."
                     />
                   </td>

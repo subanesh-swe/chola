@@ -1235,7 +1235,7 @@ export default function WorkersPage() {
               )}
             </div>
           ))}
-          {!workers.length && <EmptyState message="No workers registered" description="Use Register Worker to add a new worker." />}
+          {!workers.length && <EmptyState title="No workers registered" description="Use Register Worker to add a new worker." />}
         </div>
       )}
 

@@ -349,7 +349,7 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
         <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
           {tokens.length === 0 ? (
             <EmptyState
-              message={isRunnerView ? 'No runner tokens' : 'No worker tokens'}
+              title={isRunnerView ? 'No runner tokens' : 'No worker tokens'}
               description={
                 isRunnerView
                   ? 'Create a runner token for ci-job-runner authentication.'
