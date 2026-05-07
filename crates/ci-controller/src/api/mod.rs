@@ -6,6 +6,7 @@ pub mod auth_handlers;
 pub mod badge_handlers;
 pub mod blacklist_handlers;
 pub mod dashboard_handlers;
+pub mod date_parse;
 pub mod error;
 pub mod job_group_handlers;
 pub mod job_handlers;

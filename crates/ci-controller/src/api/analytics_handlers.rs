@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -11,6 +11,7 @@ use crate::auth::middleware::AuthUser;
 use crate::state::ControllerState;
 use crate::storage::{AnalyticsFilters, AnalyticsWindow};
 
+use super::date_parse::parse_flexible_datetime;
 use super::error::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -25,26 +26,20 @@ pub struct AnalyticsParams {
     pub exit_code: Option<i32>,
 }
 
-fn parse_rfc3339(field: &str, value: &str) -> Result<DateTime<Utc>, ApiError> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|e| ApiError::BadRequest(format!("Invalid {field} (expected RFC3339): {e}")))
-}
-
 /// Build an AnalyticsFilters from query params. `from`/`to` win over `days`.
 fn filters_from_params(params: &AnalyticsParams) -> Result<AnalyticsFilters, ApiError> {
     let window = match (params.from.as_deref(), params.to.as_deref()) {
         (Some(f), Some(t)) => AnalyticsWindow::Range {
-            from: parse_rfc3339("from", f)?,
-            to: parse_rfc3339("to", t)?,
+            from: parse_flexible_datetime("from", f, false)?,
+            to: parse_flexible_datetime("to", t, true)?,
         },
         (Some(f), None) => AnalyticsWindow::Range {
-            from: parse_rfc3339("from", f)?,
+            from: parse_flexible_datetime("from", f, false)?,
             to: Utc::now(),
         },
         (None, Some(t)) => {
             // Without a `from`, fall back to `days` window ending at `to`.
-            let to = parse_rfc3339("to", t)?;
+            let to = parse_flexible_datetime("to", t, true)?;
             let days = params.days.unwrap_or(30).clamp(1, 365);
             let from = to - chrono::Duration::days(days as i64);
             AnalyticsWindow::Range { from, to }

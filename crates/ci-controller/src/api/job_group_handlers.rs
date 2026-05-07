@@ -5,7 +5,6 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
@@ -18,6 +17,7 @@ use crate::auth::middleware::AuthUser;
 use crate::grpc_server::do_reserve_worker;
 use crate::state::ControllerState;
 
+use super::date_parse::parse_flexible_datetime;
 use super::error::ApiError;
 
 // ── Query params ─────────────────────────────────────────────────────────────
@@ -37,12 +37,6 @@ pub struct ListParams {
     /// includes rows from `*_archive` tables. Defaults to false; the
     /// fast path query is unchanged when omitted.
     pub include_archived: Option<bool>,
-}
-
-fn parse_rfc3339(field: &str, value: &str) -> Result<DateTime<Utc>, ApiError> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|e| ApiError::BadRequest(format!("Invalid {field} (expected RFC3339): {e}")))
 }
 
 // ── Request bodies ───────────────────────────────────────────────────────────
@@ -94,12 +88,12 @@ pub async fn list(
     let date_from = params
         .date_from
         .as_deref()
-        .map(|v| parse_rfc3339("date_from", v))
+        .map(|v| parse_flexible_datetime("date_from", v, false))
         .transpose()?;
     let date_to = params
         .date_to
         .as_deref()
-        .map(|v| parse_rfc3339("date_to", v))
+        .map(|v| parse_flexible_datetime("date_to", v, true))
         .transpose()?;
 
     // Caller opts in to archive UNION via ?include_archived=true. The
