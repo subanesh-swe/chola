@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/auth';
+import { useThemeStore, type ThemeMode, type ThemeAccent } from '../stores/theme';
 import { changePassword } from '../api/auth';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { toast } from 'sonner';
@@ -99,6 +100,103 @@ function ChangePasswordSection() {
   );
 }
 
+const ACCENT_SWATCHES: Record<ThemeAccent, string> = {
+  indigo:  'bg-indigo-600',
+  emerald: 'bg-emerald-600',
+  rose:    'bg-rose-600',
+};
+
+function AppearanceSection() {
+  const mode = useThemeStore((s) => s.mode);
+  const accent = useThemeStore((s) => s.accent);
+  const setMode = useThemeStore((s) => s.setMode);
+  const setAccent = useThemeStore((s) => s.setAccent);
+
+  const modes: { value: ThemeMode; label: string }[] = [
+    { value: 'light',  label: 'Light'  },
+    { value: 'dark',   label: 'Dark'   },
+    { value: 'system', label: 'System' },
+  ];
+
+  const accents: { value: ThemeAccent; label: string }[] = [
+    { value: 'indigo',  label: 'Indigo'  },
+    { value: 'emerald', label: 'Emerald' },
+    { value: 'rose',    label: 'Rose'    },
+  ];
+
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold text-white mb-1">Appearance</h3>
+        <p className="text-xs text-slate-500">
+          Light/accent themes will progressively roll out across pages.
+        </p>
+      </div>
+
+      {/* Mode */}
+      <div>
+        <p className="text-sm font-medium text-slate-300 mb-3">Mode</p>
+        <div className="flex gap-3" role="radiogroup" aria-label="Color mode">
+          {modes.map(({ value, label }) => {
+            const active = mode === value;
+            return (
+              <label
+                key={value}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
+                  ${active
+                    ? 'border-blue-500 bg-blue-600/10 text-white'
+                    : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                  }`}
+              >
+                <input
+                  type="radio"
+                  name="theme-mode"
+                  value={value}
+                  checked={active}
+                  onChange={() => setMode(value)}
+                  className="sr-only"
+                />
+                {label}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Accent */}
+      <div>
+        <p className="text-sm font-medium text-slate-300 mb-3">Accent color</p>
+        <div className="flex gap-3" role="radiogroup" aria-label="Accent color">
+          {accents.map(({ value, label }) => {
+            const active = accent === value;
+            return (
+              <label
+                key={value}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
+                  ${active
+                    ? 'border-blue-500 bg-blue-600/10 text-white'
+                    : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                  }`}
+              >
+                <input
+                  type="radio"
+                  name="theme-accent"
+                  value={value}
+                  checked={active}
+                  onChange={() => setAccent(value)}
+                  className="sr-only"
+                />
+                <span className={`w-3 h-3 rounded-full shrink-0 ${ACCENT_SWATCHES[value]}`} aria-hidden="true" />
+                {label}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const user = useAuthStore(s => s.user);
 
@@ -137,16 +235,12 @@ export default function ProfilePage() {
 
       <ChangePasswordSection />
 
+      <AppearanceSection />
+
       {/* API Keys — placeholder */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
         <h3 className="text-lg font-semibold text-white mb-2">API Keys</h3>
         <p className="text-sm text-slate-500">API key management coming soon.</p>
-      </div>
-
-      {/* Preferences — placeholder */}
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-2">Preferences</h3>
-        <p className="text-sm text-slate-500">User preferences coming soon.</p>
       </div>
     </div>
   );
