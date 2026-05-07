@@ -118,15 +118,15 @@ export function DataTable<T>({
                     tabIndex={onRowClick && !rowHref ? 0 : undefined}
                     className={clsx(
                       'relative transition-colors',
-                      isClickable && 'hover:bg-slate-800/50',
-                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
+                      isClickable && 'hover:bg-surface-hover/50',
+                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent',
                     )}
                   >
                     {columns.map((col, colIdx) => (
                       <td
                         key={col.key}
                         className={clsx(
-                          'px-4 py-3 text-sm text-slate-200',
+                          'px-4 py-3 text-sm text-secondary',
                           col.className,
                         )}
                       >
@@ -136,7 +136,7 @@ export function DataTable<T>({
                             to={href}
                             aria-label={rowKey}
                             tabIndex={0}
-                            className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                            className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent"
                           />
                         )}
                         {/* Interactive children (e.g. buttons) sit above the stretched link */}
