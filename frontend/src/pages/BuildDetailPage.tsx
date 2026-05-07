@@ -12,7 +12,7 @@ import { StageMetadata } from '../components/ui/StageMetadata';
 import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
-import { formatSecs } from '../utils/format';
+import { formatSecs, formatBytes } from '../utils/format';
 import { toast } from 'sonner';
 import type { Job, JobGroup, ArchivedChildren, MutationError } from '../types';
 
@@ -431,12 +431,13 @@ export default function BuildDetailPage() {
 
       {/* Reserved resources */}
       {group.allocated_resources && (group.allocated_resources.cpu > 0 || group.allocated_resources.memory_mb > 0 || group.allocated_resources.disk_mb > 0) && (
-        <div className="bg-surface-2/50 border border-border rounded-lg px-4 py-3">
-          <p className="text-xs text-disabled mb-1.5 uppercase font-semibold">Resources Reserved</p>
+        <div className="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3">
+          <p className="text-xs text-slate-500 mb-1.5 uppercase font-semibold">Resources Reserved</p>
+          {/* item 54: unit labels */}
           <div className="flex gap-6 text-sm">
-            <span className="text-secondary">{group.allocated_resources.cpu} <span className="text-disabled">CPU cores</span></span>
-            <span className="text-secondary">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-disabled">RAM</span></span>
-            <span className="text-secondary">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-disabled">Disk</span></span>
+            <span className="text-slate-300">{group.allocated_resources.cpu} <span className="text-slate-500">CPU cores</span></span>
+            <span className="text-slate-300">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-slate-500">RAM</span></span>
+            <span className="text-slate-300">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-slate-500">Disk</span></span>
           </div>
         </div>
       )}

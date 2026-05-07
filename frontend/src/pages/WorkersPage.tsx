@@ -52,8 +52,8 @@ function SystemInfoPanel({ info }: { info: WorkerSystemInfo }) {
     <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-xs">
       {rows.map(([label, value, title]) => (
         <div key={label} className="contents">
-          <span className="text-muted font-medium">{label}</span>
-          <span className="text-secondary font-mono truncate" title={title}>{value}</span>
+          <span className="text-slate-500 font-medium">{label}</span>
+          <span className="text-slate-300 font-mono truncate" title={title}>{value}</span>
         </div>
       ))}
     </div>
@@ -154,7 +154,7 @@ function DiskSection({
         </div>
       )}
       {/* item 25: disk color legend */}
-      <div className="flex items-center gap-3 mt-1 text-[10px] text-disabled">
+      <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-600">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{'<70%'}</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />70–90%</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{'>90%'}</span>
@@ -1031,11 +1031,11 @@ export default function WorkersPage() {
                       )}
                     </div>
                     {/* item 22: title on hostname; item 26: docker badge */}
-                    <p className="text-sm text-muted">
+                    <p className="text-sm text-slate-400">
                       <span title={w.hostname}>{w.hostname}</span>
                       {' '}&middot;{' '}{w.disk_type}
                       {' '}&middot;{' '}Docker:{' '}
-                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-surface-2 text-muted border-border'}`}>
+                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>
                         {w.docker_enabled ? 'Yes' : 'No'}
                       </span>
                     </p>
@@ -1139,7 +1139,7 @@ export default function WorkersPage() {
                             {g.branch && <span className="text-xs text-muted">{g.branch}</span>}
                             {g.commit_sha && <span className="text-xs text-disabled font-mono">{g.commit_sha.slice(0, 8)}</span>}
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-disabled">
+                          <div className="flex items-center gap-3 text-xs text-slate-500">
                             <span>{g.allocated_cpu} CPU, {formatBytes(g.allocated_memory_mb)}</span>
                             <span>{g.stages_submitted} stage{g.stages_submitted !== 1 ? 's' : ''}</span>
                             <TimeAgo date={g.created_at} />
@@ -1237,12 +1237,12 @@ export default function WorkersPage() {
                   )}
                 </div>
               )}
-              <div className="mt-3 flex flex-wrap gap-4 text-xs text-disabled">
+              <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
                 {/* item 55: pill chips for job types */}
                 <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-disabled">Types:</span>
+                  <span className="text-slate-600">Types:</span>
                   {w.supported_job_types.map((t) => (
-                    <span key={t} className="px-1.5 py-0.5 bg-surface-2 text-secondary border border-border rounded text-[10px] font-mono">{t}</span>
+                    <span key={t} className="px-1.5 py-0.5 bg-slate-700 text-slate-300 border border-slate-600 rounded text-[10px] font-mono">{t}</span>
                   ))}
                 </div>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>

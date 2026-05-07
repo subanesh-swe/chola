@@ -60,7 +60,8 @@ function CreatedTokenModal({
         <p className="text-sm text-yellow-400 mb-4">
           Copy this token now — it will not be shown again.
         </p>
-        <div className="bg-surface-2 border border-border rounded-lg p-3 mb-1 flex items-center gap-2">
+        {/* item 43: helper text + select-all code block */}
+        <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 mb-1 flex items-center gap-2">
           <code className="text-emerald-300 font-mono text-xs break-all flex-1 select-all cursor-text">
             {token.token}
           </code>
@@ -71,7 +72,7 @@ function CreatedTokenModal({
             {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>
-        <p className="text-[11px] text-muted mb-4">Click to select all. Save now — you cannot retrieve it later.</p>
+        <p className="text-[11px] text-slate-500 mb-4">Click to select all. Save now — you cannot retrieve it later.</p>
         <dl className="text-sm space-y-1 mb-4">
           <div className="flex gap-2">
             <dt className="text-muted w-24">Name</dt>
@@ -394,11 +395,13 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
                     <td className="px-4 py-3">
                       <ScopeBadge scope={t.scope} />
                     </td>
-                    <td className="px-4 py-3 text-secondary font-mono text-xs">
+                    {/* item 40: formatNumber for use_count */}
+                    <td className="px-4 py-3 text-slate-300 font-mono text-xs">
                       {formatNumber(t.use_count)}
                       {t.max_uses > 0 && ` / ${formatNumber(t.max_uses)}`}
                     </td>
-                    <td className="px-4 py-3 text-muted text-xs">
+                    {/* item 41: absolute date with relative tooltip */}
+                    <td className="px-4 py-3 text-slate-400 text-xs">
                       {t.expires_at
                         ? <span title={new Date(t.expires_at).toUTCString()}><TimeAgo date={t.expires_at} /></span>
                         : 'Never'}
@@ -416,8 +419,9 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
                     </td>
                     <td className="px-4 py-3 text-disabled text-xs">
                       <TimeAgo date={t.created_at} />
+                      {/* item 42: ' · by ...' format */}
                       {t.created_by && (
-                        <span className="text-disabled"> &middot; by {t.created_by}</span>
+                        <span className="text-slate-600"> &middot; by {t.created_by}</span>
                       )}
                     </td>
                     {canManageRepos && (

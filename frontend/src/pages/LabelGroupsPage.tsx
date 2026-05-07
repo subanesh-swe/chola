@@ -363,11 +363,11 @@ export default function LabelGroupsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         {/* item 37: dynamic count badge; skeleton while loading */}
-        <h2 className="text-2xl font-bold text-primary">
+        <h2 className="text-2xl font-bold text-white">
           Label Groups
           {isLoading
-            ? <span className="ml-2 inline-block h-5 w-8 bg-surface-2 rounded animate-pulse align-middle" />
-            : <span className="ml-2 text-lg text-muted">({groups.length})</span>
+            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
+            : <span className="ml-2 text-lg text-slate-500">({groups.length})</span>
           }
         </h2>
         {canManageRepos && (
@@ -454,7 +454,7 @@ export default function LabelGroupsPage() {
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-4 text-xs text-muted mt-1">
+                    <div className="flex flex-wrap gap-4 text-xs text-slate-500 mt-1">
                       {/* item 38: append " jobs" suffix */}
                       {g.max_concurrent_jobs > 0 && (
                         <span>Max concurrent: {g.max_concurrent_jobs} jobs</span>
