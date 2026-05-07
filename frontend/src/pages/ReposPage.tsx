@@ -161,24 +161,57 @@ export default function ReposPage() {
         <TableSkeleton rows={4} cols={5} />
       ) : (
         <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-          {/* item 32: use EmptyState when no repos */}
-          {!repos.length ? (
-            <EmptyState
-              title="No repositories configured"
-              description="Add a repository to start running builds."
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full" aria-label="Repositories">
-                <thead>
-                  <tr className="border-b border-slate-700">
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Name</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">URL</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Branch</th>
-                    {/* item 31: enabled uses StatusBadge with explicit string */}
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
-                    {canManageRepos && <th scope="col" className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Actions</th>}
+          <div className="overflow-x-auto">
+            <table className="w-full" aria-label="Repositories">
+              <thead>
+                <tr className="border-b border-slate-700">
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Name</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">URL</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Branch</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
+                  {canManageRepos && <th scope="col" className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {repos.map((r) => {
+                  const href = `/repos/${r.id}`;
+                  return (
+                    <tr
+                      key={r.id}
+                      className="relative hover:bg-slate-800/50 transition-colors"
+                    >
+                      <td className="px-4 py-3">
+                        <Link to={href} aria-label={r.repo_name} className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500" />
+                        <span className="relative z-10 text-sm text-blue-400">{r.repo_name}</span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs relative z-10">{r.repo_url}</td>
+                      <td className="px-4 py-3 text-sm text-slate-300 relative z-10">{r.default_branch}</td>
+                      <td className="px-4 py-3 relative z-10">
+                        <StatusBadge status={r.enabled ? 'Connected' : 'Disconnected'} />
+                      </td>
+                      <td className="px-4 py-3 text-sm relative z-10">
+                        <TimeAgo date={r.created_at} className="text-slate-500" />
+                      </td>
+                      {canManageRepos && (
+                        <td className="px-4 py-3 text-center relative z-10">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDelId(r.id); }}
+                            aria-label={`Delete repository ${r.repo_name}`}
+                            className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {!repos.length && (
+                  <tr>
+                    <td colSpan={canManageRepos ? 6 : 5} className="px-4 py-8 text-center text-slate-500">
+                      No repositories configured
+                    </td>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
