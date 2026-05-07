@@ -12,8 +12,7 @@ import { StageMetadata } from '../components/ui/StageMetadata';
 import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
-import { formatSecs, formatBytes } from '../utils/format';
-import { PageSkeleton } from '../components/ui/PageSkeleton';
+import { formatSecs } from '../utils/format';
 import { toast } from 'sonner';
 import type { Job, JobGroup, ArchivedChildren, MutationError } from '../types';
 
@@ -198,7 +197,7 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
   }, [isLiveStage]);
 
   const icon = status === 'active' ? '⏱' : status === 'paused' ? '⏸' : status === 'deactivated' ? '✓' : '○';
-  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-disabled';
+  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-slate-600';
   const maxLabel = maxSecs > 0 ? formatSecs(maxSecs) : 'no limit';
 
   let timeDisplay: string;
