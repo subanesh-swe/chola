@@ -68,7 +68,7 @@ function SourceBadge({ source }: { source: string }) {
   const styles: Record<string, string> = {
     database: 'bg-accent-soft text-accent-text border-accent/30',
     config: 'bg-surface-2 text-muted border-border',
-    default: 'bg-gray-600/30 text-gray-500 border-gray-500/30',
+    default: 'bg-surface-2/50 text-muted border-border',
   };
   return (
     <span

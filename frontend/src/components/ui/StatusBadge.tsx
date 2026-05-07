@@ -15,7 +15,7 @@ type Status =
 const statusStyles: Record<string, string> = {
   pending: 'bg-surface-2/50 text-muted border-border',
   reserved: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-  queued: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+  queued: 'bg-surface-2/50 text-muted border-border',
   assigned: 'bg-accent-soft text-accent-text border-accent/30',
   running: 'bg-accent-soft text-accent-text border-accent/30',
   success: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
@@ -60,10 +60,10 @@ const labelMap: Record<string, string> = {
 /** Styles keyed to normalised canonical values (lower-case). */
 const enumStyleMap: Record<string, string> = {
   unknown: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  queued: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+  queued: 'bg-surface-2/50 text-muted border-border',
   assigned: 'bg-accent-soft text-accent-text border-accent/30',
   running: 'bg-accent-soft text-accent-text border-accent/30',
-  pending: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+  pending: 'bg-surface-2/50 text-muted border-border',
   reserved: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
   success: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   failed: 'bg-red-500/20 text-red-400 border-red-500/30',
@@ -104,7 +104,7 @@ export function StatusBadge({ status, size = 'sm', title }: Props) {
   const style =
     statusStyles[status] ??
     enumStyleMap[canonical] ??
-    'bg-gray-500/20 text-gray-400 border-gray-500/30';
+    'bg-surface-2/50 text-muted border-border';
 
   const pulse = pulseStatuses.has(status);
 
