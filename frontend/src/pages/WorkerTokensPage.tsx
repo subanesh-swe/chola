@@ -24,7 +24,7 @@ function ScopeBadge({ scope }: { scope: string }) {
   const colors: Record<string, string> = {
     shared: 'bg-accent-soft text-accent-text border-accent/30',
     project: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-    team: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30',
+    team: 'bg-accent-soft text-accent-text border-accent/30',
     runner: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   };
   const cls = colors[scope] ?? 'bg-surface-2 text-muted border-border';

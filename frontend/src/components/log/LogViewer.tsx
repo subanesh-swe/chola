@@ -122,7 +122,7 @@ export function LogViewer({ content, liveChunks, className, filesPurgedAt }: Pro
   return (
     <div
       ref={containerRef}
-      className={clsx('rounded-lg overflow-hidden border border-slate-700', className)}
+      className={clsx('rounded-lg overflow-hidden border border-border', className)}
       style={{ minHeight: 200 }}
     />
   );
