@@ -112,10 +112,10 @@ function AppearanceSection() {
   const setMode = useThemeStore((s) => s.setMode);
   const setAccent = useThemeStore((s) => s.setAccent);
 
-  const modes: { value: ThemeMode; label: string }[] = [
-    { value: 'light',  label: 'Light'  },
-    { value: 'dark',   label: 'Dark'   },
-    { value: 'system', label: 'System' },
+  const modes: { value: ThemeMode; label: string; beta?: boolean }[] = [
+    { value: 'light',  label: 'Light',  beta: true },
+    { value: 'dark',   label: 'Dark'               },
+    { value: 'system', label: 'System'              },
   ];
 
   const accents: { value: ThemeAccent; label: string }[] = [
@@ -137,7 +137,7 @@ function AppearanceSection() {
       <div>
         <p className="text-sm font-medium text-slate-300 mb-3">Mode</p>
         <div className="flex gap-3" role="radiogroup" aria-label="Color mode">
-          {modes.map(({ value, label }) => {
+          {modes.map(({ value, label, beta }) => {
             const active = mode === value;
             return (
               <label
@@ -157,6 +157,14 @@ function AppearanceSection() {
                   className="sr-only"
                 />
                 {label}
+                {beta && (
+                  <span
+                    title="Some pages still render dark. Full theming coming soon."
+                    className="text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-none"
+                  >
+                    Beta
+                  </span>
+                )}
               </label>
             );
           })}
