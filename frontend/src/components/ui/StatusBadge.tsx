@@ -15,7 +15,7 @@ type Status =
 const statusStyles: Record<string, string> = {
   pending: 'bg-surface-2/50 text-muted border-border',
   reserved: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-  queued: 'bg-surface-2/50 text-muted border-border',
+  queued: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
   assigned: 'bg-accent-soft text-accent-text border-accent/30',
   running: 'bg-accent-soft text-accent-text border-accent/30',
   success: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
@@ -61,8 +61,8 @@ const labelMap: Record<string, string> = {
 const enumStyleMap: Record<string, string> = {
   unknown: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   queued: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
-  assigned: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  running: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  assigned: 'bg-accent-soft text-accent-text border-accent/30',
+  running: 'bg-accent-soft text-accent-text border-accent/30',
   pending: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
   reserved: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
   success: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
@@ -74,7 +74,7 @@ const enumStyleMap: Record<string, string> = {
   draining: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
   // repo enabled/disabled (item 31)
   enabled: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-  disabled: 'bg-slate-700 text-slate-400 border-slate-600',
+  disabled: 'bg-surface-2 text-muted border-border',
 };
 
 const pulseStatuses = new Set(['running', 'assigned', 'JOB_STATE_RUNNING', 'JOB_STATE_ASSIGNED', 'JOB_GROUP_STATE_RUNNING']);

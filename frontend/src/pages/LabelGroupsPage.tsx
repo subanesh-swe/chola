@@ -311,7 +311,7 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
           <button
             onClick={submit}
             disabled={!name.trim() || isPending}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {isPending ? 'Saving...' : isEdit ? 'Update' : 'Create'}
           </button>
@@ -363,11 +363,11 @@ export default function LabelGroupsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         {/* item 37: dynamic count badge; skeleton while loading */}
-        <h2 className="text-2xl font-bold text-white">
+        <h2 className="text-2xl font-bold text-primary">
           Label Groups
           {isLoading
-            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
-            : <span className="ml-2 text-lg text-slate-500">({groups.length})</span>
+            ? <span className="ml-2 inline-block h-5 w-8 bg-surface-2 rounded animate-pulse align-middle" />
+            : <span className="ml-2 text-lg text-muted">({groups.length})</span>
           }
         </h2>
         {canManageRepos && (
@@ -454,7 +454,7 @@ export default function LabelGroupsPage() {
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-4 text-xs text-slate-500 mt-1">
+                    <div className="flex flex-wrap gap-4 text-xs text-muted mt-1">
                       {/* item 38: append " jobs" suffix */}
                       {g.max_concurrent_jobs > 0 && (
                         <span>Max concurrent: {g.max_concurrent_jobs} jobs</span>

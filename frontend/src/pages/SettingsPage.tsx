@@ -68,7 +68,7 @@ function SourceBadge({ source }: { source: string }) {
   const styles: Record<string, string> = {
     database: 'bg-accent-soft text-accent-text border-accent/30',
     config: 'bg-surface-2 text-muted border-border',
-    default: 'bg-surface-2/50 text-muted border-border',
+    default: 'bg-gray-600/30 text-gray-500 border-gray-500/30',
   };
   return (
     <span
@@ -320,22 +320,20 @@ function ReviewModal({ changes, onBack, onSubmit, submitting }: ReviewModalProps
           {changes.length} setting{changes.length !== 1 ? 's' : ''} changed:
         </p>
 
-        {/* item 35: shadow gradient to indicate scrollability */}
         <div className="relative">
           <div className="space-y-4 max-h-80 overflow-y-auto pr-1 pb-2">
             {changes.map(({ key, oldValue, newValue }) => (
-              <div key={key} className="bg-slate-800/60 rounded-lg px-4 py-3">
-                <p className="text-sm text-slate-300 font-mono mb-1">{key}</p>
+              <div key={key} className="bg-surface-2/60 rounded-lg px-4 py-3">
+                <p className="text-sm text-secondary font-mono mb-1">{key}</p>
                 <p className="text-sm">
-                  <span className="text-slate-400">{oldValue}</span>
-                  <span className="text-slate-500 mx-2">&#8594;</span>
-                  <span className="text-blue-400 font-medium">{newValue}</span>
+                  <span className="text-muted">{oldValue}</span>
+                  <span className="text-disabled mx-2">&#8594;</span>
+                  <span className="text-accent-text font-medium">{newValue}</span>
                 </p>
               </div>
             ))}
           </div>
-          {/* fade indicator at bottom of scroll area */}
-          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900 to-transparent rounded-b-lg" />
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-surface to-transparent rounded-b-lg" />
         </div>
 
         <div className="flex justify-end gap-3 mt-6">
@@ -394,12 +392,11 @@ function ResultModal({ results, onDone }: ResultModalProps) {
               key={r.key}
               className={`rounded-lg px-4 py-3 ${r.status === 'accepted' ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}
             >
-              {/* item 34: replace emoji with icon components */}
               <div className="flex items-center gap-2">
                 {r.status === 'accepted'
                   ? <CheckCircleIcon className="w-4 h-4 text-emerald-400 shrink-0" />
                   : <XCircleIcon className="w-4 h-4 text-red-400 shrink-0" />}
-                <span className="text-sm font-mono text-slate-200">{r.key}</span>
+                <span className="text-sm font-mono text-secondary">{r.key}</span>
                 <span
                   className={`text-xs ${r.status === 'accepted' ? 'text-emerald-400' : 'text-red-400'}`}
                 >
@@ -517,7 +514,6 @@ export default function SettingsPage() {
   if (isLoading) return <LoadingSkeleton />;
   if (isError || !data)
     return (
-      // item 36: role="alert" with consistent error styling
       <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
         <p className="font-semibold">Failed to load settings.</p>
         <p className="text-sm mt-1">Please try again.</p>
