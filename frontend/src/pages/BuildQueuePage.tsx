@@ -77,37 +77,41 @@ export default function BuildQueuePage() {
                         className="hover:bg-slate-800/50 transition-colors"
                       >
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-500 tabular-nums focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link
+                            to={href}
+                            aria-label={`Queue position ${idx + 1}: build ${job.job_group_id.slice(0, 8)}${job.branch ? ` on ${job.branch}` : ''} — ${job.state}`}
+                            className="block px-4 py-3 text-sm text-slate-500 tabular-nums focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                          >
                             {idx + 1}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             <StatusBadge status={job.state} />
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {job.job_group_id.slice(0, 8)}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 max-w-[180px] truncate focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-300 max-w-[180px] truncate focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {job.repo_name ?? job.repo_id?.slice(0, 8) ?? '-'}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {job.branch ?? '-'}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {job.reserved_worker_id ? job.reserved_worker_id.slice(0, 8) : '-'}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             <TimeAgo date={job.created_at} className="text-slate-500" />
                           </Link>
                         </td>

@@ -17,6 +17,8 @@ interface Props<T> {
   onRowClick?: (row: T) => void;
   /** When set, each row becomes a real anchor (supports middle-click / Cmd+click). */
   rowHref?: (row: T) => string;
+  /** Provides a meaningful aria-label for the row link (first cell). Falls back to keyExtractor. */
+  rowAriaLabel?: (row: T) => string;
   emptyMessage?: string;
   loading?: boolean;
 }
@@ -27,6 +29,7 @@ export function DataTable<T>({
   keyExtractor,
   onRowClick,
   rowHref,
+  rowAriaLabel,
   emptyMessage = 'No data',
   loading = false,
 }: Props<T>) {
@@ -119,7 +122,8 @@ export function DataTable<T>({
                       onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
                     )}
                   >
-                    {columns.map((col) => (
+                    {/* Stretched link relies on row-level position:relative; supported in Safari 16+, Chromium 88+, Firefox 90+. */}
+                    {columns.map((col, colIdx) => (
                       <td
                         key={col.key}
                         className={clsx(
@@ -131,6 +135,10 @@ export function DataTable<T>({
                         {href ? (
                           <Link
                             to={href}
+                            // First cell carries the accessible label; subsequent cells are duplicates — hide from AT.
+                            aria-label={colIdx === 0 ? (rowAriaLabel?.(row) ?? keyExtractor(row)) : undefined}
+                            aria-hidden={colIdx !== 0 ? true : undefined}
+                            tabIndex={colIdx !== 0 ? -1 : undefined}
                             className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
                           >
                             {col.render(row)}

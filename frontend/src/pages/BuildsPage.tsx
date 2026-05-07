@@ -78,7 +78,11 @@ export default function BuildsPage() {
                     return (
                       <tr key={b.job_group_id} className={`hover:bg-slate-800/50 transition-colors${b.archived ? ' opacity-60' : ''}`}>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link
+                            to={href}
+                            aria-label={`Build ${b.job_group_id.slice(0, 8)}${b.branch ? ` on ${b.branch}` : ''} — ${b.state}${b.archived ? ' (archived)' : ''}`}
+                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                          >
                             <div className="flex items-center gap-2 flex-wrap">
                               <StatusBadge status={b.state} />
                               {b.archived && <StatusBadge status="archived" />}
@@ -89,28 +93,28 @@ export default function BuildsPage() {
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {b.job_group_id.slice(0, 8)}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {b.branch || '-'}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {b.commit_sha?.slice(0, 7) || '-'}
                           </Link>
                         </td>
                         {/* item 12: ?? instead of || to avoid showing "undefined" */}
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {b.reserved_worker_id ?? '-'}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             <TimeAgo date={b.created_at} className="text-slate-500" />
                           </Link>
                         </td>

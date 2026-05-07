@@ -165,6 +165,7 @@ export default function RunsPage() {
           columns={columns}
           keyExtractor={(r) => r.id}
           rowHref={(r) => `/builds/${r.job_group_id}`}
+          rowAriaLabel={(r) => `${r.stage_name} on ${r.repo_name ?? 'ad-hoc'} — ${r.state}`}
           emptyMessage="No runs found"
           loading={isLoading}
         />

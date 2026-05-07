@@ -190,27 +190,31 @@ export default function ReposPage() {
                         className="hover:bg-slate-800/50 transition-colors"
                       >
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-blue-400 hover:underline focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link
+                            to={href}
+                            aria-label={`Repository ${r.repo_name}`}
+                            className="block px-4 py-3 text-sm text-blue-400 hover:underline focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                          >
                             {r.repo_name}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {r.repo_url}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             {r.default_branch}
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             <StatusBadge status={r.enabled ? 'enabled' : 'disabled'} />
                           </Link>
                         </td>
                         <td className="p-0">
-                          <Link to={href} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
+                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
                             <TimeAgo date={r.created_at} className="text-slate-500" />
                           </Link>
                         </td>
