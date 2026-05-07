@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { formatDistanceToNow } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listWorkers, drainWorker, undrainWorker, deleteWorker, updateWorkerLabels, registerWorker, regenerateWorkerToken, updateWorkerLimits } from '../api/workers';
 import type { RegisterWorkerResponse, RegenerateTokenResponse, WorkerLimitsRequest } from '../api/workers';
@@ -14,6 +15,7 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { usePermission } from '../hooks/usePermission';
 import { toast } from 'sonner';
+import { formatBytes } from '../utils/format';
 import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo, WorkerActiveGroup } from '../types';
 import type { Worker as CholaWorker } from '../types/worker';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
@@ -29,23 +31,27 @@ function formatUptime(secs: number): string {
   return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 }
 
+// item 24: rows may carry an optional tooltip title
 function SystemInfoPanel({ info }: { info: WorkerSystemInfo }) {
-  const rows: [string, string][] = [];
+  const rows: [string, string, string?][] = [];
   if (info.os_name || info.os_version) rows.push(['OS', `${info.os_name ?? ''} ${info.os_version ?? ''}`.trim()]);
   if (info.kernel_version) rows.push(['Kernel', info.kernel_version]);
   if (info.arch) rows.push(['Arch', info.arch]);
   if (info.cpu_brand) rows.push(['CPU', `${info.cpu_brand}${info.cpu_count ? ` (${info.cpu_count} cores)` : ''}`]);
   if (info.uptime != null) rows.push(['Uptime', formatUptime(info.uptime)]);
-  if (info.boot_time != null) rows.push(['Boot', new Date(info.boot_time * 1000).toUTCString()]);
+  if (info.boot_time != null) {
+    const bootDate = new Date(info.boot_time * 1000);
+    rows.push(['Boot', formatDistanceToNow(bootDate, { addSuffix: true }), bootDate.toUTCString()]);
+  }
 
   if (!rows.length) return <p className="text-xs text-slate-600 mt-1">No system info available.</p>;
 
   return (
     <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-xs">
-      {rows.map(([label, value]) => (
+      {rows.map(([label, value, title]) => (
         <div key={label} className="contents">
           <span className="text-slate-500 font-medium">{label}</span>
-          <span className="text-slate-300 font-mono truncate">{value}</span>
+          <span className="text-slate-300 font-mono truncate" title={title}>{value}</span>
         </div>
       ))}
     </div>
@@ -145,6 +151,12 @@ function DiskSection({
           })}
         </div>
       )}
+      {/* item 25: disk color legend */}
+      <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-600">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{'<70%'}</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />70–90%</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{'>90%'}</span>
+      </div>
     </div>
   );
 }
@@ -996,7 +1008,15 @@ export default function WorkersPage() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-400">{w.hostname} &middot; {w.disk_type} &middot; Docker: {w.docker_enabled ? 'Yes' : 'No'}</p>
+                    {/* item 22: title on hostname; item 26: docker badge */}
+                    <p className="text-sm text-slate-400">
+                      <span title={w.hostname}>{w.hostname}</span>
+                      {' '}&middot;{' '}{w.disk_type}
+                      {' '}&middot;{' '}Docker:{' '}
+                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>
+                        {w.docker_enabled ? 'Yes' : 'No'}
+                      </span>
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
@@ -1070,7 +1090,7 @@ export default function WorkersPage() {
                         <span className="mr-2">{w.allocated_cpu} CPU</span>
                       )}
                       {w.allocated_memory_mb > 0 && (
-                        <span className="mr-2">{w.allocated_memory_mb.toLocaleString()} MB RAM</span>
+                        <span className="mr-2">{formatBytes(w.allocated_memory_mb)} RAM</span>
                       )}
                       {w.allocated_disk_mb > 0 && (
                         <span>{w.allocated_disk_mb.toLocaleString()} MB disk</span>
@@ -1098,7 +1118,7 @@ export default function WorkersPage() {
                             {g.commit_sha && <span className="text-xs text-slate-600 font-mono">{g.commit_sha.slice(0, 8)}</span>}
                           </div>
                           <div className="flex items-center gap-3 text-xs text-slate-500">
-                            <span>{g.allocated_cpu} CPU, {g.allocated_memory_mb}MB</span>
+                            <span>{g.allocated_cpu} CPU, {formatBytes(g.allocated_memory_mb)}</span>
                             <span>{g.stages_submitted} stage{g.stages_submitted !== 1 ? 's' : ''}</span>
                             <TimeAgo date={g.created_at} />
                           </div>
@@ -1196,7 +1216,13 @@ export default function WorkersPage() {
                 </div>
               )}
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
-                <span>Types: {w.supported_job_types.join(', ')}</span>
+                {/* item 55: pill chips for job types */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-slate-600">Types:</span>
+                  {w.supported_job_types.map((t) => (
+                    <span key={t} className="px-1.5 py-0.5 bg-slate-700 text-slate-300 border border-slate-600 rounded text-[10px] font-mono">{t}</span>
+                  ))}
+                </div>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>
                 {w.last_heartbeat && <span>Last beat: <TimeAgo date={w.last_heartbeat.timestamp} /></span>}
                 {w.registration_token_id && (

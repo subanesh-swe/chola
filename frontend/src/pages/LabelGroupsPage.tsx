@@ -362,7 +362,14 @@ export default function LabelGroupsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Label Groups</h2>
+        {/* item 37: dynamic count badge; skeleton while loading */}
+        <h2 className="text-2xl font-bold text-white">
+          Label Groups
+          {isLoading
+            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
+            : <span className="ml-2 text-lg text-slate-500">({groups.length})</span>
+          }
+        </h2>
         {canManageRepos && (
           <button
             onClick={() => setShowForm(true)}
@@ -448,13 +455,17 @@ export default function LabelGroupsPage() {
                     )}
 
                     <div className="flex flex-wrap gap-4 text-xs text-slate-500 mt-1">
+                      {/* item 38: append " jobs" suffix */}
                       {g.max_concurrent_jobs > 0 && (
-                        <span>Max concurrent: {g.max_concurrent_jobs}</span>
+                        <span>Max concurrent: {g.max_concurrent_jobs} jobs</span>
                       )}
                       {g.env_vars && Object.keys(g.env_vars).length > 0 && (
                         <span>{Object.keys(g.env_vars).length} env var{Object.keys(g.env_vars).length !== 1 ? 's' : ''}</span>
                       )}
-                      {g.pre_script && <span>Has pre-script</span>}
+                      {/* item 39: show line count for pre-script */}
+                      {g.pre_script && (
+                        <span>Pre-script ({g.pre_script.split('\n').filter(Boolean).length} lines)</span>
+                      )}
                       <span>Updated <TimeAgo date={g.updated_at} /></span>
                     </div>
                   </div>

@@ -66,8 +66,9 @@ const columns: Column<Run>[] = [
     key: 'exit_code',
     header: 'Exit',
     render: (r) => (
-      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-slate-500'}>
-        {r.exit_code != null ? r.exit_code : '-'}
+      // item 29: render '—' for null exit code
+      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-slate-600'}>
+        {r.exit_code != null ? r.exit_code : '—'}
       </span>
     ),
   },
