@@ -20,8 +20,7 @@ import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo,
 import type { Worker as CholaWorker } from '../types/worker';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { EmptyState } from '../components/ui/EmptyState';
-import { RefreshControl } from '../components/ui/RefreshControl';
-import { useRefreshInterval } from '../hooks/useRefreshInterval';
+import { formatBytes } from '../utils/format';
 
 // ── System Info panel ────────────────────────────────────────────────────────
 
@@ -1107,7 +1106,7 @@ export default function WorkersPage() {
                         <span className="mr-2">{formatBytes(w.allocated_memory_mb)} RAM</span>
                       )}
                       {w.allocated_disk_mb > 0 && (
-                        <span>{w.allocated_disk_mb.toLocaleString()} MB disk</span>
+                        <span>{formatBytes(w.allocated_disk_mb)} disk</span>
                       )}
                     </p>
                     <a
