@@ -252,7 +252,7 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'worker' }: Creat
           <button
             onClick={() => mut.mutate()}
             disabled={!name.trim() || mut.isPending}
-            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {mut.isPending ? 'Creating...' : 'Create'}
           </button>

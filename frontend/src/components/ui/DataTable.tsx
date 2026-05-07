@@ -114,7 +114,8 @@ export function DataTable<T>({
                     tabIndex={onRowClick && !rowHref ? 0 : undefined}
                     className={clsx(
                       'transition-colors',
-                      isClickable && 'hover:bg-slate-800/50',
+                      // item 46: active bg for touch feedback
+                      isClickable && 'hover:bg-slate-800/50 active:bg-slate-800',
                       onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
                     )}
                   >

@@ -166,7 +166,7 @@ export default function BuildsPage() {
           <button
             onClick={() => applyPatch({ page: Math.max(1, page - 1) })}
             disabled={page <= 1}
-            className="px-3 py-1 text-sm rounded-lg text-secondary hover:bg-surface-hover disabled:text-disabled disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-accent"
+            className="px-3 py-1 text-sm rounded-lg text-slate-300 hover:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             Prev
           </button>
@@ -174,7 +174,7 @@ export default function BuildsPage() {
           <button
             onClick={() => applyPatch({ page: Math.min(totalPages, page + 1) })}
             disabled={page >= totalPages}
-            className="px-3 py-1 text-sm rounded-lg text-secondary hover:bg-surface-hover disabled:text-disabled disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-accent"
+            className="px-3 py-1 text-sm rounded-lg text-slate-300 hover:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             Next
           </button>
