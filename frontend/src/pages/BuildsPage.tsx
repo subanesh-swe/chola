@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
 import { useAppliedFilters } from '../hooks/useAppliedFilters';
@@ -10,7 +11,10 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
 
 export default function BuildsPage() {
-  const { filters, setFilters, resetFilters } = useUrlFilters();
+  const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('builds', 5);
+  const [queryValue, setQueryValue] = useState(applied.q);
+  const historyApi = useQueryHistory('builds');
 
   // Seed date defaults on first load when URL has no date filter.
   useEffect(() => {
@@ -58,11 +62,11 @@ export default function BuildsPage() {
       <label className="inline-flex items-center gap-2 cursor-pointer select-none">
         <input
           type="checkbox"
-          checked={filters.includeArchived}
-          onChange={(e) => setFilters({ includeArchived: e.target.checked, page: 1 })}
-          className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
+          checked={applied.includeArchived}
+          onChange={(e) => applyPatch({ includeArchived: e.target.checked, page: 1 })}
+          className="w-4 h-4 rounded border-border bg-input text-accent focus:ring-accent focus:ring-offset-app"
         />
-        <span className="text-sm text-slate-400">Show archived builds</span>
+        <span className="text-sm text-muted">Show archived builds</span>
       </label>
 
       {isError && (
@@ -156,6 +160,7 @@ export default function BuildsPage() {
         )}
       </div>
 
+      {/* item 14: gap-3 between pagination buttons and indicator */}
       {totalPages > 1 && (
         <div className="flex justify-center gap-3">
           <button

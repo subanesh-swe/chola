@@ -219,7 +219,8 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
         <span className="text-secondary">{label}</span>
       </div>
       <div className="flex items-center gap-3">
-        <span className="text-secondary font-mono">{timeDisplay}</span>
+        <span className="text-slate-200 font-mono">{timeDisplay}</span>
+        {/* item 19: truncate + max-w-xs on timer reason */}
         <span className={`${color} max-w-xs text-right truncate`} title={reason}>{reason}</span>
       </div>
     </div>
