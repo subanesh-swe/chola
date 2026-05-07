@@ -204,7 +204,7 @@ export function Sidebar() {
         role="navigation"
         aria-label="Main navigation"
         className={clsx(
-          'bg-slate-900 border-r border-slate-700 flex flex-col min-h-screen transition-all duration-200 z-40',
+          'bg-slate-900 border-r border-slate-700 flex flex-col h-screen sticky top-0 transition-all duration-200 z-40',
           // Desktop: always visible, collapsible
           'hidden md:flex',
           collapsed ? 'md:w-16' : 'md:w-60',
@@ -236,7 +236,7 @@ export function Sidebar() {
           </button>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
           {navItems.map(({ to, label, Icon }) => (
             <NavItem
               key={to}
