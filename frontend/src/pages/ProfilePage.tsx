@@ -125,14 +125,17 @@ function AppearanceSection() {
   ];
 
   return (
-    <div className="bg-surface border border-border rounded-xl p-6 space-y-6">
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-6">
       <div>
-        <h3 className="text-lg font-semibold text-primary mb-1">Appearance</h3>
+        <h3 className="text-lg font-semibold text-white mb-1">Appearance</h3>
+        <p className="text-xs text-slate-500">
+          Light/accent themes will progressively roll out across pages.
+        </p>
       </div>
 
       {/* Mode */}
       <div>
-        <p className="text-sm font-medium text-secondary mb-3">Mode</p>
+        <p className="text-sm font-medium text-slate-300 mb-3">Mode</p>
         <div className="flex gap-3" role="radiogroup" aria-label="Color mode">
           {modes.map(({ value, label }) => {
             const active = mode === value;
@@ -141,8 +144,8 @@ function AppearanceSection() {
                 key={value}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
                   ${active
-                    ? 'border-accent bg-accent-soft text-primary'
-                    : 'border-border text-muted hover:border-border-strong hover:text-secondary'
+                    ? 'border-blue-500 bg-blue-600/10 text-white'
+                    : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
                   }`}
               >
                 <input
@@ -162,7 +165,7 @@ function AppearanceSection() {
 
       {/* Accent */}
       <div>
-        <p className="text-sm font-medium text-secondary mb-3">Accent color</p>
+        <p className="text-sm font-medium text-slate-300 mb-3">Accent color</p>
         <div className="flex gap-3" role="radiogroup" aria-label="Accent color">
           {accents.map(({ value, label }) => {
             const active = accent === value;
@@ -171,8 +174,8 @@ function AppearanceSection() {
                 key={value}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
                   ${active
-                    ? 'border-accent bg-accent-soft text-primary'
-                    : 'border-border text-muted hover:border-border-strong hover:text-secondary'
+                    ? 'border-blue-500 bg-blue-600/10 text-white'
+                    : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
                   }`}
               >
                 <input
@@ -235,9 +238,9 @@ export default function ProfilePage() {
       <AppearanceSection />
 
       {/* API Keys — placeholder */}
-      <div className="bg-surface border border-border rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-primary mb-2">API Keys</h3>
-        <p className="text-sm text-muted">API key management coming soon.</p>
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-2">API Keys</h3>
+        <p className="text-sm text-slate-500">API key management coming soon.</p>
       </div>
     </div>
   );
