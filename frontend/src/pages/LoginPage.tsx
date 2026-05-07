@@ -20,7 +20,7 @@ function EyeIcon({ open }: { open: boolean }) {
 
 function Spinner() {
   return (
-    <svg className="animate-spin h-4 w-4 text-on-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
@@ -44,6 +44,7 @@ export default function LoginPage() {
       nav('/');
     } catch (err: unknown) {
       const e = err as MutationError & { response?: unknown };
+      // item 5: distinguish network vs auth vs other errors
       if (!e.response) {
         toast.error('Cannot reach server. Check your connection.');
       } else if (e.statusCode === 401 || e.statusCode === 403) {
@@ -59,47 +60,50 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-app">
+    // item 2: min-h to prevent layout shift
+    <div className="min-h-screen flex items-center justify-center bg-slate-950">
       <div className="w-full max-w-sm min-h-[340px] flex flex-col justify-center">
-        <div className="bg-surface border border-border rounded-xl p-8">
-          <h1 className="text-2xl font-bold text-primary mb-1">Chola CI</h1>
-          <p className="text-sm text-muted mb-6">Sign in to your account</p>
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-8">
+          <h1 className="text-2xl font-bold text-white mb-1">Chola CI</h1>
+          <p className="text-sm text-slate-400 mb-6">Sign in to your account</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm text-secondary mb-1">Username</label>
+              <label className="block text-sm text-slate-300 mb-1">Username</label>
               <input
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary placeholder:text-disabled focus:outline-none focus:ring-2 focus:ring-accent"
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="admin"
                 required
               />
             </div>
+            {/* item 1: password visibility toggle */}
             <div>
-              <label className="block text-sm text-secondary mb-1">Password</label>
+              <label className="block text-sm text-slate-300 mb-1">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 pr-10 bg-input border border-border rounded-lg text-primary placeholder:text-disabled focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 pr-10 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(v => !v)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-secondary focus:outline-none"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-200 focus:outline-none"
                 >
                   <EyeIcon open={showPassword} />
                 </button>
               </div>
             </div>
+            {/* item 3: spinner while loading */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2 flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg font-medium transition-colors"
+              className="w-full py-2 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
             >
               {loading && <Spinner />}
               {loading ? 'Signing in...' : 'Sign In'}
