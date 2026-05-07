@@ -6,19 +6,16 @@ import { DataTable, type Column } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { Pagination } from '../components/ui/Pagination';
+import { formatSecs } from '../utils/format';
 
 const PAGE_SIZE = 25;
 const states = ['', 'queued', 'running', 'success', 'failed', 'cancelled'];
 
 function formatDuration(start: string | null, end: string | null): string {
-  if (!start) return '-';
+  if (!start) return '—';
   const s = new Date(start).getTime();
   const e = end ? new Date(end).getTime() : Date.now();
-  const secs = Math.round((e - s) / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  const rem = secs % 60;
-  return `${mins}m ${rem}s`;
+  return formatSecs(Math.round((e - s) / 1000));
 }
 
 const columns: Column<Run>[] = [

@@ -12,6 +12,7 @@ import { StageMetadata } from '../components/ui/StageMetadata';
 import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
+import { formatSecs } from '../utils/format';
 import { toast } from 'sonner';
 import type { Job, JobGroup, ArchivedChildren, MutationError } from '../types';
 
@@ -170,17 +171,6 @@ function JobLogPanel({ job, filesPurgedAt, onRetry }: JobLogPanelProps) {
   );
 }
 
-// ── Timer helpers ─────────────────────────────────────────────────────────────
-
-function fmtSecs(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${sec}s`;
-  return `${sec}s`;
-}
-
 interface TimerInfo {
   status: string;
   remaining_secs: number | null;
@@ -208,15 +198,15 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
 
   const icon = status === 'active' ? '⏱' : status === 'paused' ? '⏸' : status === 'deactivated' ? '✓' : '○';
   const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-slate-600';
-  const maxLabel = maxSecs > 0 ? fmtSecs(maxSecs) : 'no limit';
+  const maxLabel = maxSecs > 0 ? formatSecs(maxSecs) : 'no limit';
 
   let timeDisplay: string;
   if (status === 'active' && job?.started_at && maxSecs > 0) {
     const elapsed = Math.floor((now - new Date(job.started_at).getTime()) / 1000);
     const remaining = Math.max(0, maxSecs - elapsed);
-    timeDisplay = `${fmtSecs(remaining)} / ${maxLabel}`;
+    timeDisplay = `${formatSecs(remaining)} / ${maxLabel}`;
   } else if (status === 'active' && timer?.remaining_secs != null) {
-    timeDisplay = `${fmtSecs(Math.max(0, timer.remaining_secs))} / ${maxLabel}`;
+    timeDisplay = `${formatSecs(Math.max(0, timer.remaining_secs))} / ${maxLabel}`;
   } else {
     timeDisplay = `— / ${maxLabel}`;
   }
