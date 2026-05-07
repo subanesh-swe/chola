@@ -38,14 +38,13 @@ function StatCardWithSparkline({
   subtext?: string;
 }) {
   return (
-    <div className={`bg-slate-900 border ${color} rounded-xl p-4 flex flex-col gap-2`}>
+    <div className={`bg-surface border ${color} rounded-xl p-4 flex flex-col gap-2`}>
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs text-slate-400">{label}</p>
-          <p className="text-2xl font-bold text-white mt-0.5">{value}</p>
-          {subtext && <p className="text-xs text-slate-500 mt-0.5">{subtext}</p>}
+          <p className="text-xs text-muted">{label}</p>
+          <p className="text-2xl font-bold text-primary mt-0.5">{value}</p>
+          {subtext && <p className="text-xs text-disabled mt-0.5">{subtext}</p>}
         </div>
-        {/* item 8: min-h to prevent layout shift on first load */}
         <div className="opacity-70 min-h-[28px]">
           <Sparkline data={trend} color={sparkColor} width={80} height={28} />
         </div>
@@ -70,19 +69,19 @@ function SystemStatusPanel({
   ];
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl">
-      <div className="px-4 py-3 border-b border-slate-700">
-        <h3 className="text-sm font-semibold text-slate-300">System Status</h3>
+    <div className="bg-surface border border-border rounded-xl">
+      <div className="px-4 py-3 border-b border-border">
+        <h3 className="text-sm font-semibold text-secondary">System Status</h3>
       </div>
-      <div className="divide-y divide-slate-800">
+      <div className="divide-y divide-border">
         {items.map((item) => (
           <div key={item.label} className="px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${item.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
-              <span className="text-sm text-slate-300">{item.label}</span>
+              <span className="text-sm text-secondary">{item.label}</span>
             </div>
             {item.detail !== undefined && (
-              <span className="text-xs text-slate-500 font-mono">{item.detail}</span>
+              <span className="text-xs text-disabled font-mono">{item.detail}</span>
             )}
           </div>
         ))}
@@ -143,8 +142,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Dashboard</h2>
-        <p className="text-xs text-slate-500">Auto-refreshes every 5s</p>
+        <h2 className="text-2xl font-bold text-primary">Dashboard</h2>
+        <p className="text-xs text-disabled">Auto-refreshes every 5s</p>
       </div>
 
       {/* Stat cards */}
@@ -153,7 +152,7 @@ export default function DashboardPage() {
           label="Active Builds"
           value={running}
           trend={activeTrend}
-          color="border-blue-500/30"
+          color="border-accent/30"
           sparkColor="#3b82f6"
           subtext={`${summary?.job_groups?.pending ?? 0} pending`}
         />
@@ -177,7 +176,7 @@ export default function DashboardPage() {
           label="Failed Builds"
           value={failed}
           trend={failedTrend}
-          color={failed > 0 ? 'border-red-500/30' : 'border-slate-700'}
+          color={failed > 0 ? 'border-red-500/30' : 'border-border'}
           sparkColor="#ef4444"
           subtext={`${totalDone} total completed`}
         />
@@ -185,47 +184,46 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Builds - status timeline */}
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-700 rounded-xl">
-          <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-300">Recent Builds</h3>
+        <div className="lg:col-span-2 bg-surface border border-border rounded-xl">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-secondary">Recent Builds</h3>
             <button
               onClick={() => nav('/builds')}
-              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              className="text-xs text-accent-text hover:opacity-80 transition-opacity"
             >
               View all
             </button>
           </div>
-          {/* item 48: skeleton for recent builds section during sub-query load */}
           {buildsLoading ? (
             <TableSkeleton rows={5} cols={3} />
           ) : null}
-          <div className="divide-y divide-slate-800">
+          <div className="divide-y divide-border">
             {(recentBuilds as Array<{ job_group_id: string; repo_name?: string; branch: string | null; state: string; created_at: string; commit_sha?: string | null }>).slice(0, 8).map((b) => (
               <div
                 key={b.job_group_id}
                 onClick={() => nav(`/builds/${b.job_group_id}`)}
-                className="px-4 py-3 flex items-center gap-3 hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                className="px-4 py-3 flex items-center gap-3 hover:bg-surface-hover/50 cursor-pointer transition-colors group"
               >
                 <StatusBadge status={b.state} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-slate-200 truncate">
+                  <p className="text-sm text-secondary truncate">
                     {b.repo_name || b.job_group_id.slice(0, 8)}
                   </p>
-                  <p className="text-xs text-slate-500 truncate">
+                  <p className="text-xs text-disabled truncate">
                     {b.branch ?? 'no branch'}
                     {b.commit_sha ? ` @ ${b.commit_sha.slice(0, 7)}` : ''}
                   </p>
                 </div>
                 <div className="shrink-0 text-right">
-                  <TimeAgo date={b.created_at} className="text-xs text-slate-500" />
+                  <TimeAgo date={b.created_at} className="text-xs text-disabled" />
                 </div>
-                <svg className="w-4 h-4 text-slate-600 group-hover:text-slate-400 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-border-strong group-hover:text-muted transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>
             ))}
             {!recentBuilds.length && (
-              <div className="px-4 py-8 text-center text-slate-500">No recent builds</div>
+              <div className="px-4 py-8 text-center text-disabled">No recent builds</div>
             )}
           </div>
         </div>
@@ -233,17 +231,17 @@ export default function DashboardPage() {
         {/* Right column: worker health + system status */}
         <div className="flex flex-col gap-6">
           {/* Worker Health grid */}
-          <div className="bg-slate-900 border border-slate-700 rounded-xl">
-            <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-300">Worker Health</h3>
+          <div className="bg-surface border border-border rounded-xl">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-secondary">Worker Health</h3>
               <button
                 onClick={() => nav('/workers')}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                className="text-xs text-accent-text hover:opacity-80 transition-opacity"
               >
                 View all
               </button>
             </div>
-            <div className="divide-y divide-slate-800">
+            <div className="divide-y divide-border">
               {wc.slice(0, 4).map((w) => (
                 <div key={w.worker_id} className="px-4 py-3">
                   <div className="flex items-center justify-between mb-1.5">
@@ -252,10 +250,10 @@ export default function DashboardPage() {
                         w.status === 'Connected' ? 'bg-emerald-500' :
                         w.status === 'Draining' ? 'bg-yellow-500' : 'bg-red-500'
                       }`} />
-                      <p className="text-xs text-slate-300 truncate max-w-[120px]">{w.hostname || w.worker_id}</p>
+                      <p className="text-xs text-secondary truncate max-w-[120px]">{w.hostname || w.worker_id}</p>
                     </div>
                     {w.last_heartbeat && (
-                      <span className="text-xs text-slate-500">{w.last_heartbeat.running_jobs} job{w.last_heartbeat.running_jobs !== 1 ? 's' : ''}</span>
+                      <span className="text-xs text-disabled">{w.last_heartbeat.running_jobs} job{w.last_heartbeat.running_jobs !== 1 ? 's' : ''}</span>
                     )}
                   </div>
                   {w.last_heartbeat && w.total_cpu > 0 && (
@@ -272,7 +270,7 @@ export default function DashboardPage() {
                 </div>
               ))}
               {!wc.length && (
-                <div className="px-4 py-6 text-center text-slate-500 text-sm">No workers connected</div>
+                <div className="px-4 py-6 text-center text-disabled text-sm">No workers connected</div>
               )}
             </div>
           </div>

@@ -116,7 +116,7 @@ function StageTimer({ job }: { job: Job }) {
     : null;
 
   const pct = maxSecs > 0 ? elapsedSecs / maxSecs : 0;
-  const color = pct > 0.9 ? 'text-red-400' : pct > 0.7 ? 'text-yellow-400' : 'text-slate-400';
+  const color = pct > 0.9 ? 'text-red-400' : pct > 0.7 ? 'text-yellow-400' : 'text-muted';
 
   return (
     <span className={`text-xs font-mono ${color}`}>
@@ -139,15 +139,15 @@ function JobLogPanel({ job, filesPurgedAt, onRetry }: JobLogPanelProps) {
   const completedLogs = logData?.data || '';
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl">
-      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+    <div className="bg-surface border border-border rounded-xl">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
           <StatusBadge status={job.state} />
-          <h3 className="text-sm font-semibold text-slate-300">{job.stage_name}</h3>
+          <h3 className="text-sm font-semibold text-secondary">{job.stage_name}</h3>
         </div>
-        <div className="flex items-center gap-4 text-xs text-slate-400">
+        <div className="flex items-center gap-4 text-xs text-muted">
           {job.exit_code !== null && <span>exit: {job.exit_code}</span>}
-          {job.status_reason && <span className="text-xs text-slate-500">{job.status_reason}</span>}
+          {job.status_reason && <span className="text-xs text-disabled">{job.status_reason}</span>}
           <StageTimer job={job} />
           {job.state === 'failed' && onRetry && (
             <button
@@ -198,7 +198,7 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
   }, [isLiveStage]);
 
   const icon = status === 'active' ? '⏱' : status === 'paused' ? '⏸' : status === 'deactivated' ? '✓' : '○';
-  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-slate-600';
+  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-disabled';
   const maxLabel = maxSecs > 0 ? formatSecs(maxSecs) : 'no limit';
 
   let timeDisplay: string;
@@ -216,11 +216,10 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
     <div className="flex items-center justify-between text-xs">
       <div className="flex items-center gap-2">
         <span>{icon}</span>
-        <span className="text-slate-300">{label}</span>
+        <span className="text-secondary">{label}</span>
       </div>
       <div className="flex items-center gap-3">
-        <span className="text-slate-200 font-mono">{timeDisplay}</span>
-        {/* item 19: truncate + max-w-xs on timer reason */}
+        <span className="text-secondary font-mono">{timeDisplay}</span>
         <span className={`${color} max-w-xs text-right truncate`} title={reason}>{reason}</span>
       </div>
     </div>
@@ -235,8 +234,8 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
 
   if (group.timers) {
     return (
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Timers</h3>
+      <div className="bg-surface border border-border rounded-xl p-4">
+        <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider mb-3">Timers</h3>
         <div className="space-y-2">
           <TimerRow label="Stage timeout" timer={group.timers.stage} job={runningJob} />
           <TimerRow label="Stall timeout" timer={group.timers.stall} />
@@ -265,8 +264,8 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
     : { status: 'deactivated', remaining_secs: null, max_secs: idleMax };
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
-      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Timers</h3>
+    <div className="bg-surface border border-border rounded-xl p-4">
+      <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider mb-3">Timers</h3>
       <div className="space-y-2">
         <TimerRow label="Stage timeout" timer={stageTimer} />
         <TimerRow label="Stall timeout" timer={stallTimer} />
@@ -334,14 +333,13 @@ export default function BuildDetailPage() {
     onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to retry stage'),
   });
 
-  // item 15: use skeleton instead of plain text
   if (isLoading) return <PageSkeleton rows={4} />;
   if (isError) return (
     <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
       Failed to load build. Please try again.
     </div>
   );
-  if (!data) return <div className="text-slate-400">Build not found</div>;
+  if (!data) return <div className="text-muted">Build not found</div>;
 
   const { job_group: group, jobs } = data;
   const isTerminal = ['success', 'failed', 'cancelled'].includes(group.state);
@@ -361,14 +359,14 @@ export default function BuildDetailPage() {
         <button
           onClick={() => nav('/builds')}
           aria-label="Back to builds list"
-          className="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+          className="text-muted hover:text-primary transition-colors text-sm flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-accent rounded"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           Builds
         </button>
-        <h2 className="text-2xl font-bold text-white font-mono">{group.job_group_id.slice(0, 8)}</h2>
+        <h2 className="text-2xl font-bold text-primary font-mono">{group.job_group_id.slice(0, 8)}</h2>
         <StatusBadge status={group.state} size="md" />
 
         {/* Archived / files-purged badges */}
@@ -388,7 +386,7 @@ export default function BuildDetailPage() {
         )}
 
         {group.status_reason && (
-          <p className="text-xs text-slate-400 mt-1">{group.status_reason}</p>
+          <p className="text-xs text-muted mt-1">{group.status_reason}</p>
         )}
         <div className="ml-auto flex items-center gap-2">
           {canCancelJobs && group.state === 'failed' && (
@@ -412,21 +410,21 @@ export default function BuildDetailPage() {
 
       {/* Meta grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
-          <p className="text-xs text-slate-500">Branch</p>
-          <p className="text-sm text-slate-200">{group.branch || '-'}</p>
+        <div className="bg-surface border border-border rounded-lg p-3">
+          <p className="text-xs text-disabled">Branch</p>
+          <p className="text-sm text-secondary">{group.branch || '-'}</p>
         </div>
-        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
-          <p className="text-xs text-slate-500">Commit</p>
-          <p className="text-sm text-slate-200 font-mono">{group.commit_sha?.slice(0, 7) || '-'}</p>
+        <div className="bg-surface border border-border rounded-lg p-3">
+          <p className="text-xs text-disabled">Commit</p>
+          <p className="text-sm text-secondary font-mono">{group.commit_sha?.slice(0, 7) || '-'}</p>
         </div>
-        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
-          <p className="text-xs text-slate-500">Worker</p>
-          <p className="text-sm text-slate-200 truncate">{group.reserved_worker_id || jobs?.[0]?.worker_id || '-'}</p>
+        <div className="bg-surface border border-border rounded-lg p-3">
+          <p className="text-xs text-disabled">Worker</p>
+          <p className="text-sm text-secondary truncate">{group.reserved_worker_id || jobs?.[0]?.worker_id || '-'}</p>
         </div>
-        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
-          <p className="text-xs text-slate-500">Created</p>
-          <p className="text-sm text-slate-200">
+        <div className="bg-surface border border-border rounded-lg p-3">
+          <p className="text-xs text-disabled">Created</p>
+          <p className="text-sm text-secondary">
             <TimeAgo date={group.created_at} />
           </p>
         </div>
@@ -434,13 +432,12 @@ export default function BuildDetailPage() {
 
       {/* Reserved resources */}
       {group.allocated_resources && (group.allocated_resources.cpu > 0 || group.allocated_resources.memory_mb > 0 || group.allocated_resources.disk_mb > 0) && (
-        <div className="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3">
-          <p className="text-xs text-slate-500 mb-1.5 uppercase font-semibold">Resources Reserved</p>
-          {/* item 54: unit labels */}
+        <div className="bg-surface-2/50 border border-border rounded-lg px-4 py-3">
+          <p className="text-xs text-disabled mb-1.5 uppercase font-semibold">Resources Reserved</p>
           <div className="flex gap-6 text-sm">
-            <span className="text-slate-300">{group.allocated_resources.cpu} <span className="text-slate-500">CPU cores</span></span>
-            <span className="text-slate-300">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-slate-500">RAM</span></span>
-            <span className="text-slate-300">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-slate-500">Disk</span></span>
+            <span className="text-secondary">{group.allocated_resources.cpu} <span className="text-disabled">CPU cores</span></span>
+            <span className="text-secondary">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-disabled">RAM</span></span>
+            <span className="text-secondary">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-disabled">Disk</span></span>
           </div>
         </div>
       )}
@@ -449,9 +446,9 @@ export default function BuildDetailPage() {
       <TimersPanel group={group} jobs={jobs} />
 
       {/* Stage pipeline timeline */}
-      <div className="bg-slate-900 border border-slate-700 rounded-xl">
-        <div className="px-4 py-3 border-b border-slate-700">
-          <h3 className="text-sm font-semibold text-slate-300">
+      <div className="bg-surface border border-border rounded-xl">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="text-sm font-semibold text-secondary">
             Pipeline ({jobs.length} stage{jobs.length !== 1 ? 's' : ''})
           </h3>
         </div>
@@ -464,7 +461,7 @@ export default function BuildDetailPage() {
             />
           </div>
         ) : (
-          <div className="px-4 py-8 text-center text-slate-500">No stages submitted yet</div>
+          <div className="px-4 py-8 text-center text-disabled">No stages submitted yet</div>
         )}
       </div>
 

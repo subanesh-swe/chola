@@ -28,28 +28,28 @@ const columns: Column<Run>[] = [
     key: 'stage_name',
     header: 'Stage',
     render: (r) => (
-      <span className="font-medium text-slate-200">{r.stage_name}</span>
+      <span className="font-medium text-secondary">{r.stage_name}</span>
     ),
   },
   {
     key: 'repo',
     header: 'Repo',
     render: (r) => (
-      <span className="text-slate-400">{r.repo_name || 'ad-hoc'}</span>
+      <span className="text-muted">{r.repo_name || 'ad-hoc'}</span>
     ),
   },
   {
     key: 'branch',
     header: 'Branch',
     render: (r) => (
-      <span className="text-slate-400">{r.branch || '-'}</span>
+      <span className="text-muted">{r.branch || '-'}</span>
     ),
   },
   {
     key: 'worker_id',
     header: 'Worker',
     render: (r) => (
-      <span className="text-slate-400 font-mono text-xs">
+      <span className="text-muted font-mono text-xs">
         {r.worker_id || '-'}
       </span>
     ),
@@ -58,7 +58,7 @@ const columns: Column<Run>[] = [
     key: 'duration',
     header: 'Duration',
     render: (r) => (
-      <span className="text-slate-400">
+      <span className="text-muted">
         {formatDuration(r.started_at, r.completed_at)}
       </span>
     ),
@@ -67,8 +67,7 @@ const columns: Column<Run>[] = [
     key: 'exit_code',
     header: 'Exit',
     render: (r) => (
-      // item 29: render '—' for null exit code
-      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-slate-600'}>
+      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-disabled'}>
         {r.exit_code != null ? r.exit_code : '—'}
       </span>
     ),
@@ -77,7 +76,7 @@ const columns: Column<Run>[] = [
     key: 'created_at',
     header: 'Started',
     render: (r) => (
-      <TimeAgo date={r.started_at || r.created_at} className="text-slate-500" />
+      <TimeAgo date={r.started_at || r.created_at} className="text-disabled" />
     ),
   },
 ];
@@ -106,10 +105,10 @@ export default function RunsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-white">Runs</h2>
+        <h2 className="text-2xl font-bold text-primary">Runs</h2>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <label htmlFor="run-state" className="text-sm text-slate-400">
+            <label htmlFor="run-state" className="text-sm text-muted">
               State:
             </label>
             <select
@@ -119,7 +118,7 @@ export default function RunsPage() {
                 setStateFilter(e.target.value);
                 setPage(1);
               }}
-              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-accent"
             >
               {states.map((s) => (
                 <option key={s} value={s}>
@@ -129,7 +128,7 @@ export default function RunsPage() {
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <label htmlFor="run-worker" className="text-sm text-slate-400">
+            <label htmlFor="run-worker" className="text-sm text-muted">
               Worker:
             </label>
             <input
@@ -141,7 +140,7 @@ export default function RunsPage() {
                 setWorkerFilter(e.target.value);
                 setPage(1);
               }}
-              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-primary w-36 focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
         </div>
@@ -156,7 +155,6 @@ export default function RunsPage() {
         </div>
       )}
 
-      {/* item 27: use EmptyState when no runs */}
       {!isLoading && runs.length === 0 ? (
         <EmptyState title="No runs found" description="Runs will appear here once stages execute." />
       ) : (
