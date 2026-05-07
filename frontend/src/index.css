@@ -1,190 +1,92 @@
 @import "tailwindcss";
 
 /* -----------------------------------------------------------------------
-   Tailwind v4 — wire semantic CSS vars as utility classes
-   bg-app, bg-surface, bg-surface-2, bg-surface-hover, bg-input,
-   border-border, border-border-strong, divide-border,
-   text-primary, text-secondary, text-muted, text-disabled, text-on-accent,
-   bg-accent, hover:bg-accent-hover, bg-accent-soft, text-accent-text,
-   bg-success, bg-success-soft, bg-warning, bg-warning-soft,
-   bg-danger, bg-danger-soft, bg-info, bg-info-soft
+   Tailwind v4 theme extension — CSS-var palette mapped to utility classes
    ----------------------------------------------------------------------- */
-@theme inline {
-  --color-app:            var(--color-app);
-  --color-surface:        var(--color-surface);
-  --color-surface-2:      var(--color-surface-2);
-  --color-surface-hover:  var(--color-surface-hover);
-  --color-input:          var(--color-input);
-
-  --color-border:         var(--color-border);
-  --color-border-strong:  var(--color-border-strong);
-
-  --color-primary:        var(--color-text-primary);
-  --color-secondary:      var(--color-text-secondary);
-  --color-muted:          var(--color-text-muted);
-  --color-disabled:       var(--color-text-disabled);
-  --color-on-accent:      var(--color-text-on-accent);
-
-  --color-accent:         var(--color-accent);
-  --color-accent-hover:   var(--color-accent-hover);
-  --color-accent-soft:    var(--color-accent-soft);
-  --color-accent-text:    var(--color-accent-text);
-
-  --color-success:        var(--color-success);
-  --color-success-soft:   var(--color-success-soft);
-  --color-warning:        var(--color-warning);
-  --color-warning-soft:   var(--color-warning-soft);
-  --color-danger:         var(--color-danger);
-  --color-danger-soft:    var(--color-danger-soft);
-  --color-info:           var(--color-info);
-  --color-info-soft:      var(--color-info-soft);
+@theme {
+  --color-app: var(--bg-app);
+  --color-surface: var(--bg-surface);
+  --color-surface-2: var(--bg-surface-2);
+  --color-border-app: var(--border);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
 }
 
 /* -----------------------------------------------------------------------
-   Base palette CSS variables — dark (DEFAULT)
+   Base palette CSS variables
+   Each theme sets values on [data-theme] applied to <html>.
+   Accent variables are orthogonal and can be stacked:
+     <html data-theme="dark" data-accent="emerald">
    ----------------------------------------------------------------------- */
-:root,
-[data-theme="dark"] {
-  /* surfaces */
-  --color-app:            #020617; /* slate-950 */
-  --color-surface:        #0f172a; /* slate-900 */
-  --color-surface-2:      #1e293b; /* slate-800 */
-  --color-surface-hover:  #1e293b; /* slate-800 */
-  --color-input:          #0f172a; /* slate-900 */
-  --color-overlay:        rgba(0,0,0,0.6);
 
-  /* borders */
-  --color-border:         #334155; /* slate-700 */
-  --color-border-strong:  #475569; /* slate-600 */
-
-  /* text */
-  --color-text-primary:   #f1f5f9; /* slate-100 */
-  --color-text-secondary: #cbd5e1; /* slate-300 */
-  --color-text-muted:     #94a3b8; /* slate-400 */
-  --color-text-disabled:  #64748b; /* slate-500 */
-  --color-text-on-accent: #ffffff;
-
-  /* accent — defaults to indigo */
-  --color-accent:         #6366f1; /* indigo-500 */
-  --color-accent-hover:   #4f46e5; /* indigo-600 */
-  --color-accent-soft:    rgba(99,102,241,0.1);
-  --color-accent-text:    #818cf8; /* indigo-400 */
-
-  /* status */
-  --color-success:        #10b981; /* emerald-500 */
-  --color-success-soft:   rgba(16,185,129,0.1);
-  --color-warning:        #f59e0b; /* amber-500 */
-  --color-warning-soft:   rgba(245,158,11,0.1);
-  --color-danger:         #f43f5e; /* rose-500 */
-  --color-danger-soft:    rgba(244,63,94,0.1);
-  --color-info:           #0ea5e9; /* sky-500 */
-  --color-info-soft:      rgba(14,165,233,0.1);
+/* --- dark (DEFAULT) --------------------------------------------------- */
+[data-theme="dark"],
+:root {
+  --bg-app:       #020617; /* slate-950 */
+  --bg-surface:   #0f172a; /* slate-900 */
+  --bg-surface-2: #1e293b; /* slate-800 */
+  --border:       #334155; /* slate-700 */
+  --text-primary:   #f1f5f9; /* slate-100 */
+  --text-secondary: #cbd5e1; /* slate-300 */
+  --text-muted:     #94a3b8; /* slate-400 */
 }
 
-/* -----------------------------------------------------------------------
-   Light theme
-   ----------------------------------------------------------------------- */
+/* --- light ------------------------------------------------------------ */
 [data-theme="light"] {
-  --color-app:            #f8fafc; /* slate-50 */
-  --color-surface:        #ffffff;
-  --color-surface-2:      #f1f5f9; /* slate-100 */
-  --color-surface-hover:  #f1f5f9; /* slate-100 */
-  --color-input:          #ffffff;
-  --color-overlay:        rgba(15,23,42,0.4);
-
-  --color-border:         #e2e8f0; /* slate-200 */
-  --color-border-strong:  #cbd5e1; /* slate-300 */
-
-  --color-text-primary:   #0f172a; /* slate-900 */
-  --color-text-secondary: #334155; /* slate-700 */
-  --color-text-muted:     #64748b; /* slate-500 */
-  --color-text-disabled:  #94a3b8; /* slate-400 */
-  --color-text-on-accent: #ffffff;
-
-  /* accent-text darker for light contrast */
-  --color-accent-text:    #4f46e5; /* indigo-600 */
+  --bg-app:       #f8fafc; /* slate-50 */
+  --bg-surface:   #ffffff;
+  --bg-surface-2: #f1f5f9; /* slate-100 */
+  --border:       #e2e8f0; /* slate-200 */
+  --text-primary:   #0f172a; /* slate-900 */
+  --text-secondary: #334155; /* slate-700 */
+  --text-muted:     #64748b; /* slate-500 */
 }
 
-/* -----------------------------------------------------------------------
-   System theme — inherits from prefers-color-scheme
-   ----------------------------------------------------------------------- */
+/* --- system: inherits from prefers-color-scheme ----------------------- */
 @media (prefers-color-scheme: light) {
   [data-theme="system"] {
-    --color-app:            #f8fafc;
-    --color-surface:        #ffffff;
-    --color-surface-2:      #f1f5f9;
-    --color-surface-hover:  #f1f5f9;
-    --color-input:          #ffffff;
-    --color-overlay:        rgba(15,23,42,0.4);
-    --color-border:         #e2e8f0;
-    --color-border-strong:  #cbd5e1;
-    --color-text-primary:   #0f172a;
-    --color-text-secondary: #334155;
-    --color-text-muted:     #64748b;
-    --color-text-disabled:  #94a3b8;
-    --color-text-on-accent: #ffffff;
-    --color-accent-text:    #4f46e5;
+    --bg-app:       #f8fafc;
+    --bg-surface:   #ffffff;
+    --bg-surface-2: #f1f5f9;
+    --border:       #e2e8f0;
+    --text-primary:   #0f172a;
+    --text-secondary: #334155;
+    --text-muted:     #64748b;
   }
 }
 
 @media (prefers-color-scheme: dark) {
   [data-theme="system"] {
-    --color-app:            #020617;
-    --color-surface:        #0f172a;
-    --color-surface-2:      #1e293b;
-    --color-surface-hover:  #1e293b;
-    --color-input:          #0f172a;
-    --color-overlay:        rgba(0,0,0,0.6);
-    --color-border:         #334155;
-    --color-border-strong:  #475569;
-    --color-text-primary:   #f1f5f9;
-    --color-text-secondary: #cbd5e1;
-    --color-text-muted:     #94a3b8;
-    --color-text-disabled:  #64748b;
-    --color-text-on-accent: #ffffff;
-    --color-accent-text:    #818cf8;
+    --bg-app:       #020617;
+    --bg-surface:   #0f172a;
+    --bg-surface-2: #1e293b;
+    --border:       #334155;
+    --text-primary:   #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-muted:     #94a3b8;
   }
 }
 
-/* -----------------------------------------------------------------------
-   Accent overrides — stacked on top of theme
-   ----------------------------------------------------------------------- */
+/* --- accent: indigo (DEFAULT) ----------------------------------------- */
 :root,
 [data-accent="indigo"] {
-  --color-accent:       #6366f1; /* indigo-500 */
-  --color-accent-hover: #4f46e5; /* indigo-600 */
-  --color-accent-soft:  rgba(99,102,241,0.1);
-  --color-accent-text:  #818cf8; /* indigo-400 */
+  --accent:       #4f46e5; /* indigo-600 */
+  --accent-hover: #4338ca; /* indigo-700 */
 }
 
+/* --- accent: emerald -------------------------------------------------- */
 [data-accent="emerald"] {
-  --color-accent:       #10b981; /* emerald-500 */
-  --color-accent-hover: #059669; /* emerald-600 */
-  --color-accent-soft:  rgba(16,185,129,0.1);
-  --color-accent-text:  #34d399; /* emerald-400 */
+  --accent:       #059669; /* emerald-600 */
+  --accent-hover: #047857; /* emerald-700 */
 }
 
+/* --- accent: rose ----------------------------------------------------- */
 [data-accent="rose"] {
-  --color-accent:       #f43f5e; /* rose-500 */
-  --color-accent-hover: #e11d48; /* rose-600 */
-  --color-accent-soft:  rgba(244,63,94,0.1);
-  --color-accent-text:  #fb7185; /* rose-400 */
-}
-
-/* Light mode: darken accent-text for contrast */
-[data-theme="light"][data-accent="indigo"],
-[data-theme="light"] [data-accent="indigo"] {
-  --color-accent-text: #4f46e5; /* indigo-600 */
-}
-
-[data-theme="light"][data-accent="emerald"],
-[data-theme="light"] [data-accent="emerald"] {
-  --color-accent-text: #059669; /* emerald-600 */
-}
-
-[data-theme="light"][data-accent="rose"],
-[data-theme="light"] [data-accent="rose"] {
-  --color-accent-text: #e11d48; /* rose-600 */
+  --accent:       #e11d48; /* rose-600 */
+  --accent-hover: #be123c; /* rose-700 */
 }
 
 /* -----------------------------------------------------------------------
@@ -194,8 +96,8 @@
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: var(--color-text-primary);
-  background-color: var(--color-app);
+  color: var(--text-primary);
+  background-color: var(--bg-app);
 }
 
 body {
@@ -209,12 +111,12 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-surface-2);
+  background: var(--bg-surface-2);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--border);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  background: var(--text-muted);
 }
