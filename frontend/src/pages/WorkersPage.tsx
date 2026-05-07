@@ -982,31 +982,23 @@ export default function WorkersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center justify-between">
         {/* item 21: skeleton for count badge while loading */}
-        <h2 className="text-2xl font-bold text-primary">
+        <h2 className="text-2xl font-bold text-white">
           Workers
           {isLoading
-            ? <span className="ml-2 inline-block h-5 w-8 bg-surface-2 rounded animate-pulse align-middle" />
+            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
             : <span className="ml-1">({workers.length})</span>
           }
         </h2>
-        <div className="flex items-center gap-3 flex-wrap">
-          <RefreshControl
-            intervalSecs={refreshSecs}
-            onIntervalChange={setRefreshSecs}
-            onRefresh={() => refetch()}
-            isFetching={isFetching}
-          />
-          {canManageWorkers && (
-            <button
-              onClick={() => setShowRegisterModal(true)}
-              className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
-            >
-              Register Worker
-            </button>
-          )}
-        </div>
+        {canManageWorkers && (
+          <button
+            onClick={() => setShowRegisterModal(true)}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Register Worker
+          </button>
+        )}
       </div>
 
       {isError && (

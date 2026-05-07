@@ -5,6 +5,7 @@ import { DataTable, type Column } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { Pagination } from '../components/ui/Pagination';
+import { EmptyState } from '../components/ui/EmptyState';
 import { formatSecs } from '../utils/format';
 
 const PAGE_SIZE = 25;
@@ -163,14 +164,19 @@ export default function RunsPage() {
         </div>
       )}
 
-      <DataTable
-        data={runs}
-        columns={columns}
-        keyExtractor={(r) => r.id}
-        rowHref={(r) => `/builds/${r.job_group_id}`}
-        emptyMessage="No runs found"
-        loading={isLoading}
-      />
+      {/* item 27: use EmptyState when no runs */}
+      {!isLoading && runs.length === 0 ? (
+        <EmptyState title="No runs found" description="Runs will appear here once stages execute." />
+      ) : (
+        <DataTable
+          data={runs}
+          columns={columns}
+          keyExtractor={(r) => r.id}
+          rowHref={(r) => `/builds/${r.job_group_id}`}
+          emptyMessage="No runs found"
+          loading={isLoading}
+        />
+      )}
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>

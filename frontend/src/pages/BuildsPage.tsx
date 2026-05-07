@@ -70,7 +70,8 @@ export default function BuildsPage() {
           Failed to load builds. Please try again.
         </div>
       )}
-      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        {/* item 11: table skeleton instead of Loading text */}
         {isLoading ? (
           <TableSkeleton rows={6} cols={6} />
         ) : (
