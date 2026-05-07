@@ -61,7 +61,7 @@ export function LogViewer({ content, liveChunks, className, filesPurgedAt }: Pro
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
       convertEol: true,
       disableStdin: true,
-      scrollback: 10000,
+      scrollback: 1_000_000,
     });
 
     const fitAddon = new FitAddon();
