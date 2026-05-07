@@ -16,23 +16,10 @@ const queryClient = new QueryClient({
   },
 });
 
-function useSystemTheme(): 'light' | 'dark' {
-  const [isDark, setIsDark] = useState(
-    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
-  return isDark ? 'dark' : 'light';
-}
-
 function AppShell() {
   const mode = useThemeStore((s) => s.mode);
-  const systemTheme = useSystemTheme();
-  const toasterTheme = mode === 'system' ? systemTheme : mode;
+  // Resolve to 'dark' or 'light' for Toaster; fall back to dark for 'system'
+  const toasterTheme = mode === 'light' ? 'light' : 'dark';
 
   return (
     <BrowserRouter>

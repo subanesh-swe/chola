@@ -180,7 +180,7 @@ export function Sidebar() {
     <>
       {/* Hamburger button — mobile only */}
       <button
-        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-surface border border-border text-muted hover:text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-surface border border-[color:var(--border)] text-slate-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         onClick={() => setMobileOpen(!mobileOpen)}
         aria-label={mobileOpen ? 'Close navigation menu' : 'Open navigation menu'}
         aria-expanded={mobileOpen}
@@ -204,7 +204,7 @@ export function Sidebar() {
         role="navigation"
         aria-label="Main navigation"
         className={clsx(
-          'bg-slate-900 border-r border-slate-700 flex flex-col h-screen sticky top-0 transition-all duration-200 z-40',
+          'bg-surface border-r border-[color:var(--border)] flex flex-col h-screen sticky top-0 transition-all duration-200 z-40',
           // Desktop: always visible, collapsible
           'hidden md:flex',
           collapsed ? 'md:w-16' : 'md:w-60',
@@ -212,7 +212,7 @@ export function Sidebar() {
           mobileOpen && '!flex fixed inset-y-0 left-0 w-60',
         )}
       >
-        <div className="p-4 border-b border-border flex items-center justify-between">
+        <div className="p-4 border-b border-[color:var(--border)] flex items-center justify-between">
           {(!collapsed || mobileOpen) && (
             <div>
               <h1 className="text-xl font-bold text-primary">Chola CI</h1>
@@ -250,7 +250,7 @@ export function Sidebar() {
           ))}
           {showAdmin && (
             <>
-              <div className="my-3 border-t border-border" />
+              <div className="my-3 border-t border-[color:var(--border)]" />
               {(!collapsed || mobileOpen) && (
                 <p className="px-3 text-[10px] font-semibold text-disabled uppercase tracking-wider">
                   Admin
@@ -271,7 +271,7 @@ export function Sidebar() {
         </nav>
 
         {(!collapsed || mobileOpen) && (
-          <div className="p-3 border-t border-border">
+          <div className="p-3 border-t border-[color:var(--border)]">
             <button
               onClick={() => { nav('/profile'); setMobileOpen(false); }}
               className="flex items-center gap-2 px-2 w-full text-left rounded-lg hover:bg-surface-hover py-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
