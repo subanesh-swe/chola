@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 
 export interface Column<T> {
@@ -14,6 +15,8 @@ interface Props<T> {
   columns: Column<T>[];
   keyExtractor: (row: T) => string;
   onRowClick?: (row: T) => void;
+  /** When set, each row becomes a real anchor (supports middle-click / Cmd+click). */
+  rowHref?: (row: T) => string;
   emptyMessage?: string;
   loading?: boolean;
 }
@@ -23,6 +26,7 @@ export function DataTable<T>({
   columns,
   keyExtractor,
   onRowClick,
+  rowHref,
   emptyMessage = 'No data',
   loading = false,
 }: Props<T>) {
@@ -37,6 +41,8 @@ export function DataTable<T>({
       setSortDir('asc');
     }
   };
+
+  const isClickable = !!(onRowClick || rowHref);
 
   if (loading) {
     return (
@@ -80,7 +86,7 @@ export function DataTable<T>({
                 >
                   {col.header}
                   {sortKey === col.key && (
-                    <span className="ml-1" aria-hidden="true">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>
+                    <span className="ml-1" aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </th>
               ))}
@@ -94,28 +100,48 @@ export function DataTable<T>({
                 </td>
               </tr>
             ) : (
-              data.map((row) => (
-                <tr
-                  key={keyExtractor(row)}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  onKeyDown={
-                    onRowClick
-                      ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row); } }
-                      : undefined
-                  }
-                  tabIndex={onRowClick ? 0 : undefined}
-                  className={clsx(
-                    'transition-colors',
-                    onRowClick && 'cursor-pointer hover:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
-                  )}
-                >
-                  {columns.map((col) => (
-                    <td key={col.key} className={clsx('px-4 py-3 text-sm text-slate-200', col.className)}>
-                      {col.render(row)}
-                    </td>
-                  ))}
-                </tr>
-              ))
+              data.map((row) => {
+                const href = rowHref ? rowHref(row) : undefined;
+                return (
+                  <tr
+                    key={keyExtractor(row)}
+                    onClick={onRowClick && !rowHref ? () => onRowClick(row) : undefined}
+                    onKeyDown={
+                      onRowClick && !rowHref
+                        ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row); } }
+                        : undefined
+                    }
+                    tabIndex={onRowClick && !rowHref ? 0 : undefined}
+                    className={clsx(
+                      'transition-colors',
+                      isClickable && 'hover:bg-slate-800/50',
+                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
+                    )}
+                  >
+                    {columns.map((col) => (
+                      <td
+                        key={col.key}
+                        className={clsx(
+                          'text-sm text-slate-200',
+                          href ? 'p-0' : 'px-4 py-3',
+                          col.className,
+                        )}
+                      >
+                        {href ? (
+                          <Link
+                            to={href}
+                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                          >
+                            {col.render(row)}
+                          </Link>
+                        ) : (
+                          col.render(row)
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
