@@ -1,10 +1,10 @@
 export function PageSkeleton({ rows = 5 }: { rows?: number }) {
   return (
     <div className="p-6 space-y-4 animate-pulse">
-      <div className="h-8 bg-slate-700 rounded w-48" />
+      <div className="h-8 bg-surface-2 rounded w-48" />
       <div className="space-y-3">
         {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="h-12 bg-slate-800 rounded" />
+          <div key={i} className="h-12 bg-surface-2 rounded" />
         ))}
       </div>
     </div>
@@ -13,22 +13,22 @@ export function PageSkeleton({ rows = 5 }: { rows?: number }) {
 
 export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-      <div className="border-b border-slate-700 px-4 py-3 flex gap-4">
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <div className="border-b border-border px-4 py-3 flex gap-4">
         {Array.from({ length: cols }).map((_, i) => (
           <div
             key={i}
-            className="h-3 bg-slate-800 rounded animate-pulse"
+            className="h-3 bg-surface-2 rounded animate-pulse"
             style={{ width: `${60 + (i * 17 + 13) % 40}px` }}
           />
         ))}
       </div>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="px-4 py-3 flex gap-4 border-b border-slate-800 last:border-0">
+        <div key={i} className="px-4 py-3 flex gap-4 border-b border-border last:border-0">
           {Array.from({ length: cols }).map((_, j) => (
             <div
               key={j}
-              className="h-4 bg-slate-800 rounded animate-pulse"
+              className="h-4 bg-surface-2 rounded animate-pulse"
               style={{ width: `${40 + ((i * cols + j) * 23 + 7) % 80}px` }}
             />
           ))}
@@ -43,9 +43,9 @@ export function DashboardSkeleton() {
     <div className="space-y-6">
       <div className="grid grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="bg-slate-900 border border-slate-700 rounded-xl p-4 animate-pulse">
-            <div className="h-3 w-20 bg-slate-800 rounded mb-2" />
-            <div className="h-7 w-16 bg-slate-800 rounded" />
+          <div key={i} className="bg-surface border border-border rounded-xl p-4 animate-pulse">
+            <div className="h-3 w-20 bg-surface-2 rounded mb-2" />
+            <div className="h-7 w-16 bg-surface-2 rounded" />
           </div>
         ))}
       </div>

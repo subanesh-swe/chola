@@ -65,14 +65,14 @@ export function ConfirmDialog({
     >
       <div
         ref={dialogRef}
-        className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full"
+        className="bg-surface border border-border rounded-xl p-6 max-w-md w-full"
       >
-        <h3 id="dialog-title" className="text-lg font-semibold text-white mb-2">{title}</h3>
-        <div className="text-sm text-slate-300 mb-6">{message}</div>
+        <h3 id="dialog-title" className="text-lg font-semibold text-primary mb-2">{title}</h3>
+        <div className="text-sm text-secondary mb-6">{message}</div>
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm text-secondary hover:text-primary bg-surface-2 hover:bg-surface-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Cancel
           </button>
@@ -83,7 +83,7 @@ export function ConfirmDialog({
                 ? 'px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500'
                 : variant === 'warning'
                 ? 'px-4 py-2 text-sm text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500'
-                : 'px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500'
+                : 'px-4 py-2 text-sm text-on-accent bg-accent hover:bg-accent-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent'
             }
           >
             {confirmLabel}

@@ -88,11 +88,11 @@ export function SearchDialog({ open, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Search"
-        className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-lg bg-surface border border-border rounded-xl shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-700">
-          <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+          <svg className="w-4 h-4 text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
@@ -101,16 +101,16 @@ export function SearchDialog({ open, onClose }: Props) {
             onChange={e => setQuery(e.target.value)}
             placeholder="Search builds, repos, workers..."
             aria-label="Search"
-            className="flex-1 bg-transparent text-white placeholder-slate-500 outline-none text-sm"
+            className="flex-1 bg-transparent text-primary placeholder:text-disabled outline-none text-sm"
           />
-          <kbd className="text-[10px] text-slate-600 border border-slate-700 rounded px-1.5 py-0.5">esc</kbd>
+          <kbd className="text-[10px] text-disabled border border-border rounded px-1.5 py-0.5">esc</kbd>
         </div>
         <div className="max-h-80 overflow-y-auto p-2">
           {q.length < 2 && (
-            <p className="text-center text-xs text-slate-600 py-6">Type at least 2 characters to search</p>
+            <p className="text-center text-xs text-disabled py-6">Type at least 2 characters to search</p>
           )}
           {q.length >= 2 && results.length === 0 && (
-            <p className="text-center text-xs text-slate-500 py-6">No results for "{q}"</p>
+            <p className="text-center text-xs text-muted py-6">No results for "{q}"</p>
           )}
           {results.map(item => (
             <SearchResult key={`${item.type}-${item.id}`} item={item} onClose={onClose} />

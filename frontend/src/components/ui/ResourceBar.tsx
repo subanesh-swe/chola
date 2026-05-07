@@ -45,28 +45,28 @@ export function ResourceBar({
 
   return (
     <div className="space-y-1.5">
-      <div className="text-xs text-slate-400 font-medium">{headerLabel}</div>
+      <div className="text-xs text-muted font-medium">{headerLabel}</div>
 
       {/* Reserved bar — against limit */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-14 shrink-0">Reserved</span>
-        <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+        <span className="text-[10px] text-disabled w-14 shrink-0">Reserved</span>
+        <div className="flex-1 h-2 bg-surface-2 rounded-full overflow-hidden">
           {reservedPct > 0 && (
             <div
-              className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+              className="h-full bg-accent rounded-full transition-all duration-500"
               style={{ width: `${reservedPct}%` }}
             />
           )}
         </div>
-        <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">
+        <span className="text-[10px] text-muted w-24 text-right shrink-0">
           {reserved} / {limit} {unit}
         </span>
       </div>
 
       {/* Usage bar — against hardware total */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-14 shrink-0">Usage</span>
-        <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+        <span className="text-[10px] text-disabled w-14 shrink-0">Usage</span>
+        <div className="flex-1 h-2 bg-surface-2 rounded-full overflow-hidden">
           {usedPct > 0 && (
             <div
               className={`h-full rounded-full transition-all duration-500 ${getBarColor(usedPct)}`}
@@ -74,7 +74,7 @@ export function ResourceBar({
             />
           )}
         </div>
-        <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">
+        <span className="text-[10px] text-muted w-24 text-right shrink-0">
           {usedIsPercent
             ? `${safe(used).toFixed(0)}%`
             : `${safe(used).toLocaleString()} / ${hardwareTotal.toLocaleString()} ${unit}`}

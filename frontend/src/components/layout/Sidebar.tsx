@@ -131,8 +131,8 @@ function NavItem({ to, label, Icon, collapsed, end, onClick }: NavItemDef & { co
       className={({ isActive }) =>
         clsx(
           'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all relative',
-          'focus:outline-none focus:ring-2 focus:ring-blue-500',
-          isActive ? 'bg-blue-600/20 text-blue-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white',
+          'focus:outline-none focus:ring-2 focus:ring-accent',
+          isActive ? 'bg-accent-soft text-accent-text' : 'text-muted hover:bg-surface-hover hover:text-primary',
           collapsed && 'justify-center',
         )
       }
@@ -141,7 +141,7 @@ function NavItem({ to, label, Icon, collapsed, end, onClick }: NavItemDef & { co
       {({ isActive }) => (
         <>
           {isActive && (
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-blue-500 rounded-r" aria-hidden="true" />
+            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent rounded-r" aria-hidden="true" />
           )}
           <Icon />
           {!collapsed && <span>{label}</span>}
@@ -180,7 +180,7 @@ export function Sidebar() {
     <>
       {/* Hamburger button — mobile only */}
       <button
-        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-surface border border-[color:var(--border)] text-slate-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-surface border border-border text-muted hover:text-primary focus:outline-none focus:ring-2 focus:ring-accent"
         onClick={() => setMobileOpen(!mobileOpen)}
         aria-label={mobileOpen ? 'Close navigation menu' : 'Open navigation menu'}
         aria-expanded={mobileOpen}
@@ -204,7 +204,7 @@ export function Sidebar() {
         role="navigation"
         aria-label="Main navigation"
         className={clsx(
-          'bg-surface border-r border-[color:var(--border)] flex flex-col h-screen sticky top-0 transition-all duration-200 z-40',
+          'bg-surface border-r border-border flex flex-col h-screen sticky top-0 transition-all duration-200 z-40',
           // Desktop: always visible, collapsible
           'hidden md:flex',
           collapsed ? 'md:w-16' : 'md:w-60',
@@ -212,17 +212,17 @@ export function Sidebar() {
           mobileOpen && '!flex fixed inset-y-0 left-0 w-60',
         )}
       >
-        <div className="p-4 border-b border-[color:var(--border)] flex items-center justify-between">
+        <div className="p-4 border-b border-border flex items-center justify-between">
           {(!collapsed || mobileOpen) && (
             <div>
-              <h1 className="text-xl font-bold text-white">Chola CI</h1>
-              <p className="text-xs text-slate-500">v0.1.0</p>
+              <h1 className="text-xl font-bold text-primary">Chola CI</h1>
+              <p className="text-xs text-disabled">v0.1.0</p>
             </div>
           )}
           {/* Collapse button — desktop only */}
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="hidden md:block text-slate-500 hover:text-white p-1 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="hidden md:block text-disabled hover:text-primary p-1 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -250,9 +250,9 @@ export function Sidebar() {
           ))}
           {showAdmin && (
             <>
-              <div className="my-3 border-t border-[color:var(--border)]" />
+              <div className="my-3 border-t border-border" />
               {(!collapsed || mobileOpen) && (
-                <p className="px-3 text-[10px] font-semibold text-slate-600 uppercase tracking-wider">
+                <p className="px-3 text-[10px] font-semibold text-disabled uppercase tracking-wider">
                   Admin
                 </p>
               )}
@@ -271,18 +271,18 @@ export function Sidebar() {
         </nav>
 
         {(!collapsed || mobileOpen) && (
-          <div className="p-3 border-t border-[color:var(--border)]">
+          <div className="p-3 border-t border-border">
             <button
               onClick={() => { nav('/profile'); setMobileOpen(false); }}
-              className="flex items-center gap-2 px-2 w-full text-left rounded-lg hover:bg-slate-800 py-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex items-center gap-2 px-2 w-full text-left rounded-lg hover:bg-surface-hover py-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
               aria-label="Go to profile"
             >
-              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold text-white shrink-0" aria-hidden="true">
+              <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-on-accent shrink-0" aria-hidden="true">
                 {(user?.username?.[0] ?? 'U').toUpperCase()}
               </div>
               <div className="truncate">
-                <p className="text-xs text-slate-300 truncate">{user?.display_name || user?.username}</p>
-                <p className="text-[10px] text-slate-600">{user?.role}</p>
+                <p className="text-xs text-secondary truncate">{user?.display_name || user?.username}</p>
+                <p className="text-[10px] text-disabled">{user?.role}</p>
               </div>
             </button>
           </div>

@@ -80,7 +80,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
   }
 
   const inputClass =
-    'w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500';
+    'w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-primary placeholder:text-disabled focus:outline-none focus:ring-2 focus:ring-accent';
 
   return (
     <div
@@ -91,18 +91,18 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
     >
       <div
         ref={dialogRef}
-        className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-sm w-full"
+        className="bg-surface border border-border rounded-xl p-6 max-w-sm w-full"
       >
-        <h3 id="change-pw-title" className="text-lg font-semibold text-white mb-4">
+        <h3 id="change-pw-title" className="text-lg font-semibold text-primary mb-4">
           Change Password
         </h3>
 
         {mutation.isSuccess ? (
-          <p className="text-sm text-green-400 mb-4">Password changed successfully.</p>
+          <p className="text-sm text-emerald-400 mb-4">Password changed successfully.</p>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="current-pw" className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="current-pw" className="block text-xs text-muted mb-1">
                 Current password
               </label>
               <input
@@ -116,7 +116,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
               />
             </div>
             <div>
-              <label htmlFor="new-pw" className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="new-pw" className="block text-xs text-muted mb-1">
                 New password
               </label>
               <input
@@ -130,7 +130,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
               />
             </div>
             <div>
-              <label htmlFor="confirm-pw" className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="confirm-pw" className="block text-xs text-muted mb-1">
                 Confirm new password
               </label>
               <input
@@ -154,14 +154,14 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm text-secondary hover:text-primary bg-surface-2 hover:bg-surface-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={mutation.isPending}
-                className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm text-on-accent bg-accent hover:bg-accent-hover disabled:opacity-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 {mutation.isPending ? 'Saving…' : 'Save'}
               </button>

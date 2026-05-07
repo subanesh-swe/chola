@@ -16,15 +16,15 @@ export function Pagination({ page, totalPages, onPageChange }: Props) {
         disabled={page <= 1}
         aria-label="Previous page"
         className={clsx(
-          'px-3 py-1 text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500',
+          'px-3 py-1 text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent',
           page <= 1
-            ? 'text-slate-600 cursor-not-allowed'
-            : 'text-slate-300 hover:bg-slate-800',
+            ? 'text-disabled cursor-not-allowed'
+            : 'text-secondary hover:bg-surface-hover',
         )}
       >
         Prev
       </button>
-      <span className="text-sm text-slate-400" aria-live="polite" aria-atomic="true">
+      <span className="text-sm text-muted" aria-live="polite" aria-atomic="true">
         {page} / {totalPages}
       </span>
       <button
@@ -32,10 +32,10 @@ export function Pagination({ page, totalPages, onPageChange }: Props) {
         disabled={page >= totalPages}
         aria-label="Next page"
         className={clsx(
-          'px-3 py-1 text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500',
+          'px-3 py-1 text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent',
           page >= totalPages
-            ? 'text-slate-600 cursor-not-allowed'
-            : 'text-slate-300 hover:bg-slate-800',
+            ? 'text-disabled cursor-not-allowed'
+            : 'text-secondary hover:bg-surface-hover',
         )}
       >
         Next

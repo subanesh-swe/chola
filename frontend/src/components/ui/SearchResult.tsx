@@ -41,7 +41,7 @@ const iconMap: Record<ResultType, () => React.ReactElement> = {
 };
 
 const colorMap: Record<ResultType, string> = {
-  build: 'text-blue-400',
+  build: 'text-accent-text',
   repo: 'text-emerald-400',
   worker: 'text-amber-400',
 };
@@ -63,14 +63,14 @@ export function SearchResult({ item, onClose }: Props) {
   return (
     <button
       onClick={handleClick}
-      className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-700 transition-colors rounded-lg"
+      className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-hover transition-colors rounded-lg"
     >
       <span className={colorMap[item.type]}><Icon /></span>
       <div className="min-w-0">
-        <p className="text-sm text-white truncate">{item.title}</p>
-        {item.subtitle && <p className="text-xs text-slate-500 truncate">{item.subtitle}</p>}
+        <p className="text-sm text-primary truncate">{item.title}</p>
+        {item.subtitle && <p className="text-xs text-disabled truncate">{item.subtitle}</p>}
       </div>
-      <span className="ml-auto text-[10px] text-slate-600 uppercase shrink-0">{item.type}</span>
+      <span className="ml-auto text-[10px] text-disabled uppercase shrink-0">{item.type}</span>
     </button>
   );
 }

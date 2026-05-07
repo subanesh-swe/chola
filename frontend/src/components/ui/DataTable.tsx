@@ -49,18 +49,18 @@ export function DataTable<T>({
 
   if (loading) {
     return (
-      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-        <div className="p-8 text-center text-slate-400">Loading...</div>
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+        <div className="p-8 text-center text-muted">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-slate-700">
+            <tr className="border-b border-border">
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -75,8 +75,8 @@ export function DataTable<T>({
                       : undefined
                   }
                   className={clsx(
-                    'px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider',
-                    col.sortable && 'cursor-pointer hover:text-slate-200',
+                    'px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider',
+                    col.sortable && 'cursor-pointer hover:text-secondary',
                     col.className,
                   )}
                   onClick={col.sortable ? () => handleSort(col.key) : undefined}
@@ -95,10 +95,10 @@ export function DataTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-border">
             {data.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={columns.length} className="px-4 py-8 text-center text-disabled">
                   {emptyMessage}
                 </td>
               </tr>
@@ -118,8 +118,8 @@ export function DataTable<T>({
                     className={clsx(
                       'transition-colors',
                       // item 46: active bg for touch feedback
-                      isClickable && 'hover:bg-slate-800/50 active:bg-slate-800',
-                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500',
+                      isClickable && 'hover:bg-surface-hover/50 active:bg-surface-hover',
+                      onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent',
                     )}
                   >
                     {/* Stretched link relies on row-level position:relative; supported in Safari 16+, Chromium 88+, Firefox 90+. */}
@@ -127,7 +127,7 @@ export function DataTable<T>({
                       <td
                         key={col.key}
                         className={clsx(
-                          'text-sm text-slate-200',
+                          'text-sm text-secondary',
                           href ? 'p-0' : 'px-4 py-3',
                           col.className,
                         )}
@@ -139,7 +139,7 @@ export function DataTable<T>({
                             aria-label={colIdx === 0 ? (rowAriaLabel?.(row) ?? keyExtractor(row)) : undefined}
                             aria-hidden={colIdx !== 0 ? true : undefined}
                             tabIndex={colIdx !== 0 ? -1 : undefined}
-                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent"
                           >
                             {col.render(row)}
                           </Link>
