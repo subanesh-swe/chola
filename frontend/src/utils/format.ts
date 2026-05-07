@@ -1,9 +1,13 @@
 /**
- * Input: megabytes (API convention). Returns "512 MB", "2.0 GB", "1.5 TB".
- * precision default 1.
+ * Input: megabytes (API convention). Returns "512.0 MB", "2.0 GB", "1.5 TB", "1.0 PB".
+ * precision default 1. Returns '—' for negative/NaN input.
  */
 export function formatBytes(mb: number, opts?: { precision?: number }): string {
+  if (mb < 0 || !Number.isFinite(mb)) return '—';
   const precision = opts?.precision ?? 1;
+  if (mb >= 1024 * 1024 * 1024) {
+    return `${(mb / (1024 * 1024 * 1024)).toFixed(precision)} PB`;
+  }
   if (mb >= 1024 * 1024) {
     return `${(mb / (1024 * 1024)).toFixed(precision)} TB`;
   }
