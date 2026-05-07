@@ -62,7 +62,7 @@ export default function BuildQueuePage() {
       )}
       <div className="bg-surface border border-border rounded-xl overflow-hidden">
         {isLoading ? (
-          <TableSkeleton rows={6} cols={7} />
+          <div className="p-8 text-center text-muted">Loading…</div>
         ) : (
           <>
             {/* Desktop table */}
@@ -79,29 +79,29 @@ export default function BuildQueuePage() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Submitted</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800">
+                <tbody className="divide-y divide-border">
                   {queueItems.map((job, idx) => {
                     const href = `/builds/${job.job_group_id}`;
                     return (
                       <tr
                         key={job.job_group_id}
-                        className="relative hover:bg-slate-800/50 transition-colors"
+                        className="relative hover:bg-surface-hover/50 transition-colors"
                       >
                         <td className="px-4 py-3">
-                          <Link to={href} aria-label={job.job_group_id} className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500" />
-                          <span className="relative z-10 text-sm text-slate-500 tabular-nums">{idx + 1}</span>
+                          <Link to={href} aria-label={`Queue position ${idx + 1}: build ${job.job_group_id.slice(0, 8)}${job.branch ? ` on ${job.branch}` : ''} — ${job.state}`} className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent" />
+                          <span className="relative z-10 text-sm text-disabled tabular-nums">{idx + 1}</span>
                         </td>
                         <td className="px-4 py-3 relative z-10"><StatusBadge status={job.state} /></td>
-                        <td className="px-4 py-3 text-sm text-slate-300 font-mono relative z-10">{job.job_group_id.slice(0, 8)}</td>
-                        <td className="px-4 py-3 text-sm text-slate-300 max-w-[180px] truncate relative z-10">
+                        <td className="px-4 py-3 text-sm text-secondary font-mono relative z-10">{job.job_group_id.slice(0, 8)}</td>
+                        <td className="px-4 py-3 text-sm text-secondary max-w-[180px] truncate relative z-10">
                           {job.repo_name ?? job.repo_id?.slice(0, 8) ?? '-'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-slate-200 relative z-10">{job.branch ?? '-'}</td>
-                        <td className="px-4 py-3 text-sm text-slate-400 font-mono relative z-10">
+                        <td className="px-4 py-3 text-sm text-secondary relative z-10">{job.branch ?? '-'}</td>
+                        <td className="px-4 py-3 text-sm text-muted font-mono relative z-10">
                           {job.reserved_worker_id ? job.reserved_worker_id.slice(0, 8) : '-'}
                         </td>
                         <td className="px-4 py-3 text-sm relative z-10">
-                          <TimeAgo date={job.created_at} className="text-slate-500" />
+                          <TimeAgo date={job.created_at} className="text-disabled" />
                         </td>
                       </tr>
                     );
@@ -124,7 +124,7 @@ export default function BuildQueuePage() {
                   key={job.job_group_id}
                   to={`/builds/${job.job_group_id}`}
                   aria-label={`Queue position ${idx + 1}: ${job.branch ?? 'unknown branch'}`}
-                  className="block w-full px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+                  className="block w-full px-4 py-3 hover:bg-surface-hover/50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-inset"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">

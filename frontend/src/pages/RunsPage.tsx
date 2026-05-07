@@ -67,8 +67,7 @@ const columns: Column<Run>[] = [
     key: 'exit_code',
     header: 'Exit',
     render: (r) => (
-      // item 29: render '—' for null exit code
-      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-slate-600'}>
+      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-disabled'}>
         {r.exit_code != null ? r.exit_code : '—'}
       </span>
     ),
@@ -109,7 +108,7 @@ export default function RunsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl font-bold text-primary">Runs</h2>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <label htmlFor="run-state" className="text-sm text-muted">
               State:
@@ -164,7 +163,6 @@ export default function RunsPage() {
         </div>
       )}
 
-      {/* item 27: use EmptyState when no runs */}
       {!isLoading && runs.length === 0 ? (
         <EmptyState title="No runs found" description="Runs will appear here once stages execute." />
       ) : (

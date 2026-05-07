@@ -197,7 +197,7 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
   }, [isLiveStage]);
 
   const icon = status === 'active' ? '⏱' : status === 'paused' ? '⏸' : status === 'deactivated' ? '✓' : '○';
-  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-slate-600';
+  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-disabled';
   const maxLabel = maxSecs > 0 ? formatSecs(maxSecs) : 'no limit';
 
   let timeDisplay: string;
@@ -218,8 +218,7 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
         <span className="text-secondary">{label}</span>
       </div>
       <div className="flex items-center gap-3">
-        <span className="text-slate-200 font-mono">{timeDisplay}</span>
-        {/* item 19: truncate + max-w-xs on timer reason */}
+        <span className="text-secondary font-mono">{timeDisplay}</span>
         <span className={`${color} max-w-xs text-right truncate`} title={reason}>{reason}</span>
       </div>
     </div>
@@ -333,7 +332,6 @@ export default function BuildDetailPage() {
     onError: (err: unknown) => toast.error((err as MutationError).userMessage || 'Failed to retry stage'),
   });
 
-  // item 15: use skeleton instead of plain text
   if (isLoading) return <PageSkeleton rows={4} />;
   if (isError) return (
     <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
@@ -433,13 +431,12 @@ export default function BuildDetailPage() {
 
       {/* Reserved resources */}
       {group.allocated_resources && (group.allocated_resources.cpu > 0 || group.allocated_resources.memory_mb > 0 || group.allocated_resources.disk_mb > 0) && (
-        <div className="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3">
-          <p className="text-xs text-slate-500 mb-1.5 uppercase font-semibold">Resources Reserved</p>
-          {/* item 54: unit labels */}
+        <div className="bg-surface-2/50 border border-border rounded-lg px-4 py-3">
+          <p className="text-xs text-disabled mb-1.5 uppercase font-semibold">Resources Reserved</p>
           <div className="flex gap-6 text-sm">
-            <span className="text-slate-300">{group.allocated_resources.cpu} <span className="text-slate-500">CPU</span></span>
-            <span className="text-slate-300">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-slate-500">RAM</span></span>
-            <span className="text-slate-300">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-slate-500">Disk</span></span>
+            <span className="text-secondary">{group.allocated_resources.cpu} <span className="text-disabled">CPU cores</span></span>
+            <span className="text-secondary">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-disabled">RAM</span></span>
+            <span className="text-secondary">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-disabled">Disk</span></span>
           </div>
         </div>
       )}

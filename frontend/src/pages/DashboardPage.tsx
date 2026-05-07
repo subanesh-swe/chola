@@ -45,7 +45,6 @@ function StatCardWithSparkline({
           <p className="text-2xl font-bold text-primary mt-0.5">{value}</p>
           {subtext && <p className="text-xs text-disabled mt-0.5">{subtext}</p>}
         </div>
-        {/* item 8: min-h to prevent layout shift on first load */}
         <div className="opacity-70 min-h-[28px]">
           <Sparkline data={trend} color={sparkColor} width={80} height={28} />
         </div>
@@ -195,11 +194,10 @@ export default function DashboardPage() {
               View all
             </button>
           </div>
-          {/* item 48: skeleton for recent builds section during sub-query load */}
           {buildsLoading ? (
             <TableSkeleton rows={5} cols={3} />
           ) : null}
-          <div className="divide-y divide-slate-800">
+          <div className="divide-y divide-border">
             {(recentBuilds as Array<{ job_group_id: string; repo_name?: string; branch: string | null; state: string; created_at: string; commit_sha?: string | null }>).slice(0, 8).map((b) => (
               <div
                 key={b.job_group_id}
