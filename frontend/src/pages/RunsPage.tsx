@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { listRuns, type Run } from '../api/runs';
 import { DataTable, type Column } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -162,19 +162,14 @@ export default function RunsPage() {
         </div>
       )}
 
-      {!isLoading && runs.length === 0 ? (
-        <EmptyState title="No runs found" description="Runs will appear here once stages execute." />
-      ) : (
-        <DataTable
-          data={runs}
-          columns={columns}
-          keyExtractor={(r) => r.id}
-          rowHref={(r) => `/builds/${r.job_group_id}`}
-          rowAriaLabel={(r) => `${r.stage_name} on ${r.repo_name ?? 'ad-hoc'} — ${r.state}`}
-          emptyMessage="No runs found"
-          loading={isLoading}
-        />
-      )}
+      <DataTable
+        data={runs}
+        columns={columns}
+        keyExtractor={(r) => r.id}
+        rowHref={(r) => `/builds/${r.job_group_id}`}
+        emptyMessage="No runs found"
+        loading={isLoading}
+      />
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>

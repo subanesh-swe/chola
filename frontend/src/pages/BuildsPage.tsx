@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
 import { useAppliedFilters } from '../hooks/useAppliedFilters';
@@ -11,11 +10,7 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
 
 export default function BuildsPage() {
-  const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
-  const [refreshSecs, setRefreshSecs] = useRefreshInterval('builds', 5);
-  // queryValue mirrors applied.q so the QueryBox reflects the active ChQL query.
-  const [queryValue, setQueryValue] = useState(applied.q);
-  const historyApi = useQueryHistory('builds');
+  const { filters, setFilters, resetFilters } = useUrlFilters();
 
   // Seed date defaults on first load when URL has no date filter.
   useEffect(() => {
@@ -93,7 +88,7 @@ export default function BuildsPage() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Created</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
+                <tbody className="divide-y divide-slate-800">
                   {builds.map(b => {
                     const href = `/builds/${b.job_group_id}`;
                     return (
