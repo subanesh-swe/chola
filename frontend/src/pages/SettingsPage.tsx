@@ -4,6 +4,24 @@ import { getSettings, updateSetting, SettingItem } from '../api/settings';
 import { LoadingSkeleton } from '../components/ui';
 import { usePermission } from '../hooks/usePermission';
 
+// ─── Icons (no extra dep) ─────────────────────────────────────────────────────
+
+function CheckCircleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function XCircleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Mode = 'view' | 'edit' | 'review' | 'result';
@@ -302,17 +320,22 @@ function ReviewModal({ changes, onBack, onSubmit, submitting }: ReviewModalProps
           {changes.length} setting{changes.length !== 1 ? 's' : ''} changed:
         </p>
 
-        <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
-          {changes.map(({ key, oldValue, newValue }) => (
-            <div key={key} className="bg-slate-800/60 rounded-lg px-4 py-3">
-              <p className="text-sm text-slate-300 font-mono mb-1">{key}</p>
-              <p className="text-sm">
-                <span className="text-slate-400">{oldValue}</span>
-                <span className="text-slate-500 mx-2">&#8594;</span>
-                <span className="text-blue-400 font-medium">{newValue}</span>
-              </p>
-            </div>
-          ))}
+        {/* item 35: shadow gradient to indicate scrollability */}
+        <div className="relative">
+          <div className="space-y-4 max-h-80 overflow-y-auto pr-1 pb-2">
+            {changes.map(({ key, oldValue, newValue }) => (
+              <div key={key} className="bg-slate-800/60 rounded-lg px-4 py-3">
+                <p className="text-sm text-slate-300 font-mono mb-1">{key}</p>
+                <p className="text-sm">
+                  <span className="text-slate-400">{oldValue}</span>
+                  <span className="text-slate-500 mx-2">&#8594;</span>
+                  <span className="text-blue-400 font-medium">{newValue}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+          {/* fade indicator at bottom of scroll area */}
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900 to-transparent rounded-b-lg" />
         </div>
 
         <div className="flex justify-end gap-3 mt-6">
@@ -371,10 +394,11 @@ function ResultModal({ results, onDone }: ResultModalProps) {
               key={r.key}
               className={`rounded-lg px-4 py-3 ${r.status === 'accepted' ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}
             >
+              {/* item 34: replace emoji with icon components */}
               <div className="flex items-center gap-2">
-                <span className="text-base leading-none">
-                  {r.status === 'accepted' ? '✓' : '✕'}
-                </span>
+                {r.status === 'accepted'
+                  ? <CheckCircleIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+                  : <XCircleIcon className="w-4 h-4 text-red-400 shrink-0" />}
                 <span className="text-sm font-mono text-slate-200">{r.key}</span>
                 <span
                   className={`text-xs ${r.status === 'accepted' ? 'text-emerald-400' : 'text-red-400'}`}
@@ -493,8 +517,10 @@ export default function SettingsPage() {
   if (isLoading) return <LoadingSkeleton />;
   if (isError || !data)
     return (
-      <div className="text-red-400 bg-red-900/20 border border-red-800 rounded p-3 text-sm">
-        Failed to load settings.
+      // item 36: role="alert" with consistent error styling
+      <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
+        <p className="font-semibold">Failed to load settings.</p>
+        <p className="text-sm mt-1">Please try again.</p>
       </div>
     );
 

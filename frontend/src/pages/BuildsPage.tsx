@@ -84,7 +84,7 @@ export default function BuildsPage() {
                               {b.archived && <StatusBadge status="archived" />}
                             </div>
                             {b.status_reason && (
-                              <span className="block text-[10px] text-slate-500 truncate max-w-xs">{b.status_reason}</span>
+                              <span className="block text-[10px] text-slate-500 truncate max-w-[180px]">{b.status_reason}</span>
                             )}
                           </Link>
                         </td>
@@ -103,9 +103,10 @@ export default function BuildsPage() {
                             {b.commit_sha?.slice(0, 7) || '-'}
                           </Link>
                         </td>
+                        {/* item 12: ?? instead of || to avoid showing "undefined" */}
                         <td className="p-0">
                           <Link to={href} className="block px-4 py-3 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
-                            {b.reserved_worker_id || '-'}
+                            {b.reserved_worker_id ?? '-'}
                           </Link>
                         </td>
                         <td className="p-0">
@@ -156,8 +157,9 @@ export default function BuildsPage() {
         )}
       </div>
 
+      {/* item 14: gap-3 between pagination buttons and indicator */}
       {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
+        <div className="flex justify-center gap-3">
           <button
             onClick={() => setFilters({ page: Math.max(1, page - 1) })}
             disabled={page <= 1}
