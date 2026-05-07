@@ -37,16 +37,16 @@ function RegexPreview({ pattern }: { pattern: string }) {
 
   return (
     <div className="mt-2 space-y-1">
-      <label className="block text-xs text-slate-500">Test sample input</label>
+      <label className="block text-xs text-muted">Test sample input</label>
       <input
         value={sample}
         onChange={(e) => setSample(e.target.value)}
         placeholder="Type a command or branch to test..."
-        className="w-full px-2 py-1.5 text-xs bg-slate-800 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="w-full px-2 py-1.5 text-xs bg-input border border-border rounded text-primary focus:outline-none focus:ring-1 focus:ring-accent"
       />
       {error && <p className="text-xs text-red-400">{error}</p>}
       {matches === true && <p className="text-xs text-green-400">Pattern matches</p>}
-      {matches === false && <p className="text-xs text-slate-500">No match</p>}
+      {matches === false && <p className="text-xs text-muted">No match</p>}
     </div>
   );
 }
@@ -67,26 +67,26 @@ function EditModal({ entry, onClose, onSave, isPending }: EditModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-        <h3 className="text-lg font-semibold text-white mb-4">Edit Rule</h3>
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+        <h3 className="text-lg font-semibold text-primary mb-4">Edit Rule</h3>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Pattern (regex)</label>
+            <label className="block text-sm text-secondary mb-1">Pattern (regex)</label>
             <input
               value={pattern}
               onChange={(e) => setPattern(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="^rm -rf.*"
             />
             <RegexPreview pattern={pattern} />
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Description</label>
+            <label className="block text-sm text-secondary mb-1">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
               placeholder="Why this pattern is blocked..."
             />
           </div>
@@ -95,22 +95,22 @@ function EditModal({ entry, onClose, onSave, isPending }: EditModalProps) {
               type="checkbox"
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
+              className="w-4 h-4 rounded border-border bg-input accent-accent focus:ring-accent"
             />
-            <span className="text-sm text-slate-300">Enabled</span>
+            <span className="text-sm text-secondary">Enabled</span>
           </label>
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Cancel
           </button>
           <button
             onClick={() => onSave({ pattern, description, enabled })}
             disabled={!pattern || isPending}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Save
           </button>
@@ -208,13 +208,13 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-muted">
           {entries.length} rule{entries.length !== 1 ? 's' : ''} defined
         </p>
         {canManage && (
           <button
             onClick={() => setShowAdd(true)}
-            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Add Rule
           </button>
@@ -230,26 +230,26 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
       {isLoading ? (
         <PageSkeleton />
       ) : (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-surface border border-border rounded-xl overflow-hidden">
           <table className="w-full" aria-label="Command blacklist rules">
             <thead>
-              <tr className="border-b border-slate-700">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Pattern</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Scope</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Description</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
+              <tr className="border-b border-border">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Pattern</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Scope</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Description</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Created</th>
                 {canManage && (
-                  <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase text-center">Actions</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-muted uppercase text-center">Actions</th>
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-border">
               {entries.map((e) => (
                 <tr key={e.id}>
-                  <td className="px-4 py-3 text-sm text-slate-200 font-mono max-w-xs truncate">{e.pattern}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400">{scopeLabel(e)}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400 max-w-xs truncate">{e.description ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm text-secondary font-mono max-w-xs truncate">{e.pattern}</td>
+                  <td className="px-4 py-3 text-sm text-muted">{scopeLabel(e)}</td>
+                  <td className="px-4 py-3 text-sm text-muted max-w-xs truncate">{e.description ?? '—'}</td>
                   <td className="px-4 py-3">
                     {canManage ? (
                       <button
@@ -259,7 +259,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                         className={`text-xs px-2 py-0.5 rounded border transition-colors focus:outline-none focus:ring-1 ${
                           e.enabled
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                            : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
+                            : 'bg-surface-2 text-muted border-border hover:bg-surface-hover'
                         }`}
                         aria-label={`Toggle rule ${e.id}`}
                       >
@@ -270,14 +270,14 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                         className={`text-xs px-2 py-0.5 rounded border ${
                           e.enabled
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : 'bg-slate-700 text-slate-400 border-slate-600'
+                            : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
                         {e.enabled ? 'Enabled' : 'Disabled'}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-500">
+                  <td className="px-4 py-3 text-sm text-disabled">
                     <TimeAgo date={e.created_at} />
                   </td>
                   {canManage && (
@@ -285,7 +285,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => setEditEntry(e)}
-                          className="text-xs text-blue-400 hover:text-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                          className="text-xs text-accent-text hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-accent rounded"
                         >
                           Edit
                         </button>
@@ -318,25 +318,25 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
       {/* Add rule modal */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Command Rule</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Command Rule</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Pattern (regex)</label>
+                <label className="block text-sm text-secondary mb-1">Pattern (regex)</label>
                 <input
                   value={pattern}
                   onChange={(e) => setPattern(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="^rm -rf.*"
                 />
                 <RegexPreview pattern={pattern} />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Scope — Repo (optional)</label>
+                <label className="block text-sm text-secondary mb-1">Scope — Repo (optional)</label>
                 <select
                   value={repoId}
                   onChange={(e) => setRepoId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                 >
                   <option value="">Global (all repos)</option>
                   {repos.map((r) => (
@@ -347,21 +347,21 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Stage Config ID (optional)</label>
+                <label className="block text-sm text-secondary mb-1">Stage Config ID (optional)</label>
                 <input
                   value={stageId}
                   onChange={(e) => setStageId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="UUID of stage config"
                 />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Description</label>
+                <label className="block text-sm text-secondary mb-1">Description</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
                   placeholder="Why this pattern is blocked..."
                 />
               </div>
@@ -369,14 +369,14 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowAdd(false)}
-                className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Cancel
               </button>
               <button
                 onClick={() => createMut.mutate()}
                 disabled={!pattern || createMut.isPending}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Create
               </button>
@@ -483,13 +483,13 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-muted">
           {entries.length} rule{entries.length !== 1 ? 's' : ''} defined
         </p>
         {canManage && (
           <button
             onClick={() => setShowAdd(true)}
-            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Add Rule
           </button>
@@ -505,26 +505,26 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
       {isLoading ? (
         <PageSkeleton />
       ) : (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-surface border border-border rounded-xl overflow-hidden">
           <table className="w-full" aria-label="Branch blacklist rules">
             <thead>
-              <tr className="border-b border-slate-700">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Worker</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Pattern</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Description</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
+              <tr className="border-b border-border">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Worker</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Pattern</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Description</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Created</th>
                 {canManage && (
-                  <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase text-center">Actions</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-muted uppercase text-center">Actions</th>
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-border">
               {entries.map((e) => (
                 <tr key={e.id}>
-                  <td className="px-4 py-3 text-sm text-slate-200 font-mono truncate max-w-xs">{e.worker_id}</td>
-                  <td className="px-4 py-3 text-sm text-slate-200 font-mono truncate max-w-xs">{e.pattern}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400 max-w-xs truncate">{e.description ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs">{e.worker_id}</td>
+                  <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs">{e.pattern}</td>
+                  <td className="px-4 py-3 text-sm text-muted max-w-xs truncate">{e.description ?? '—'}</td>
                   <td className="px-4 py-3">
                     {canManage ? (
                       <button
@@ -534,7 +534,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                         className={`text-xs px-2 py-0.5 rounded border transition-colors focus:outline-none focus:ring-1 ${
                           e.enabled
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                            : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
+                            : 'bg-surface-2 text-muted border-border hover:bg-surface-hover'
                         }`}
                         aria-label={`Toggle rule ${e.id}`}
                       >
@@ -545,14 +545,14 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                         className={`text-xs px-2 py-0.5 rounded border ${
                           e.enabled
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : 'bg-slate-700 text-slate-400 border-slate-600'
+                            : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
                         {e.enabled ? 'Enabled' : 'Disabled'}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-500">
+                  <td className="px-4 py-3 text-sm text-disabled">
                     <TimeAgo date={e.created_at} />
                   </td>
                   {canManage && (
@@ -560,7 +560,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => setEditEntry(e)}
-                          className="text-xs text-blue-400 hover:text-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                          className="text-xs text-accent-text hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-accent rounded"
                         >
                           Edit
                         </button>
@@ -593,16 +593,16 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
       {/* Add rule modal */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Branch Rule</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Branch Rule</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Worker</label>
+                <label className="block text-sm text-secondary mb-1">Worker</label>
                 {workers.length > 0 ? (
                   <select
                     value={workerId}
                     onChange={(e) => setWorkerId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                   >
                     <option value="">Select a worker...</option>
                     {workers.map((w) => (
@@ -615,28 +615,28 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                   <input
                     value={workerId}
                     onChange={(e) => setWorkerId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                     placeholder="worker-id"
                   />
                 )}
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Pattern (regex)</label>
+                <label className="block text-sm text-secondary mb-1">Pattern (regex)</label>
                 <input
                   value={pattern}
                   onChange={(e) => setPattern(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="^release/.*"
                 />
                 <RegexPreview pattern={pattern} />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Description</label>
+                <label className="block text-sm text-secondary mb-1">Description</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
                   placeholder="Why this branch pattern is blocked on this worker..."
                 />
               </div>
@@ -644,14 +644,14 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowAdd(false)}
-                className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Cancel
               </button>
               <button
                 onClick={() => createMut.mutate()}
                 disabled={!workerId || !pattern || createMut.isPending}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Create
               </button>
@@ -694,24 +694,24 @@ export default function BlacklistPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-white">Blacklist</h2>
-          <p className="text-sm text-slate-400 mt-1">
+          <h2 className="text-2xl font-bold text-primary">Blacklist</h2>
+          <p className="text-sm text-muted mt-1">
             Manage forbidden command and branch patterns for CI runs.
           </p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-slate-700">
+      <div className="border-b border-border">
         <nav className="flex gap-1" aria-label="Blacklist tabs">
           {(['commands', 'branches'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-t-lg ${
+              className={`px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent rounded-t-lg ${
                 activeTab === tab
-                  ? 'text-blue-400 border-b-2 border-blue-500 -mb-px'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'text-accent-text border-b-2 border-accent -mb-px'
+                  : 'text-muted hover:text-primary'
               }`}
               aria-selected={activeTab === tab}
               role="tab"

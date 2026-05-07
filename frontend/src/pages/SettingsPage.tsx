@@ -66,8 +66,8 @@ function labelOf(key: string): string {
 
 function SourceBadge({ source }: { source: string }) {
   const styles: Record<string, string> = {
-    database: 'bg-blue-900/40 text-blue-400 border-blue-500/30',
-    config: 'bg-slate-700 text-slate-400 border-slate-600/30',
+    database: 'bg-accent-soft text-accent-text border-accent/30',
+    config: 'bg-surface-2 text-muted border-border',
     default: 'bg-gray-600/30 text-gray-500 border-gray-500/30',
   };
   return (
@@ -83,7 +83,7 @@ function BoolDisplay({ value }: { value: string | number | boolean }) {
   const on = String(value) === 'true';
   return (
     <span
-      className={`px-2 py-0.5 rounded text-xs font-medium ${on ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}
+      className={`px-2 py-0.5 rounded text-xs font-medium ${on ? 'bg-emerald-500/20 text-emerald-400' : 'bg-surface-2 text-muted'}`}
     >
       {on ? 'enabled' : 'disabled'}
     </span>
@@ -92,7 +92,7 @@ function BoolDisplay({ value }: { value: string | number | boolean }) {
 
 function ValueDisplay({ setting }: { setting: SettingItem }) {
   if (setting.type === 'bool') return <BoolDisplay value={setting.value} />;
-  return <span className="text-sm text-white font-mono">{String(setting.value)}</span>;
+  return <span className="text-sm text-primary font-mono">{String(setting.value)}</span>;
 }
 
 // Inline hints for specific retention keys shown in both view and edit modes.
@@ -119,13 +119,13 @@ function RetentionHint({ settingKey }: { settingKey: string }) {
 
 function ViewRow({ setting }: { setting: SettingItem }) {
   return (
-    <div className="py-2 border-b border-slate-800 last:border-0">
+    <div className="py-2 border-b border-border last:border-0">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-sm text-slate-300 capitalize">{labelOf(setting.key)}</span>
+          <span className="text-sm text-secondary capitalize">{labelOf(setting.key)}</span>
           <SourceBadge source={setting.source} />
           {!setting.editable && (
-            <span className="text-slate-600" title="Read-only — requires restart">
+            <span className="text-disabled" title="Read-only — requires restart">
               &#128274;
             </span>
           )}
@@ -135,7 +135,7 @@ function ViewRow({ setting }: { setting: SettingItem }) {
         </div>
       </div>
       {setting.description && (
-        <p className="text-[11px] text-slate-500 mt-0.5">{setting.description}</p>
+        <p className="text-[11px] text-disabled mt-0.5">{setting.description}</p>
       )}
       <RetentionHint settingKey={setting.key} />
     </div>
@@ -152,14 +152,14 @@ interface EditFieldProps {
 }
 
 function EditField({ setting, draftValue, onChange, changed }: EditFieldProps) {
-  const ringClass = changed ? 'ring-2 ring-blue-500/30 border-blue-500/50' : 'border-slate-600';
+  const ringClass = changed ? 'ring-2 ring-accent/30 border-accent/50' : 'border-border';
 
   if (setting.options) {
     return (
       <select
         value={draftValue}
         onChange={(e) => onChange(setting.key, e.target.value)}
-        className={`bg-slate-800 border rounded px-2 py-1 text-sm text-white ${ringClass}`}
+        className={`bg-input border rounded px-2 py-1 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-accent ${ringClass}`}
       >
         {setting.options.map((o) => (
           <option key={o} value={o}>
@@ -175,7 +175,7 @@ function EditField({ setting, draftValue, onChange, changed }: EditFieldProps) {
       <select
         value={draftValue}
         onChange={(e) => onChange(setting.key, e.target.value)}
-        className={`bg-slate-800 border rounded px-2 py-1 text-sm text-white ${ringClass}`}
+        className={`bg-input border rounded px-2 py-1 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-accent ${ringClass}`}
       >
         <option value="true">enabled</option>
         <option value="false">disabled</option>
@@ -202,7 +202,7 @@ function EditField({ setting, draftValue, onChange, changed }: EditFieldProps) {
       onChange={(e) => onChange(setting.key, e.target.value)}
       min={setting.min}
       max={setting.max}
-      className={`bg-slate-800 border rounded px-2 py-1 text-sm text-white w-28 ${ringClass}`}
+      className={`bg-input border rounded px-2 py-1 text-sm text-primary w-28 focus:outline-none focus:ring-2 focus:ring-accent ${ringClass}`}
     />
   );
 }
@@ -217,12 +217,12 @@ interface EditRowProps {
 function EditRow({ setting, draftValue, onChange, changed }: EditRowProps) {
   if (!setting.editable) {
     return (
-      <div className="py-2 border-b border-slate-800 last:border-0 opacity-60">
+      <div className="py-2 border-b border-border last:border-0 opacity-60">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="text-sm text-slate-400 capitalize">{labelOf(setting.key)}</span>
+            <span className="text-sm text-muted capitalize">{labelOf(setting.key)}</span>
             <SourceBadge source={setting.source} />
-            <span className="text-slate-600" title="Read-only — requires restart">
+            <span className="text-disabled" title="Read-only — requires restart">
               &#128274;
             </span>
           </div>
@@ -235,10 +235,10 @@ function EditRow({ setting, draftValue, onChange, changed }: EditRowProps) {
   }
 
   return (
-    <div className="py-2 border-b border-slate-800 last:border-0">
+    <div className="py-2 border-b border-border last:border-0">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0 pt-0.5">
-          <span className="text-sm text-slate-300 capitalize">{labelOf(setting.key)}</span>
+          <span className="text-sm text-secondary capitalize">{labelOf(setting.key)}</span>
           <SourceBadge source={setting.source} />
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -262,8 +262,8 @@ function EditRow({ setting, draftValue, onChange, changed }: EditRowProps) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
-      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">
+    <div className="bg-surface border border-border rounded-xl p-5">
+      <h3 className="text-sm font-semibold text-muted uppercase tracking-wider mb-4">
         {title}
       </h3>
       <div className="space-y-1">{children}</div>
@@ -311,45 +311,43 @@ function ReviewModal({ changes, onBack, onSubmit, submitting }: ReviewModalProps
     >
       <div
         ref={dialogRef}
-        className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full"
+        className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full"
       >
-        <h3 id="review-title" className="text-lg font-semibold text-white mb-1">
+        <h3 id="review-title" className="text-lg font-semibold text-primary mb-1">
           Review Changes
         </h3>
-        <p className="text-sm text-slate-400 mb-5">
+        <p className="text-sm text-muted mb-5">
           {changes.length} setting{changes.length !== 1 ? 's' : ''} changed:
         </p>
 
-        {/* item 35: shadow gradient to indicate scrollability */}
         <div className="relative">
           <div className="space-y-4 max-h-80 overflow-y-auto pr-1 pb-2">
             {changes.map(({ key, oldValue, newValue }) => (
-              <div key={key} className="bg-slate-800/60 rounded-lg px-4 py-3">
-                <p className="text-sm text-slate-300 font-mono mb-1">{key}</p>
+              <div key={key} className="bg-surface-2/60 rounded-lg px-4 py-3">
+                <p className="text-sm text-secondary font-mono mb-1">{key}</p>
                 <p className="text-sm">
-                  <span className="text-slate-400">{oldValue}</span>
-                  <span className="text-slate-500 mx-2">&#8594;</span>
-                  <span className="text-blue-400 font-medium">{newValue}</span>
+                  <span className="text-muted">{oldValue}</span>
+                  <span className="text-disabled mx-2">&#8594;</span>
+                  <span className="text-accent-text font-medium">{newValue}</span>
                 </p>
               </div>
             ))}
           </div>
-          {/* fade indicator at bottom of scroll area */}
-          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900 to-transparent rounded-b-lg" />
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-surface to-transparent rounded-b-lg" />
         </div>
 
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onBack}
             disabled={submitting}
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            className="px-4 py-2 text-sm text-secondary hover:text-primary bg-surface-2 hover:bg-surface-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
           >
             Back to Edit
           </button>
           <button
             onClick={onSubmit}
             disabled={submitting}
-            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            className="px-4 py-2 text-sm text-on-accent bg-accent hover:bg-accent-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
           >
             {submitting ? 'Submitting...' : 'Submit All'}
           </button>
@@ -377,11 +375,11 @@ function ResultModal({ results, onDone }: ResultModalProps) {
       aria-modal="true"
       aria-labelledby="result-title"
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full">
-        <h3 id="result-title" className="text-lg font-semibold text-white mb-1">
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full">
+        <h3 id="result-title" className="text-lg font-semibold text-primary mb-1">
           Results
         </h3>
-        <p className="text-sm text-slate-400 mb-5">
+        <p className="text-sm text-muted mb-5">
           {accepted} accepted
           {rejected > 0 && (
             <span className="text-red-400 ml-1">/ {rejected} rejected</span>
@@ -394,12 +392,11 @@ function ResultModal({ results, onDone }: ResultModalProps) {
               key={r.key}
               className={`rounded-lg px-4 py-3 ${r.status === 'accepted' ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}
             >
-              {/* item 34: replace emoji with icon components */}
               <div className="flex items-center gap-2">
                 {r.status === 'accepted'
                   ? <CheckCircleIcon className="w-4 h-4 text-emerald-400 shrink-0" />
                   : <XCircleIcon className="w-4 h-4 text-red-400 shrink-0" />}
-                <span className="text-sm font-mono text-slate-200">{r.key}</span>
+                <span className="text-sm font-mono text-secondary">{r.key}</span>
                 <span
                   className={`text-xs ${r.status === 'accepted' ? 'text-emerald-400' : 'text-red-400'}`}
                 >
@@ -416,7 +413,7 @@ function ResultModal({ results, onDone }: ResultModalProps) {
         <div className="flex justify-end mt-6">
           <button
             onClick={onDone}
-            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm text-on-accent bg-accent hover:bg-accent-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Done
           </button>
@@ -517,7 +514,6 @@ export default function SettingsPage() {
   if (isLoading) return <LoadingSkeleton />;
   if (isError || !data)
     return (
-      // item 36: role="alert" with consistent error styling
       <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
         <p className="font-semibold">Failed to load settings.</p>
         <p className="text-sm mt-1">Please try again.</p>
@@ -555,8 +551,8 @@ export default function SettingsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-white">System Settings</h2>
-            <p className="text-sm text-slate-500 mt-1">
+            <h2 className="text-2xl font-bold text-primary">System Settings</h2>
+            <p className="text-sm text-muted mt-1">
               Runtime-tunable settings. Source shows where the active value comes from.
             </p>
           </div>
@@ -565,7 +561,7 @@ export default function SettingsPage() {
             {mode === 'view' && canEdit && (
               <button
                 onClick={enterEdit}
-                className="px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 text-sm font-medium text-on-accent bg-accent hover:bg-accent-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Edit Settings
               </button>
@@ -575,14 +571,14 @@ export default function SettingsPage() {
               <>
                 <button
                   onClick={cancelEdit}
-                  className="px-3 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-3 py-2 text-sm text-secondary hover:text-primary bg-surface-2 hover:bg-surface-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => setMode('review')}
                   disabled={changeCount === 0}
-                  className="px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-3 py-2 text-sm font-medium text-on-accent bg-accent hover:bg-accent-hover rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Review Changes{changeCount > 0 ? ` (${changeCount})` : ''}
                 </button>

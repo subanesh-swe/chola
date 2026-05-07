@@ -44,14 +44,14 @@ function SystemInfoPanel({ info }: { info: WorkerSystemInfo }) {
     rows.push(['Boot', formatDistanceToNow(bootDate, { addSuffix: true }), bootDate.toUTCString()]);
   }
 
-  if (!rows.length) return <p className="text-xs text-slate-600 mt-1">No system info available.</p>;
+  if (!rows.length) return <p className="text-xs text-disabled mt-1">No system info available.</p>;
 
   return (
     <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-xs">
       {rows.map(([label, value, title]) => (
         <div key={label} className="contents">
-          <span className="text-slate-500 font-medium">{label}</span>
-          <span className="text-slate-300 font-mono truncate" title={title}>{value}</span>
+          <span className="text-muted font-medium">{label}</span>
+          <span className="text-secondary font-mono truncate" title={title}>{value}</span>
         </div>
       ))}
     </div>
@@ -96,7 +96,7 @@ function DiskSection({
         type="button"
         aria-expanded={expanded}
       >
-        <div className="text-xs text-slate-400 font-medium flex items-center gap-1">
+        <div className="text-xs text-muted font-medium flex items-center gap-1">
           {hasDetails && (
             <span className="text-[10px]">{expanded ? '\u25BC' : '\u25B6'}</span>
           )}
@@ -105,23 +105,23 @@ function DiskSection({
         <div className="mt-1 space-y-1">
           {/* Reserved bar */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-500 w-14 shrink-0">Reserved</span>
-            <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+            <span className="text-[10px] text-disabled w-14 shrink-0">Reserved</span>
+            <div className="flex-1 h-2 bg-surface-2 rounded-full overflow-hidden">
               {reservedPct > 0 && (
-                <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{ width: `${reservedPct}%` }} />
+                <div className="h-full bg-accent rounded-full transition-all duration-500" style={{ width: `${reservedPct}%` }} />
               )}
             </div>
-            <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">{reservedGb} / {totalGb} GB</span>
+            <span className="text-[10px] text-muted w-24 text-right shrink-0">{reservedGb} / {totalGb} GB</span>
           </div>
           {/* Usage bar */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-500 w-14 shrink-0">Usage</span>
-            <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+            <span className="text-[10px] text-disabled w-14 shrink-0">Usage</span>
+            <div className="flex-1 h-2 bg-surface-2 rounded-full overflow-hidden">
               {usedPct > 0 && (
                 <div className={`h-full rounded-full transition-all duration-500 ${getBarColor(usedPct)}`} style={{ width: `${usedPct}%` }} />
               )}
             </div>
-            <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">{usedGb} / {totalGb} GB</span>
+            <span className="text-[10px] text-muted w-24 text-right shrink-0">{usedGb} / {totalGb} GB</span>
           </div>
         </div>
       </button>
@@ -133,14 +133,14 @@ function DiskSection({
             return (
               <div key={d.mount_point} className="space-y-0.5">
                 <div className="flex justify-between text-[11px]">
-                  <span className="text-slate-400 font-mono">{d.mount_point}</span>
-                  <span className="text-slate-500">
+                  <span className="text-muted font-mono">{d.mount_point}</span>
+                  <span className="text-disabled">
                     {d.used_mb.toLocaleString()} / {d.total_mb.toLocaleString()} MB
                     <span className="ml-1">({pct.toFixed(0)}%)</span>
-                    <span className="ml-1.5 text-slate-600">{d.fs_type} {d.device}</span>
+                    <span className="ml-1.5 text-disabled">{d.fs_type} {d.device}</span>
                   </span>
                 </div>
-                <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${getBarColor(pct)}`}
                     style={{ width: `${pct}%` }}
@@ -152,7 +152,7 @@ function DiskSection({
         </div>
       )}
       {/* item 25: disk color legend */}
-      <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-600">
+      <div className="flex items-center gap-3 mt-1 text-[10px] text-disabled">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{'<70%'}</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />70–90%</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{'>90%'}</span>
@@ -276,33 +276,33 @@ function RegisterWorkerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-        <h3 className="text-lg font-semibold text-white mb-4">Register Worker</h3>
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+        <h3 className="text-lg font-semibold text-primary mb-4">Register Worker</h3>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm text-slate-300 mb-1">
+            <label className="block text-sm text-secondary mb-1">
               Worker ID <span className="text-red-400">*</span>
             </label>
             <input
               value={workerId}
               onChange={(e) => setWorkerId(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="worker-prod-1"
             />
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">
+            <label className="block text-sm text-secondary mb-1">
               Hostname <span className="text-red-400">*</span>
             </label>
             <input
               value={hostname}
               onChange={(e) => setHostname(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="build-server-01.example.com"
             />
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Labels</label>
+            <label className="block text-sm text-secondary mb-1">Labels</label>
             <div className="flex gap-2 mb-1.5">
               <input
                 value={labelInput}
@@ -313,14 +313,14 @@ function RegisterWorkerModal({
                     addLabel();
                   }
                 }}
-                className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1 px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 placeholder="Type and press Enter to add"
               />
               <button
                 type="button"
                 onClick={addLabel}
                 disabled={!labelInput.trim()}
-                className="px-3 py-2 text-sm bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 text-sm bg-surface-2 text-secondary rounded-lg hover:bg-surface-hover disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Add
               </button>
@@ -330,13 +330,13 @@ function RegisterWorkerModal({
                 {labels.map((l) => (
                   <span
                     key={l}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded text-xs font-mono"
+                    className="flex items-center gap-1 px-2 py-0.5 bg-accent-soft text-accent-text border border-accent/30 rounded text-xs font-mono"
                   >
                     {l}
                     <button
                       type="button"
                       onClick={() => removeLabel(l)}
-                      className="text-blue-400 hover:text-red-400 focus:outline-none"
+                      className="text-accent-text hover:text-red-400 focus:outline-none"
                       aria-label={`Remove label ${l}`}
                     >
                       &times;
@@ -347,101 +347,101 @@ function RegisterWorkerModal({
             )}
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Description</label>
+            <label className="block text-sm text-secondary mb-1">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
               placeholder="Optional description for this worker"
             />
           </div>
-          <div className="pt-2 border-t border-slate-700">
-            <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Resource Limits</p>
+          <div className="pt-2 border-t border-border">
+            <p className="text-xs text-muted mb-2 font-medium uppercase tracking-wider">Resource Limits</p>
             <div className="mb-3">
-              <label className="block text-xs text-slate-400 mb-1">Priority</label>
+              <label className="block text-xs text-muted mb-1">Priority</label>
               <input
                 type="number"
                 min="0"
                 value={regPriority}
                 onChange={(e) => setRegPriority(e.target.value)}
-                className="w-28 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-28 px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
             <div className="space-y-2">
               {/* CPU row */}
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-400 w-16 shrink-0">Max CPU</span>
+                <span className="text-xs text-muted w-16 shrink-0">Max CPU</span>
                 <input
                   type="number"
                   min="1"
                   value={regMaxCpu}
                   onChange={(e) => setRegMaxCpu(e.target.value)}
-                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-input border border-border rounded text-primary text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="no limit"
                 />
-                <span className="text-xs text-slate-500">cores</span>
-                <span className="text-xs text-slate-600">or</span>
+                <span className="text-xs text-disabled">cores</span>
+                <span className="text-xs text-disabled">or</span>
                 <input
                   type="number"
                   min="1"
                   max="100"
                   value={regMaxCpuPct}
                   onChange={(e) => setRegMaxCpuPct(e.target.value)}
-                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-input border border-border rounded text-primary text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="no limit"
                 />
-                <span className="text-xs text-slate-500">%</span>
+                <span className="text-xs text-disabled">%</span>
               </div>
               {/* Memory row */}
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-400 w-16 shrink-0">Max Mem</span>
+                <span className="text-xs text-muted w-16 shrink-0">Max Mem</span>
                 <input
                   type="number"
                   min="0"
                   step="0.1"
                   value={regMaxMemGb}
                   onChange={(e) => setRegMaxMemGb(e.target.value)}
-                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-input border border-border rounded text-primary text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="no limit"
                 />
-                <span className="text-xs text-slate-500">GB</span>
-                <span className="text-xs text-slate-600">or</span>
+                <span className="text-xs text-disabled">GB</span>
+                <span className="text-xs text-disabled">or</span>
                 <input
                   type="number"
                   min="1"
                   max="100"
                   value={regMaxMemPct}
                   onChange={(e) => setRegMaxMemPct(e.target.value)}
-                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-input border border-border rounded text-primary text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="no limit"
                 />
-                <span className="text-xs text-slate-500">%</span>
+                <span className="text-xs text-disabled">%</span>
               </div>
               {/* Disk row */}
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-400 w-16 shrink-0">Max Disk</span>
+                <span className="text-xs text-muted w-16 shrink-0">Max Disk</span>
                 <input
                   type="number"
                   min="0"
                   step="0.1"
                   value={regMaxDiskGb}
                   onChange={(e) => setRegMaxDiskGb(e.target.value)}
-                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-input border border-border rounded text-primary text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="no limit"
                 />
-                <span className="text-xs text-slate-500">GB</span>
-                <span className="text-xs text-slate-600">or</span>
+                <span className="text-xs text-disabled">GB</span>
+                <span className="text-xs text-disabled">or</span>
                 <input
                   type="number"
                   min="1"
                   max="100"
                   value={regMaxDiskPct}
                   onChange={(e) => setRegMaxDiskPct(e.target.value)}
-                  className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-20 px-2 py-1.5 bg-input border border-border rounded text-primary text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="no limit"
                 />
-                <span className="text-xs text-slate-500">%</span>
+                <span className="text-xs text-disabled">%</span>
               </div>
             </div>
           </div>
@@ -449,14 +449,14 @@ function RegisterWorkerModal({
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Cancel
           </button>
           <button
             onClick={() => registerMut.mutate()}
             disabled={!workerId.trim() || !hostname.trim() || registerMut.isPending}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {registerMut.isPending ? 'Registering...' : 'Register'}
           </button>
@@ -486,12 +486,12 @@ function TokenDisplayModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full">
-        <h3 className="text-lg font-semibold text-white mb-1">Worker Registered</h3>
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full">
+        <h3 className="text-lg font-semibold text-primary mb-1">Worker Registered</h3>
         <p className="text-sm text-yellow-400 mb-4">
           Save this token now. It will not be shown again.
         </p>
-        <div className="relative bg-slate-800 border border-slate-600 rounded-lg p-3 mb-4">
+        <div className="relative bg-surface-2 border border-border rounded-lg p-3 mb-4">
           <code
             ref={tokenRef}
             className="block text-xs font-mono text-emerald-300 break-all pr-16"
@@ -500,25 +500,25 @@ function TokenDisplayModal({
           </code>
           <button
             onClick={copyToken}
-            className="absolute top-2 right-2 px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="absolute top-2 right-2 px-2 py-1 text-xs bg-surface text-secondary rounded hover:bg-surface-hover focus:outline-none focus:ring-1 focus:ring-accent"
           >
             Copy
           </button>
         </div>
-        <p className="text-xs text-slate-400 mb-1">
+        <p className="text-xs text-muted mb-1">
           Add to worker config:
         </p>
-        <code className="block text-xs font-mono text-slate-300 bg-slate-800 rounded px-3 py-2 mb-2">
+        <code className="block text-xs font-mono text-secondary bg-surface-2 rounded px-3 py-2 mb-2">
           token: {result.token}
         </code>
-        <p className="text-xs text-slate-400 mb-1">Or set environment variable:</p>
-        <code className="block text-xs font-mono text-slate-300 bg-slate-800 rounded px-3 py-2 mb-4">
+        <p className="text-xs text-muted mb-1">Or set environment variable:</p>
+        <code className="block text-xs font-mono text-secondary bg-surface-2 rounded px-3 py-2 mb-4">
           CHOLA_TOKEN={result.token}
         </code>
         <div className="flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Done
           </button>
@@ -562,13 +562,13 @@ function InlineLabelsEditor({
         {labels.map((l) => (
           <span
             key={l}
-            className="flex items-center gap-1 px-2 py-0.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded text-xs font-mono"
+            className="flex items-center gap-1 px-2 py-0.5 bg-accent-soft text-accent-text border border-accent/30 rounded text-xs font-mono"
           >
             {l}
             <button
               type="button"
               onClick={() => removeLabel(l)}
-              className="text-blue-400 hover:text-red-400 focus:outline-none"
+              className="text-accent-text hover:text-red-400 focus:outline-none"
               aria-label={`Remove label ${l}`}
             >
               &times;
@@ -584,14 +584,14 @@ function InlineLabelsEditor({
             if (e.key === 'Enter') { e.preventDefault(); addLabel(); }
           }}
           placeholder="Type label and press Enter"
-          className="flex-1 px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="flex-1 px-2 py-1 text-xs bg-input border border-border rounded text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
           aria-label={`Add label for worker ${workerId}`}
         />
         <button
           type="button"
           onClick={addLabel}
           disabled={!input.trim()}
-          className="px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="px-2 py-1 text-xs bg-surface-2 text-secondary rounded hover:bg-surface-hover disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-accent"
         >
           Add
         </button>
@@ -601,14 +601,14 @@ function InlineLabelsEditor({
           type="button"
           onClick={() => onSave(labels)}
           disabled={isPending}
-          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="px-3 py-1 text-xs bg-accent text-on-accent rounded hover:bg-accent-hover disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-accent"
         >
           {isPending ? 'Saving...' : 'Save'}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          className="px-3 py-1 text-xs bg-surface-2 text-secondary rounded hover:bg-surface-hover focus:outline-none focus:ring-1 focus:ring-border"
         >
           Cancel
         </button>
@@ -657,41 +657,41 @@ function InlineLimitsEditor({
     });
   }
 
-  const inputCls = 'px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono w-20 focus:outline-none focus:ring-1 focus:ring-blue-500';
+  const inputCls = 'px-2 py-1 text-xs bg-input border border-border rounded text-primary font-mono w-20 focus:outline-none focus:ring-1 focus:ring-accent';
 
   return (
     <div className="mt-2 space-y-2" aria-label={`Edit limits for worker ${workerId}`}>
       <div className="mb-1.5">
-        <label className="block text-[10px] text-slate-500 mb-0.5">Priority</label>
+        <label className="block text-[10px] text-disabled mb-0.5">Priority</label>
         <input type="number" min="0" value={priority} onChange={(e) => setPriority(e.target.value)} className={inputCls} />
       </div>
       <div className="space-y-1.5">
         {/* CPU row */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] text-slate-500 w-12 shrink-0">Max CPU</span>
+          <span className="text-[10px] text-disabled w-12 shrink-0">Max CPU</span>
           <input type="number" min="1" value={maxCpu} onChange={(e) => setMaxCpu(e.target.value)} className={inputCls} placeholder="no limit" />
-          <span className="text-[10px] text-slate-500">cores</span>
-          <span className="text-[10px] text-slate-600">or</span>
+          <span className="text-[10px] text-disabled">cores</span>
+          <span className="text-[10px] text-disabled">or</span>
           <input type="number" min="1" max="100" value={maxCpuPct} onChange={(e) => setMaxCpuPct(e.target.value)} className={inputCls} placeholder="no limit" />
-          <span className="text-[10px] text-slate-500">%</span>
+          <span className="text-[10px] text-disabled">%</span>
         </div>
         {/* Memory row */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] text-slate-500 w-12 shrink-0">Max Mem</span>
+          <span className="text-[10px] text-disabled w-12 shrink-0">Max Mem</span>
           <input type="number" min="0" step="0.1" value={maxMemGb} onChange={(e) => setMaxMemGb(e.target.value)} className={inputCls} placeholder="no limit" />
-          <span className="text-[10px] text-slate-500">GB</span>
-          <span className="text-[10px] text-slate-600">or</span>
+          <span className="text-[10px] text-disabled">GB</span>
+          <span className="text-[10px] text-disabled">or</span>
           <input type="number" min="1" max="100" value={maxMemPct} onChange={(e) => setMaxMemPct(e.target.value)} className={inputCls} placeholder="no limit" />
-          <span className="text-[10px] text-slate-500">%</span>
+          <span className="text-[10px] text-disabled">%</span>
         </div>
         {/* Disk row */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] text-slate-500 w-12 shrink-0">Max Disk</span>
+          <span className="text-[10px] text-disabled w-12 shrink-0">Max Disk</span>
           <input type="number" min="0" step="0.1" value={maxDiskGb} onChange={(e) => setMaxDiskGb(e.target.value)} className={inputCls} placeholder="no limit" />
-          <span className="text-[10px] text-slate-500">GB</span>
-          <span className="text-[10px] text-slate-600">or</span>
+          <span className="text-[10px] text-disabled">GB</span>
+          <span className="text-[10px] text-disabled">or</span>
           <input type="number" min="1" max="100" value={maxDiskPct} onChange={(e) => setMaxDiskPct(e.target.value)} className={inputCls} placeholder="no limit" />
-          <span className="text-[10px] text-slate-500">%</span>
+          <span className="text-[10px] text-disabled">%</span>
         </div>
       </div>
       <div className="flex gap-2">
@@ -699,14 +699,14 @@ function InlineLimitsEditor({
           type="button"
           onClick={save}
           disabled={isPending}
-          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="px-3 py-1 text-xs bg-accent text-on-accent rounded hover:bg-accent-hover disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-accent"
         >
           {isPending ? 'Saving...' : 'Save'}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          className="px-3 py-1 text-xs bg-surface-2 text-secondary rounded hover:bg-surface-hover focus:outline-none focus:ring-1 focus:ring-border"
         >
           Cancel
         </button>
@@ -774,32 +774,32 @@ function WorkerBranchBlacklist({
   const entries: BranchBlacklistEntry[] = data?.entries ?? [];
 
   return (
-    <div className="mt-3 pt-3 border-t border-slate-800">
+    <div className="mt-3 pt-3 border-t border-border">
       <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+        <p className="text-xs font-semibold text-muted uppercase tracking-wider">
           Branch Blacklist ({entries.length})
         </p>
         {canManage && (
           <button
             onClick={() => setShowAdd(true)}
-            className="text-xs px-2 py-1 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-600/30 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="text-xs px-2 py-1 bg-accent-soft text-accent-text border border-accent/30 rounded hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-accent"
           >
             Add Rule
           </button>
         )}
       </div>
 
-      {isLoading && <p className="text-xs text-slate-500">Loading...</p>}
+      {isLoading && <p className="text-xs text-disabled">Loading...</p>}
 
       {entries.length > 0 && (
         <div className="space-y-1">
           {entries.map((e) => (
             <div key={e.id} className="flex items-center gap-2 text-xs">
-              <code className="text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
+              <code className="text-secondary bg-surface-2 px-1.5 py-0.5 rounded font-mono flex-1 truncate">
                 {e.pattern}
               </code>
               {e.description && (
-                <span className="text-slate-500 truncate max-w-[120px]">{e.description}</span>
+                <span className="text-disabled truncate max-w-[120px]">{e.description}</span>
               )}
               {canManage ? (
                 <button
@@ -807,7 +807,7 @@ function WorkerBranchBlacklist({
                   className={`px-1.5 py-0.5 rounded border shrink-0 focus:outline-none focus:ring-1 ${
                     e.enabled
                       ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 focus:ring-emerald-500'
-                      : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600 focus:ring-slate-500'
+                      : 'bg-surface-2 text-muted border-border hover:bg-surface-hover focus:ring-border'
                   }`}
                 >
                   {e.enabled ? 'On' : 'Off'}
@@ -817,7 +817,7 @@ function WorkerBranchBlacklist({
                   className={`px-1.5 py-0.5 rounded border shrink-0 ${
                     e.enabled
                       ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                      : 'bg-slate-700 text-slate-400 border-slate-600'
+                      : 'bg-surface-2 text-muted border-border'
                   }`}
                 >
                   {e.enabled ? 'On' : 'Off'}
@@ -838,32 +838,32 @@ function WorkerBranchBlacklist({
       )}
 
       {!entries.length && !isLoading && (
-        <p className="text-xs text-slate-600">No branch restrictions.</p>
+        <p className="text-xs text-disabled">No branch restrictions.</p>
       )}
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold text-white mb-4">
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-primary mb-4">
               Add Branch Rule — {workerId}
             </h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Pattern (regex)</label>
+                <label className="block text-sm text-secondary mb-1">Pattern (regex)</label>
                 <input
                   value={pattern}
                   onChange={(e) => setPattern(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="^release/.*"
                 />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Description</label>
+                <label className="block text-sm text-secondary mb-1">Description</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
                   placeholder="Why this branch pattern is blocked..."
                 />
               </div>
@@ -871,14 +871,14 @@ function WorkerBranchBlacklist({
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowAdd(false)}
-                className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Cancel
               </button>
               <button
                 onClick={() => createMut.mutate()}
                 disabled={!pattern || createMut.isPending}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 Create
               </button>
@@ -977,17 +977,17 @@ export default function WorkersPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         {/* item 21: skeleton for count badge while loading */}
-        <h2 className="text-2xl font-bold text-white">
+        <h2 className="text-2xl font-bold text-primary">
           Workers
           {isLoading
-            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
+            ? <span className="ml-2 inline-block h-5 w-8 bg-surface-2 rounded animate-pulse align-middle" />
             : <span className="ml-1">({workers.length})</span>
           }
         </h2>
         {canManageWorkers && (
           <button
             onClick={() => setShowRegisterModal(true)}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Register Worker
           </button>
@@ -1002,32 +1002,32 @@ export default function WorkersPage() {
       {isLoading ? <PageSkeleton /> : (
         <div className="grid gap-4">
           {workers.map(w => (
-            <div key={w.worker_id} className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+            <div key={w.worker_id} className="bg-surface border border-border rounded-xl p-4">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <StatusBadge status={w.status} size="md" />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-lg font-semibold text-white truncate">{w.worker_id}</p>
+                      <p className="text-lg font-semibold text-primary truncate">{w.worker_id}</p>
                       {w.priority > 0 && (
-                        <span className="text-[11px] px-1.5 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/30 shrink-0">
+                        <span className="text-[11px] px-1.5 py-0.5 rounded border bg-accent-soft text-accent-text border-accent/30 shrink-0">
                           P:{w.priority}
                         </span>
                       )}
                     </div>
                     {/* item 22: title on hostname; item 26: docker badge */}
-                    <p className="text-sm text-slate-400">
+                    <p className="text-sm text-muted">
                       <span title={w.hostname}>{w.hostname}</span>
                       {' '}&middot;{' '}{w.disk_type}
                       {' '}&middot;{' '}Docker:{' '}
-                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>
+                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-surface-2 text-muted border-border'}`}>
                         {w.docker_enabled ? 'Yes' : 'No'}
                       </span>
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                  {w.last_heartbeat && <span className="text-xs text-slate-500">Jobs: {w.last_heartbeat.running_jobs}</span>}
+                  {w.last_heartbeat && <span className="text-xs text-disabled">Jobs: {w.last_heartbeat.running_jobs}</span>}
                   {w.status === 'Draining' && (
                     <span className="text-xs text-yellow-400">
                       {(w.active_groups?.length ?? 0) > 0
@@ -1079,7 +1079,7 @@ export default function WorkersPage() {
                 return (
                   <div className="space-y-1">
                     {hasLastKnown && (
-                      <p className="text-[11px] text-slate-500 italic mb-1">
+                      <p className="text-[11px] text-disabled italic mb-1">
                         Last known values (worker offline)
                       </p>
                     )}
@@ -1088,10 +1088,10 @@ export default function WorkersPage() {
                 );
               })()}
               {(w.allocated_cpu > 0 || w.allocated_memory_mb > 0 || w.allocated_disk_mb > 0) && (
-                <div className="mt-3 pt-3 border-t border-slate-800">
+                <div className="mt-3 pt-3 border-t border-border">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-slate-500">
-                      <span className="text-indigo-400 font-medium">Active reservations</span>
+                    <p className="text-xs text-disabled">
+                      <span className="text-accent-text font-medium">Active reservations</span>
                       {' — '}
                       {w.allocated_cpu > 0 && (
                         <span className="mr-2">{w.allocated_cpu} CPU</span>
@@ -1105,7 +1105,7 @@ export default function WorkersPage() {
                     </p>
                     <a
                       href={`/builds?worker=${encodeURIComponent(w.worker_id)}&state=running,reserved`}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 underline shrink-0 ml-4"
+                      className="text-xs text-accent-text hover:opacity-80 underline shrink-0 ml-4"
                     >
                       View active builds &rarr;
                     </a>
@@ -1116,15 +1116,15 @@ export default function WorkersPage() {
                         <a
                           key={g.group_id}
                           href={`/builds/${g.group_id}`}
-                          className="flex items-center justify-between px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg hover:bg-slate-800 transition-colors"
+                          className="flex items-center justify-between px-3 py-2 bg-surface-2/50 border border-border/50 rounded-lg hover:bg-surface-hover transition-colors"
                         >
                           <div className="flex items-center gap-2">
                             <StatusBadge status={g.state} />
-                            <span className="text-xs text-slate-300 font-mono">{g.group_id.slice(0, 8)}</span>
-                            {g.branch && <span className="text-xs text-slate-500">{g.branch}</span>}
-                            {g.commit_sha && <span className="text-xs text-slate-600 font-mono">{g.commit_sha.slice(0, 8)}</span>}
+                            <span className="text-xs text-secondary font-mono">{g.group_id.slice(0, 8)}</span>
+                            {g.branch && <span className="text-xs text-muted">{g.branch}</span>}
+                            {g.commit_sha && <span className="text-xs text-disabled font-mono">{g.commit_sha.slice(0, 8)}</span>}
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-slate-500">
+                          <div className="flex items-center gap-3 text-xs text-disabled">
                             <span>{g.allocated_cpu} CPU, {formatBytes(g.allocated_memory_mb)}</span>
                             <span>{g.stages_submitted} stage{g.stages_submitted !== 1 ? 's' : ''}</span>
                             <TimeAgo date={g.created_at} />
@@ -1136,19 +1136,19 @@ export default function WorkersPage() {
                 </div>
               )}
               {/* Labels row with inline editing */}
-              <div className="mt-3 pt-3 border-t border-slate-800">
+              <div className="mt-3 pt-3 border-t border-border">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-slate-500 font-medium">Labels:</span>
+                  <span className="text-xs text-muted font-medium">Labels:</span>
                   {(w.labels ?? []).length > 0
                     ? (w.labels ?? []).map((l) => (
                         <span
                           key={l}
-                          className="px-2 py-0.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded text-xs font-mono"
+                          className="px-2 py-0.5 bg-accent-soft text-accent-text border border-accent/30 rounded text-xs font-mono"
                         >
                           {l}
                         </span>
                       ))
-                    : <span className="text-xs text-slate-600 italic">none</span>}
+                    : <span className="text-xs text-disabled italic">none</span>}
                   {canManageWorkers && editingLabelsId !== w.worker_id && (
                     <button
                       type="button"
@@ -1156,7 +1156,7 @@ export default function WorkersPage() {
                         setEditingLabelsId(w.worker_id);
                         setLabelDraft(w.labels ?? []);
                       }}
-                      className="text-xs text-slate-500 hover:text-slate-300 underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                      className="text-xs text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
                     >
                       Edit Labels
                     </button>
@@ -1174,9 +1174,9 @@ export default function WorkersPage() {
               </div>
               {/* Resource limits inline edit */}
               {canManageWorkers && (
-                <div className="mt-3 pt-3 border-t border-slate-800">
+                <div className="mt-3 pt-3 border-t border-border">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-slate-500 font-medium">Limits:</span>
+                    <span className="text-xs text-muted font-medium">Limits:</span>
                     {(() => {
                       const cpuParts = [
                         w.max_cpu != null ? `${w.max_cpu} cores` : null,
@@ -1193,19 +1193,19 @@ export default function WorkersPage() {
                       const hasAny = cpuParts.length || memParts.length || diskParts.length;
                       return hasAny ? (
                         <>
-                          <span className="text-xs text-slate-400">CPU: {cpuParts.length ? cpuParts.join(' / ') : 'none'}</span>
-                          <span className="text-xs text-slate-400">Mem: {memParts.length ? memParts.join(' / ') : 'none'}</span>
-                          <span className="text-xs text-slate-400">Disk: {diskParts.length ? diskParts.join(' / ') : 'none'}</span>
+                          <span className="text-xs text-muted">CPU: {cpuParts.length ? cpuParts.join(' / ') : 'none'}</span>
+                          <span className="text-xs text-muted">Mem: {memParts.length ? memParts.join(' / ') : 'none'}</span>
+                          <span className="text-xs text-muted">Disk: {diskParts.length ? diskParts.join(' / ') : 'none'}</span>
                         </>
                       ) : (
-                        <span className="text-xs text-slate-600 italic">none</span>
+                        <span className="text-xs text-disabled italic">none</span>
                       );
                     })()}
                     {editingLimitsId !== w.worker_id && (
                       <button
                         type="button"
                         onClick={() => setEditingLimitsId(w.worker_id)}
-                        className="text-xs text-slate-500 hover:text-slate-300 underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                        className="text-xs text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
                       >
                         Edit Limits
                       </button>
@@ -1222,18 +1222,18 @@ export default function WorkersPage() {
                   )}
                 </div>
               )}
-              <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
+              <div className="mt-3 flex flex-wrap gap-4 text-xs text-disabled">
                 {/* item 55: pill chips for job types */}
                 <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-slate-600">Types:</span>
+                  <span className="text-disabled">Types:</span>
                   {w.supported_job_types.map((t) => (
-                    <span key={t} className="px-1.5 py-0.5 bg-slate-700 text-slate-300 border border-slate-600 rounded text-[10px] font-mono">{t}</span>
+                    <span key={t} className="px-1.5 py-0.5 bg-surface-2 text-secondary border border-border rounded text-[10px] font-mono">{t}</span>
                   ))}
                 </div>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>
                 {w.last_heartbeat && <span>Last beat: <TimeAgo date={w.last_heartbeat.timestamp} /></span>}
                 {w.registration_token_id && (
-                  <span>Token: <span className="font-mono text-slate-600">{w.registration_token_id.slice(0, 8)}</span></span>
+                  <span>Token: <span className="font-mono text-disabled">{w.registration_token_id.slice(0, 8)}</span></span>
                 )}
                 {w.system_info && (
                   <button
@@ -1243,7 +1243,7 @@ export default function WorkersPage() {
                       else next.add(w.worker_id);
                       return next;
                     })}
-                    className="text-slate-500 hover:text-slate-300 underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                    className="text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
                     aria-expanded={expandedSysInfo.has(w.worker_id)}
                   >
                     {expandedSysInfo.has(w.worker_id) ? 'Hide System Info' : 'System Info'}
@@ -1251,15 +1251,15 @@ export default function WorkersPage() {
                 )}
                 <button
                   onClick={() => setExpandedBlacklist(expandedBlacklist === w.worker_id ? null : w.worker_id)}
-                  className="text-slate-500 hover:text-slate-300 underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                  className="text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
                   aria-expanded={expandedBlacklist === w.worker_id}
                 >
                   {expandedBlacklist === w.worker_id ? 'Hide' : 'Branch Blacklist'}
                 </button>
               </div>
               {expandedSysInfo.has(w.worker_id) && w.system_info && (
-                <div className="mt-3 pt-3 border-t border-slate-800">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">System Info</p>
+                <div className="mt-3 pt-3 border-t border-border">
+                  <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">System Info</p>
                   <SystemInfoPanel info={w.system_info} />
                 </div>
               )}

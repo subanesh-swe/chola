@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import type { MutationError } from '../types';
 
 const inputClass =
-  'w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500';
+  'w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-primary placeholder:text-disabled focus:outline-none focus:ring-2 focus:ring-accent';
 
 function ChangePasswordSection() {
   const [currentPw, setCurrentPw] = useState('');
@@ -46,11 +46,11 @@ function ChangePasswordSection() {
   }
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Change Password</h3>
+    <div className="bg-surface border border-border rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-primary mb-4">Change Password</h3>
       <form onSubmit={handleSubmit} className="space-y-4 max-w-sm">
         <div>
-          <label htmlFor="current-pw" className="block text-xs text-slate-400 mb-1">Current password</label>
+          <label htmlFor="current-pw" className="block text-xs text-muted mb-1">Current password</label>
           <input
             id="current-pw"
             type="password"
@@ -62,7 +62,7 @@ function ChangePasswordSection() {
           />
         </div>
         <div>
-          <label htmlFor="new-pw" className="block text-xs text-slate-400 mb-1">New password</label>
+          <label htmlFor="new-pw" className="block text-xs text-muted mb-1">New password</label>
           <input
             id="new-pw"
             type="password"
@@ -74,7 +74,7 @@ function ChangePasswordSection() {
           />
         </div>
         <div>
-          <label htmlFor="confirm-pw" className="block text-xs text-slate-400 mb-1">Confirm new password</label>
+          <label htmlFor="confirm-pw" className="block text-xs text-muted mb-1">Confirm new password</label>
           <input
             id="confirm-pw"
             type="password"
@@ -91,7 +91,7 @@ function ChangePasswordSection() {
         <button
           type="submit"
           disabled={mutation.isPending}
-          className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-4 py-2 text-sm text-on-accent bg-accent hover:bg-accent-hover disabled:opacity-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
         >
           {mutation.isPending ? 'Saving…' : 'Save Password'}
         </button>
@@ -112,10 +112,10 @@ function AppearanceSection() {
   const setMode = useThemeStore((s) => s.setMode);
   const setAccent = useThemeStore((s) => s.setAccent);
 
-  const modes: { value: ThemeMode; label: string; beta?: boolean }[] = [
-    { value: 'light',  label: 'Light',  beta: true },
-    { value: 'dark',   label: 'Dark'               },
-    { value: 'system', label: 'System'              },
+  const modes: { value: ThemeMode; label: string }[] = [
+    { value: 'light',  label: 'Light'  },
+    { value: 'dark',   label: 'Dark'   },
+    { value: 'system', label: 'System' },
   ];
 
   const accents: { value: ThemeAccent; label: string }[] = [
@@ -125,27 +125,24 @@ function AppearanceSection() {
   ];
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-6">
+    <div className="bg-surface border border-border rounded-xl p-6 space-y-6">
       <div>
-        <h3 className="text-lg font-semibold text-white mb-1">Appearance</h3>
-        <p className="text-xs text-slate-500">
-          Light/accent themes will progressively roll out across pages.
-        </p>
+        <h3 className="text-lg font-semibold text-primary mb-1">Appearance</h3>
       </div>
 
       {/* Mode */}
       <div>
-        <p className="text-sm font-medium text-slate-300 mb-3">Mode</p>
+        <p className="text-sm font-medium text-secondary mb-3">Mode</p>
         <div className="flex gap-3" role="radiogroup" aria-label="Color mode">
-          {modes.map(({ value, label, beta }) => {
+          {modes.map(({ value, label }) => {
             const active = mode === value;
             return (
               <label
                 key={value}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
                   ${active
-                    ? 'border-blue-500 bg-blue-600/10 text-white'
-                    : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                    ? 'border-accent bg-accent-soft text-primary'
+                    : 'border-border text-muted hover:border-border-strong hover:text-secondary'
                   }`}
               >
                 <input
@@ -157,14 +154,6 @@ function AppearanceSection() {
                   className="sr-only"
                 />
                 {label}
-                {beta && (
-                  <span
-                    title="Some pages still render dark. Full theming coming soon."
-                    className="text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 leading-none"
-                  >
-                    Beta
-                  </span>
-                )}
               </label>
             );
           })}
@@ -173,7 +162,7 @@ function AppearanceSection() {
 
       {/* Accent */}
       <div>
-        <p className="text-sm font-medium text-slate-300 mb-3">Accent color</p>
+        <p className="text-sm font-medium text-secondary mb-3">Accent color</p>
         <div className="flex gap-3" role="radiogroup" aria-label="Accent color">
           {accents.map(({ value, label }) => {
             const active = accent === value;
@@ -182,8 +171,8 @@ function AppearanceSection() {
                 key={value}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
                   ${active
-                    ? 'border-blue-500 bg-blue-600/10 text-white'
-                    : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                    ? 'border-accent bg-accent-soft text-primary'
+                    : 'border-border text-muted hover:border-border-strong hover:text-secondary'
                   }`}
               >
                 <input
@@ -212,29 +201,29 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <h2 className="text-2xl font-bold text-white">Profile</h2>
+      <h2 className="text-2xl font-bold text-primary">Profile</h2>
 
       {/* User info */}
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Account Info</h3>
+      <div className="bg-surface border border-border rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-primary mb-4">Account Info</h3>
         <dl className="grid grid-cols-2 gap-4">
           <div>
-            <dt className="text-xs text-slate-500">Username</dt>
-            <dd className="text-sm text-slate-200 mt-0.5">{user.username}</dd>
+            <dt className="text-xs text-muted">Username</dt>
+            <dd className="text-sm text-secondary mt-0.5">{user.username}</dd>
           </div>
           <div>
-            <dt className="text-xs text-slate-500">Display Name</dt>
-            <dd className="text-sm text-slate-200 mt-0.5">{user.display_name || '—'}</dd>
+            <dt className="text-xs text-muted">Display Name</dt>
+            <dd className="text-sm text-secondary mt-0.5">{user.display_name || '—'}</dd>
           </div>
           <div>
-            <dt className="text-xs text-slate-500">Role</dt>
+            <dt className="text-xs text-muted">Role</dt>
             <dd className="mt-0.5">
-              <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300">{user.role}</span>
+              <span className="text-xs px-2 py-0.5 rounded bg-surface-2 text-secondary">{user.role}</span>
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-slate-500">Member Since</dt>
-            <dd className="text-sm text-slate-200 mt-0.5">
+            <dt className="text-xs text-muted">Member Since</dt>
+            <dd className="text-sm text-secondary mt-0.5">
               <TimeAgo date={user.created_at} />
             </dd>
           </div>
@@ -246,9 +235,9 @@ export default function ProfilePage() {
       <AppearanceSection />
 
       {/* API Keys — placeholder */}
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-2">API Keys</h3>
-        <p className="text-sm text-slate-500">API key management coming soon.</p>
+      <div className="bg-surface border border-border rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-primary mb-2">API Keys</h3>
+        <p className="text-sm text-muted">API key management coming soon.</p>
       </div>
     </div>
   );

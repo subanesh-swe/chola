@@ -61,26 +61,26 @@ function AddRepoDialog({
       aria-modal="true"
       aria-labelledby="add-repo-title"
     >
-      <div ref={dialogRef} className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-        <h3 id="add-repo-title" className="text-lg font-semibold text-white mb-4">Add Repository</h3>
+      <div ref={dialogRef} className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+        <h3 id="add-repo-title" className="text-lg font-semibold text-primary mb-4">Add Repository</h3>
         <div className="space-y-3">
           <div>
-            <label htmlFor="repo-name" className="block text-sm text-slate-300 mb-1">Name</label>
+            <label htmlFor="repo-name" className="block text-sm text-secondary mb-1">Name</label>
             <input
               id="repo-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="my-service"
             />
           </div>
           <div>
-            <label htmlFor="repo-url" className="block text-sm text-slate-300 mb-1">URL</label>
+            <label htmlFor="repo-url" className="block text-sm text-secondary mb-1">URL</label>
             <input
               id="repo-url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="git@github.com:org/repo.git"
             />
           </div>
@@ -88,14 +88,14 @@ function AddRepoDialog({
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+            className="px-4 py-2 text-sm text-secondary bg-surface-2 hover:bg-surface-hover rounded-lg focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={() => onSubmit(name, url)}
             disabled={!name || !url || pending}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+            className="px-4 py-2 text-sm bg-accent hover:bg-accent-hover text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             Create
           </button>
@@ -139,12 +139,12 @@ export default function ReposPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-white">Repositories ({repos.length})</h2>
+        <h2 className="text-2xl font-bold text-primary">Repositories ({repos.length})</h2>
         {canManageRepos && (
           <button
             onClick={() => setShowAdd(true)}
             aria-label="Add repository"
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent hover:bg-accent-hover text-on-accent rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Add Repo
           </button>
@@ -160,7 +160,7 @@ export default function ReposPage() {
       {isLoading ? (
         <TableSkeleton rows={4} cols={5} />
       ) : (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-surface border border-border rounded-xl overflow-hidden">
           {/* item 32: use EmptyState when no repos */}
           {!repos.length ? (
             <EmptyState
@@ -171,52 +171,35 @@ export default function ReposPage() {
             <div className="overflow-x-auto">
               <table className="w-full" aria-label="Repositories">
                 <thead>
-                  <tr className="border-b border-slate-700">
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Name</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">URL</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Branch</th>
+                  <tr className="border-b border-border">
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Name</th>
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">URL</th>
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Branch</th>
                     {/* item 31: enabled uses StatusBadge with explicit string */}
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
-                    {canManageRepos && <th scope="col" className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Actions</th>}
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Status</th>
+                    <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Created</th>
+                    {canManageRepos && <th scope="col" className="px-4 py-3 text-xs font-semibold text-muted uppercase">Actions</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800">
+                <tbody className="divide-y divide-border">
                   {repos.map((r) => {
                     const href = `/repos/${r.id}`;
                     return (
                       <tr
                         key={r.id}
-                        className="hover:bg-slate-800/50 transition-colors"
+                        className="relative hover:bg-surface-hover/50 transition-colors"
                       >
-                        <td className="p-0">
-                          <Link
-                            to={href}
-                            aria-label={`Repository ${r.repo_name}`}
-                            className="block px-4 py-3 text-sm text-blue-400 hover:underline focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-                          >
-                            {r.repo_name}
-                          </Link>
+                        <td className="px-4 py-3">
+                          <Link to={href} aria-label={`Repository ${r.repo_name}`} className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent" />
+                          <span className="relative z-10 text-sm text-accent-text">{r.repo_name}</span>
                         </td>
-                        <td className="p-0">
-                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
-                            {r.repo_url}
-                          </Link>
+                        <td className="px-4 py-3 text-sm text-muted font-mono truncate max-w-xs relative z-10">{r.repo_url}</td>
+                        <td className="px-4 py-3 text-sm text-secondary relative z-10">{r.default_branch}</td>
+                        <td className="px-4 py-3 relative z-10">
+                          <StatusBadge status={r.enabled ? 'Connected' : 'Disconnected'} />
                         </td>
-                        <td className="p-0">
-                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
-                            {r.default_branch}
-                          </Link>
-                        </td>
-                        <td className="p-0">
-                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
-                            <StatusBadge status={r.enabled ? 'enabled' : 'disabled'} />
-                          </Link>
-                        </td>
-                        <td className="p-0">
-                          <Link to={href} aria-hidden={true} tabIndex={-1} className="block px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500">
-                            <TimeAgo date={r.created_at} className="text-slate-500" />
-                          </Link>
+                        <td className="px-4 py-3 text-sm relative z-10">
+                          <TimeAgo date={r.created_at} className="text-disabled" />
                         </td>
                         {canManageRepos && (
                           <td className="px-4 py-3 text-center">

@@ -66,7 +66,7 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
 
   const scripts: StageScript[] = data?.scripts ?? [];
 
-  const inputCls = 'w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+  const inputCls = 'w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent';
 
   const resetAddForm = () => {
     setScriptType('pre');
@@ -143,13 +143,13 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
   });
 
   return (
-    <div className="px-4 py-3 bg-slate-800/40 border-t border-slate-700/50">
+    <div className="px-4 py-3 bg-surface-2/40 border-t border-border/50">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Scripts</span>
+        <span className="text-xs font-semibold text-muted uppercase tracking-wide">Scripts</span>
         {canManage && (
           <button
             onClick={() => setShowAdd(true)}
-            className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-2 py-1 text-xs bg-accent text-on-accent rounded hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Add Script
           </button>
@@ -157,72 +157,72 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
       </div>
 
       {isLoading ? (
-        <p className="text-xs text-slate-500 italic">Loading scripts...</p>
+        <p className="text-xs text-disabled italic">Loading scripts...</p>
       ) : scripts.length === 0 ? (
-        <p className="text-xs text-slate-500 italic">No scripts configured for this stage.</p>
+        <p className="text-xs text-disabled italic">No scripts configured for this stage.</p>
       ) : (
         <div className="space-y-2">
           {scripts.map((s) => {
             const isEditing = editingId === s.id;
             if (isEditing) {
               return (
-                <div key={s.id} className="bg-slate-900 border border-slate-600 rounded-lg p-3 space-y-2">
+                <div key={s.id} className="bg-surface border border-border rounded-lg p-3 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Type</label>
+                      <label className="block text-xs text-muted mb-1">Type</label>
                       <select value={editType} onChange={(e) => setEditType(e.target.value as 'pre' | 'post')}
-                        className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent">
                         <option value="pre">pre</option>
                         <option value="post">post</option>
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Scope</label>
+                      <label className="block text-xs text-muted mb-1">Scope</label>
                       <select value={editScope} onChange={(e) => setEditScope(e.target.value as 'worker' | 'master')}
-                        className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent">
                         <option value="worker">worker</option>
                         <option value="master">master</option>
                       </select>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Worker ID (optional)</label>
+                    <label className="block text-xs text-muted mb-1">Worker ID (optional)</label>
                     <input value={editWorkerId} onChange={(e) => setEditWorkerId(e.target.value)}
-                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="Leave blank for all workers" />
                   </div>
                   <div>
                     <label className="flex items-center gap-2 cursor-pointer select-none">
                       <input type="checkbox" checked={editLockEnabled} onChange={(e) => setEditLockEnabled(e.target.checked)}
-                        className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                      <span className="text-xs text-slate-300">Enable Lock</span>
+                        className="rounded border-border bg-input accent-accent focus:ring-accent" />
+                      <span className="text-xs text-secondary">Enable Lock</span>
                     </label>
                     {editLockEnabled && (
                       <div className="mt-2 space-y-2 pl-1">
                         <div>
-                          <label className="block text-xs text-slate-400 mb-1">Lock Key</label>
+                          <label className="block text-xs text-muted mb-1">Lock Key</label>
                           <input value={editLockKey} onChange={(e) => setEditLockKey(e.target.value)}
-                            className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent"
                             placeholder="{{WORKER_ID}}-{{REPO_NAME}}-pre" />
-                          <p className="text-xs text-slate-500 mt-0.5">Vars: {'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{STAGE_NAME}} {{JOB_GROUP_ID}}'}</p>
+                          <p className="text-xs text-disabled mt-0.5">Vars: {'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{STAGE_NAME}} {{JOB_GROUP_ID}}'}</p>
                         </div>
                         <div>
-                          <label className="block text-xs text-slate-400 mb-1">Timeout (secs)</label>
+                          <label className="block text-xs text-muted mb-1">Timeout (secs)</label>
                           <input type="number" min={1} value={editLockTimeoutSecs} onChange={(e) => setEditLockTimeoutSecs(Number(e.target.value))}
-                            className="w-28 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            className="w-28 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent" />
                         </div>
                       </div>
                     )}
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Script</label>
+                    <label className="block text-xs text-muted mb-1">Script</label>
                     <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={4}
-                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                      className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent resize-y"
                       placeholder="#!/bin/bash&#10;echo hello" />
                   </div>
                   <div className="flex gap-2 justify-end">
                     <button onClick={cancelEdit}
-                      className="px-2 py-1 text-xs text-slate-400 hover:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-500 rounded">
+                      className="px-2 py-1 text-xs text-muted hover:text-primary focus:outline-none focus:ring-1 focus:ring-border rounded">
                       Cancel
                     </button>
                     <button onClick={() => updateMut.mutate(s.id)} disabled={!editContent || updateMut.isPending}
@@ -234,11 +234,11 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
               );
             }
             return (
-              <div key={s.id} className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+              <div key={s.id} className="bg-surface border border-border rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                     s.script_type === 'pre'
-                      ? 'bg-blue-900/40 text-blue-300 border border-blue-700/50'
+                      ? 'bg-accent-soft text-accent-text border border-accent/30'
                       : 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
                   }`}>
                     {s.script_type.toUpperCase()}
@@ -251,21 +251,21 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                     {s.script_scope.toUpperCase()}
                   </span>
                   {s.worker_id && (
-                    <span className="text-xs text-slate-500 font-mono">worker: {s.worker_id}</span>
+                    <span className="text-xs text-muted font-mono">worker: {s.worker_id}</span>
                   )}
                   {s.lock_enabled ? (
                     <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-orange-900/40 text-orange-300 border border-orange-700/50">
                       LOCK {s.lock_key || '(default)'} — {s.lock_timeout_secs}s
                     </span>
                   ) : (
-                    <span className="text-xs text-slate-600">No lock</span>
+                    <span className="text-xs text-disabled">No lock</span>
                   )}
                   {canManage && (
                     <div className="ml-auto flex gap-2">
                       <button
                         onClick={() => startEdit(s)}
                         disabled={editingId !== null}
-                        className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                        className="text-xs text-accent-text hover:opacity-80 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-accent rounded"
                       >
                         Edit
                       </button>
@@ -279,7 +279,7 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                     </div>
                   )}
                 </div>
-                <pre className="text-xs text-slate-300 font-mono bg-slate-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+                <pre className="text-xs text-secondary font-mono bg-surface-2 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
                   {s.script}
                 </pre>
               </div>
@@ -290,19 +290,19 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Script</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Script</h3>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Type</label>
+                  <label className="block text-sm text-secondary mb-1">Type</label>
                   <select value={scriptType} onChange={(e) => setScriptType(e.target.value as 'pre' | 'post')} className={inputCls}>
                     <option value="pre">pre (runs before stage)</option>
                     <option value="post">post (runs after stage)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Scope</label>
+                  <label className="block text-sm text-secondary mb-1">Scope</label>
                   <select value={scriptScope} onChange={(e) => setScriptScope(e.target.value as 'worker' | 'master')} className={inputCls}>
                     <option value="worker">worker (runs on worker node)</option>
                     <option value="master">master (runs on master node)</option>
@@ -310,48 +310,48 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Worker ID (optional)</label>
+                <label className="block text-sm text-secondary mb-1">Worker ID (optional)</label>
                 <input value={workerId} onChange={(e) => setWorkerId(e.target.value)} className={inputCls}
                   placeholder="Leave blank to target all workers" />
               </div>
               <div>
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input type="checkbox" checked={lockEnabled} onChange={(e) => setLockEnabled(e.target.checked)}
-                    className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                  <span className="text-sm text-slate-300">Enable Lock</span>
+                    className="rounded border-border bg-input accent-accent focus:ring-accent" />
+                  <span className="text-sm text-secondary">Enable Lock</span>
                 </label>
                 {lockEnabled && (
                   <div className="mt-2 space-y-2 pl-1 border-l-2 border-orange-700/40 pl-3">
                     <div>
-                      <label className="block text-sm text-slate-300 mb-1">Lock Key</label>
+                      <label className="block text-sm text-secondary mb-1">Lock Key</label>
                       <input value={lockKey} onChange={(e) => setLockKey(e.target.value)} className={inputCls}
                         placeholder="{{WORKER_ID}}-{{REPO_NAME}}-pre" />
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-disabled mt-1">
                         Vars: {'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{STAGE_NAME}} {{JOB_GROUP_ID}}'}
                       </p>
                     </div>
                     <div>
-                      <label className="block text-sm text-slate-300 mb-1">Timeout (secs)</label>
+                      <label className="block text-sm text-secondary mb-1">Timeout (secs)</label>
                       <input type="number" min={1} value={lockTimeoutSecs} onChange={(e) => setLockTimeoutSecs(Number(e.target.value))}
-                        className="w-36 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        className="w-36 px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
                     </div>
                   </div>
                 )}
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Script</label>
+                <label className="block text-sm text-secondary mb-1">Script</label>
                 <textarea value={scriptContent} onChange={(e) => setScriptContent(e.target.value)} rows={6}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent resize-y"
                   placeholder={'#!/bin/bash\necho "pre-stage hook"'} />
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => { setShowAdd(false); resetAddForm(); }}
-                className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent">
                 Cancel
               </button>
               <button onClick={() => createMut.mutate()} disabled={!scriptContent || createMut.isPending}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent">
                 Create
               </button>
             </div>
@@ -395,13 +395,13 @@ function ResourceSummary({ stages }: { stages: { required_cpu: number; required_
   if (maxCpu === 0 && maxMem === 0 && maxDisk === 0) return null;
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3">
-      <p className="text-xs text-slate-500 mb-1.5 uppercase font-semibold">Resource Requirements (max across stages)</p>
+    <div className="bg-surface-2/50 border border-border rounded-lg px-4 py-3">
+      <p className="text-xs text-disabled mb-1.5 uppercase font-semibold">Resource Requirements (max across stages)</p>
       <div className="flex gap-6 text-sm">
-        <span className="text-slate-300">CPU: <span className="text-white font-medium">{maxCpu} cores</span></span>
-        <span className="text-slate-300">Memory: <span className="text-white font-medium">{formatResourceValue(maxMem)}</span></span>
-        <span className="text-slate-300">Disk: <span className="text-white font-medium">{formatResourceValue(maxDisk)}</span></span>
-        <span className="text-slate-300">Max Duration: <span className="text-white font-medium">{formatDurationSecs(maxDuration)}</span></span>
+        <span className="text-secondary">CPU: <span className="text-primary font-medium">{maxCpu} cores</span></span>
+        <span className="text-secondary">Memory: <span className="text-primary font-medium">{formatResourceValue(maxMem)}</span></span>
+        <span className="text-secondary">Disk: <span className="text-primary font-medium">{formatResourceValue(maxDisk)}</span></span>
+        <span className="text-secondary">Max Duration: <span className="text-primary font-medium">{formatDurationSecs(maxDuration)}</span></span>
       </div>
     </div>
   );
@@ -498,14 +498,14 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
   });
 
   const stages = (stagesData?.stages ?? []).sort((a, b) => a.execution_order - b.execution_order);
-  const inputCls = "w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+  const inputCls = "w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent";
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Stage Configs</h3>
+        <h3 className="text-lg font-semibold text-primary">Stage Configs</h3>
         {canManage && (
-          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent">
             Add Stage
           </button>
         )}
@@ -513,37 +513,37 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
 
       <ResourceSummary stages={stages} />
 
-      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
         <table className="w-full" aria-label="Stage configurations">
           <thead>
-            <tr className="border-b border-slate-700">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Order</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Name</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Command</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Mode</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">CPU</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Memory</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Disk</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Timeout</th>
-              <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Scripts</th>
-              {canManage && <th className="px-4 py-3 text-xs text-slate-400 uppercase">Actions</th>}
+            <tr className="border-b border-border">
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Order</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Name</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Command</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Mode</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">CPU</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Memory</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Disk</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Type</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Timeout</th>
+              <th className="px-4 py-3 text-xs font-semibold text-muted uppercase">Scripts</th>
+              {canManage && <th className="px-4 py-3 text-xs text-muted uppercase">Actions</th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-border">
             {stages.map(s => {
               const isEditing = editingStageId === s.id;
               if (isEditing) {
                 return (
-                  <tr key={s.id} className="bg-slate-800/40">
-                    <td className="px-4 py-2 text-sm text-slate-400">{s.execution_order}</td>
-                    <td className="px-4 py-2 text-sm text-slate-200 font-medium">{s.stage_name}</td>
+                  <tr key={s.id} className="bg-surface-2/40">
+                    <td className="px-4 py-2 text-sm text-muted">{s.execution_order}</td>
+                    <td className="px-4 py-2 text-sm text-secondary font-medium">{s.stage_name}</td>
                     <td className="px-4 py-2">
                       <textarea
                         value={editCommand}
                         onChange={e => setEditCommand(e.target.value)}
                         rows={2}
-                        className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                        className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent resize-none"
                         placeholder={editCommandMode === 'required' ? 'user-provided' : 'make build'}
                       />
                     </td>
@@ -551,7 +551,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                       <select
                         value={editCommandMode}
                         onChange={e => setEditCommandMode(e.target.value)}
-                        className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
                       >
                         <option value="fixed">fixed</option>
                         <option value="optional">optional</option>
@@ -563,7 +563,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                         type="number" min={0} max={1024}
                         value={editCpu}
                         onChange={e => setEditCpu(Number(e.target.value))}
-                        className="w-16 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-16 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -571,7 +571,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                         type="number" min={0}
                         value={editMemoryMb}
                         onChange={e => setEditMemoryMb(Number(e.target.value))}
-                        className="w-20 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-20 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -579,16 +579,16 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                         type="number" min={0}
                         value={editDiskMb}
                         onChange={e => setEditDiskMb(Number(e.target.value))}
-                        className="w-20 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-20 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
                       />
                     </td>
-                    <td className="px-4 py-2 text-sm text-slate-400">{s.job_type}</td>
+                    <td className="px-4 py-2 text-sm text-muted">{s.job_type}</td>
                     <td className="px-4 py-2">
                       <input
                         type="number" min={0} max={86400}
                         value={editDurationSecs}
                         onChange={e => setEditDurationSecs(Number(e.target.value))}
-                        className="w-20 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-20 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
                       />
                     </td>
                     <td className="px-4 py-2"></td>
@@ -603,7 +603,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                         </button>
                         <button
                           onClick={cancelEdit}
-                          className="text-xs text-slate-400 hover:text-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-500 rounded"
+                          className="text-xs text-muted hover:text-primary focus:outline-none focus:ring-1 focus:ring-border rounded"
                         >
                           Cancel
                         </button>
@@ -616,22 +616,22 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
               const colSpanTotal = canManage ? 11 : 10;
               return (
                 <React.Fragment key={s.id}>
-                  <tr className={isExpanded ? 'bg-slate-800/20' : undefined}>
-                    <td className="px-4 py-3 text-sm text-slate-400">{s.execution_order}</td>
-                    <td className="px-4 py-3 text-sm text-slate-200 font-medium">{s.stage_name}</td>
-                    <td className="px-4 py-3 text-sm text-slate-400 font-mono truncate max-w-xs">{s.command || <span className="italic text-slate-600">user-provided</span>}</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{s.command_mode ?? 'fixed'}</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{s.required_cpu}c</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{formatResourceValue(s.required_memory_mb)}</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{formatResourceValue(s.required_disk_mb)}</td>
-                    <td className="px-4 py-3 text-sm text-slate-400">{s.job_type}</td>
-                    <td className="px-4 py-3 text-sm text-slate-400">{formatDurationSecs(s.max_duration_secs)}</td>
+                  <tr className={isExpanded ? 'bg-surface-2/20' : undefined}>
+                    <td className="px-4 py-3 text-sm text-muted">{s.execution_order}</td>
+                    <td className="px-4 py-3 text-sm text-secondary font-medium">{s.stage_name}</td>
+                    <td className="px-4 py-3 text-sm text-muted font-mono truncate max-w-xs">{s.command || <span className="italic text-disabled">user-provided</span>}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{s.command_mode ?? 'fixed'}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{s.required_cpu}c</td>
+                    <td className="px-4 py-3 text-xs text-muted">{formatResourceValue(s.required_memory_mb)}</td>
+                    <td className="px-4 py-3 text-xs text-muted">{formatResourceValue(s.required_disk_mb)}</td>
+                    <td className="px-4 py-3 text-sm text-muted">{s.job_type}</td>
+                    <td className="px-4 py-3 text-sm text-muted">{formatDurationSecs(s.max_duration_secs)}</td>
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => setExpandedStageId(isExpanded ? null : s.id)}
                         aria-expanded={isExpanded}
                         aria-label={`${isExpanded ? 'Collapse' : 'Expand'} scripts for ${s.stage_name}`}
-                        className="text-slate-400 hover:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                        className="text-muted hover:text-primary focus:outline-none focus:ring-1 focus:ring-accent rounded"
                       >
                         <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -644,7 +644,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                           <button
                             onClick={() => startEdit(s)}
                             disabled={editingStageId !== null}
-                            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                            className="text-xs text-accent-text hover:opacity-80 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-accent rounded"
                           >
                             Edit
                           </button>
@@ -661,7 +661,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={colSpanTotal} className="p-0 border-b border-slate-700/50">
+                      <td colSpan={colSpanTotal} className="p-0 border-b border-border/50">
                         <ScriptsPanel repoId={repoId} stageId={s.id} canManage={canManage} />
                       </td>
                     </tr>
@@ -670,7 +670,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
               );
             })}
             {!stages.length && (
-              <tr><td colSpan={canManage ? 11 : 10} className="px-4 py-8 text-center text-slate-500">No stages configured</td></tr>
+              <tr><td colSpan={canManage ? 11 : 10} className="px-4 py-8 text-center text-disabled">No stages configured</td></tr>
             )}
           </tbody>
         </table>
@@ -678,15 +678,15 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Stage</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Stage</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Stage Name</label>
+                <label className="block text-sm text-secondary mb-1">Stage Name</label>
                 <input value={stageName} onChange={e => setStageName(e.target.value)} className={inputCls} placeholder="build" />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Command Mode</label>
+                <label className="block text-sm text-secondary mb-1">Command Mode</label>
                 <select value={commandMode} onChange={e => setCommandMode(e.target.value)} className={inputCls}>
                   <option value="fixed">Fixed (always use configured command)</option>
                   <option value="optional">Optional (user can override)</option>
@@ -694,35 +694,35 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Command {commandMode === 'required' ? '(optional)' : ''}</label>
+                <label className="block text-sm text-secondary mb-1">Command {commandMode === 'required' ? '(optional)' : ''}</label>
                 <input value={command} onChange={e => setCommand(e.target.value)} className={inputCls} placeholder={commandMode === 'required' ? 'User will provide at runtime' : 'make build'} />
-                {commandMode === 'optional' && <p className="text-xs text-slate-500 mt-1">User can override this command at submission time</p>}
-                {commandMode === 'required' && <p className="text-xs text-slate-500 mt-1">User must provide a command when submitting this stage</p>}
+                {commandMode === 'optional' && <p className="text-xs text-disabled mt-1">User can override this command at submission time</p>}
+                {commandMode === 'required' && <p className="text-xs text-disabled mt-1">User must provide a command when submitting this stage</p>}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">CPU (cores)</label>
+                  <label className="block text-sm text-secondary mb-1">CPU (cores)</label>
                   <input type="number" min={0} max={1024} value={requiredCpu} onChange={e => setRequiredCpu(Number(e.target.value))} className={inputCls} />
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Memory (MB)</label>
+                  <label className="block text-sm text-secondary mb-1">Memory (MB)</label>
                   <input type="number" min={0} value={requiredMemoryMb} onChange={e => setRequiredMemoryMb(Number(e.target.value))} className={inputCls} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Disk (MB)</label>
+                  <label className="block text-sm text-secondary mb-1">Disk (MB)</label>
                   <input type="number" min={0} value={requiredDiskMb} onChange={e => setRequiredDiskMb(Number(e.target.value))} className={inputCls} />
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-300 mb-1">Timeout (seconds)</label>
+                  <label className="block text-sm text-secondary mb-1">Timeout (seconds)</label>
                   <input type="number" min={0} max={86400} value={maxDurationSecs} onChange={e => setMaxDurationSecs(Number(e.target.value))} className={inputCls} />
                 </div>
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => { setShowAdd(false); resetForm(); }} className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700">Cancel</button>
-              <button onClick={() => addStage.mutate()} disabled={!stageName || (commandMode !== 'required' && !command)} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700">Create</button>
+              <button onClick={() => { setShowAdd(false); resetForm(); }} className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Cancel</button>
+              <button onClick={() => addStage.mutate()} disabled={!stageName || (commandMode !== 'required' && !command)} className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Create</button>
             </div>
           </div>
         </div>
@@ -739,36 +739,36 @@ function DeliveryPanel({ repoId, webhookId }: { repoId: string; webhookId: strin
     queryFn: () => listWebhookDeliveries(repoId, webhookId),
   });
 
-  if (isLoading) return <div className="px-6 py-4 text-sm text-slate-400">Loading deliveries…</div>;
-  if (isError) return <div className="px-6 py-4 text-sm text-slate-500">No delivery history available.</div>;
+  if (isLoading) return <div className="px-6 py-4 text-sm text-muted">Loading deliveries…</div>;
+  if (isError) return <div className="px-6 py-4 text-sm text-disabled">No delivery history available.</div>;
 
   const deliveries = data?.deliveries ?? [];
 
   if (!deliveries.length) {
-    return <div className="px-6 py-4 text-sm text-slate-500">No deliveries yet.</div>;
+    return <div className="px-6 py-4 text-sm text-disabled">No deliveries yet.</div>;
   }
 
   return (
     <table className="w-full" aria-label="Webhook delivery history">
       <thead>
-        <tr className="border-b border-slate-700/50">
-          <th className="px-6 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Delivered</th>
-          <th className="px-6 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Event</th>
-          <th className="px-6 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Status</th>
-          <th className="px-6 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Response Time</th>
+        <tr className="border-b border-border/50">
+          <th className="px-6 py-2 text-left text-xs font-semibold text-muted uppercase">Delivered</th>
+          <th className="px-6 py-2 text-left text-xs font-semibold text-muted uppercase">Event</th>
+          <th className="px-6 py-2 text-left text-xs font-semibold text-muted uppercase">Status</th>
+          <th className="px-6 py-2 text-left text-xs font-semibold text-muted uppercase">Response Time</th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-slate-800">
+      <tbody className="divide-y divide-border">
         {deliveries.map(d => (
           <tr key={d.id}>
-            <td className="px-6 py-2 text-sm"><TimeAgo date={d.delivered_at} className="text-slate-500" /></td>
-            <td className="px-6 py-2 text-sm text-slate-300">{d.event}</td>
+            <td className="px-6 py-2 text-sm"><TimeAgo date={d.delivered_at} className="text-disabled" /></td>
+            <td className="px-6 py-2 text-sm text-secondary">{d.event}</td>
             <td className="px-6 py-2 text-sm">
               <span className={d.success ? 'text-green-400' : 'text-red-400'}>
                 {d.status_code}
               </span>
             </td>
-            <td className="px-6 py-2 text-sm text-slate-400">{d.response_time_ms}ms</td>
+            <td className="px-6 py-2 text-sm text-muted">{d.response_time_ms}ms</td>
           </tr>
         ))}
       </tbody>
@@ -787,25 +787,25 @@ function WebhookRow({ repoId, webhook, canManage, onDelete }: {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="border-b border-slate-800 last:border-0">
+    <div className="border-b border-border last:border-0">
       <div className="px-4 py-3 flex items-center gap-3">
         <button
           onClick={() => setExpanded(e => !e)}
           aria-expanded={expanded}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} webhook ${webhook.provider} delivery history`}
-          className="text-slate-400 hover:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+          className="text-muted hover:text-primary focus:outline-none focus:ring-1 focus:ring-accent rounded"
         >
           <svg className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </button>
-        <span className="text-sm font-medium text-slate-200 capitalize">{webhook.provider}</span>
+        <span className="text-sm font-medium text-secondary capitalize">{webhook.provider}</span>
         <div className="flex gap-1 flex-wrap">
           {webhook.events.map(e => (
-            <span key={e} className="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded">{e}</span>
+            <span key={e} className="text-xs px-1.5 py-0.5 bg-surface-2 text-secondary rounded">{e}</span>
           ))}
         </div>
-        <span className={`ml-auto text-xs px-2 py-0.5 rounded ${webhook.enabled ? 'text-green-400 bg-green-500/10' : 'text-slate-500 bg-slate-700'}`}>
+        <span className={`ml-auto text-xs px-2 py-0.5 rounded ${webhook.enabled ? 'text-green-400 bg-green-500/10' : 'text-disabled bg-surface-2'}`}>
           {webhook.enabled ? 'active' : 'disabled'}
         </span>
         {canManage && (
@@ -815,7 +815,7 @@ function WebhookRow({ repoId, webhook, canManage, onDelete }: {
         )}
       </div>
       {expanded && (
-        <div className="bg-slate-800/30">
+        <div className="bg-surface-2/30">
           <DeliveryPanel repoId={repoId} webhookId={webhook.id} />
         </div>
       )}
@@ -856,17 +856,17 @@ function WebhookSection({ repoId, canManage }: { repoId: string; canManage: bool
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Webhooks</h3>
+        <h3 className="text-lg font-semibold text-primary">Webhooks</h3>
         {canManage && (
-          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent">
             Add Webhook
           </button>
         )}
       </div>
 
-      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
         {webhooks.length === 0 ? (
-          <div className="px-4 py-8 text-center text-slate-500">No webhooks configured</div>
+          <div className="px-4 py-8 text-center text-disabled">No webhooks configured</div>
         ) : (
           webhooks.map(w => (
             <WebhookRow
@@ -882,18 +882,18 @@ function WebhookSection({ repoId, canManage }: { repoId: string; canManage: bool
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Webhook</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Webhook</h3>
             <div>
-              <label className="block text-sm text-slate-300 mb-1">Provider</label>
-              <select value={provider} onChange={e => setProvider(e.target.value as 'github' | 'gitlab')} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <label className="block text-sm text-secondary mb-1">Provider</label>
+              <select value={provider} onChange={e => setProvider(e.target.value as 'github' | 'gitlab')} className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent">
                 <option value="github">GitHub</option>
                 <option value="gitlab">GitLab</option>
               </select>
             </div>
             <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700">Cancel</button>
-              <button onClick={() => addWebhook.mutate()} disabled={addWebhook.isPending} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700">Create</button>
+              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Cancel</button>
+              <button onClick={() => addWebhook.mutate()} disabled={addWebhook.isPending} className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Create</button>
             </div>
           </div>
         </div>
@@ -957,34 +957,34 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Command Blacklist</h3>
+        <h3 className="text-lg font-semibold text-primary">Command Blacklist</h3>
         {canManage && (
           <button
             onClick={() => setShowAdd(true)}
-            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Add Rule
           </button>
         )}
       </div>
 
-      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
         <table className="w-full" aria-label="Repo command blacklist">
           <thead>
-            <tr className="border-b border-slate-700">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Pattern</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Description</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
+            <tr className="border-b border-border">
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Pattern</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Description</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Status</th>
               {canManage && (
-                <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase text-center">Actions</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted uppercase text-center">Actions</th>
               )}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-border">
             {entries.map((e) => (
               <tr key={e.id}>
-                <td className="px-4 py-3 text-sm text-slate-200 font-mono truncate max-w-xs">{e.pattern}</td>
-                <td className="px-4 py-3 text-sm text-slate-400">{e.description ?? '—'}</td>
+                <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs">{e.pattern}</td>
+                <td className="px-4 py-3 text-sm text-muted">{e.description ?? '—'}</td>
                 <td className="px-4 py-3">
                   {canManage ? (
                     <button
@@ -992,7 +992,7 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
                       className={`text-xs px-2 py-0.5 rounded border transition-colors focus:outline-none focus:ring-1 ${
                         e.enabled
                           ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                          : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
+                          : 'bg-surface-2 text-muted border-border hover:bg-surface-hover'
                       }`}
                     >
                       {e.enabled ? 'Enabled' : 'Disabled'}
@@ -1002,7 +1002,7 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
                       className={`text-xs px-2 py-0.5 rounded border ${
                         e.enabled
                           ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : 'bg-slate-700 text-slate-400 border-slate-600'
+                          : 'bg-surface-2 text-muted border-border'
                       }`}
                     >
                       {e.enabled ? 'Enabled' : 'Disabled'}
@@ -1023,7 +1023,7 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
             ))}
             {!entries.length && (
               <tr>
-                <td colSpan={canManage ? 4 : 3} className="px-4 py-6 text-center text-slate-500 text-sm">
+                <td colSpan={canManage ? 4 : 3} className="px-4 py-6 text-center text-disabled text-sm">
                   No blacklist rules for this repo.
                 </td>
               </tr>
@@ -1034,25 +1034,25 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Command Rule</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Command Rule</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Pattern (regex)</label>
+                <label className="block text-sm text-secondary mb-1">Pattern (regex)</label>
                 <input
                   value={pattern}
                   onChange={(e) => setPattern(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="^rm -rf.*"
                 />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Description</label>
+                <label className="block text-sm text-secondary mb-1">Description</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
                   placeholder="Why this pattern is blocked..."
                 />
               </div>
@@ -1060,14 +1060,14 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowAdd(false)}
-                className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => createMut.mutate()}
                 disabled={!pattern || createMut.isPending}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
               >
                 Create
               </button>
@@ -1160,18 +1160,18 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Cron Schedules</h3>
+        <h3 className="text-lg font-semibold text-primary">Cron Schedules</h3>
         {canManage && (
-          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent">
             Add Schedule
           </button>
         )}
       </div>
 
-      <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-700 text-left text-xs text-slate-400 uppercase">
+            <tr className="border-b border-border text-left text-xs text-muted uppercase">
               <th className="px-4 py-3">Interval</th>
               <th className="px-4 py-3">Branch</th>
               <th className="px-4 py-3">Stages</th>
@@ -1180,31 +1180,31 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
               {canManage && <th className="px-4 py-3">Actions</th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-border">
             {schedules.map((s) => (
-              <tr key={s.id} className="hover:bg-slate-800/50">
-                <td className="px-4 py-3 text-slate-200 font-mono">{formatInterval(s.interval_secs)}</td>
-                <td className="px-4 py-3 text-slate-300">{s.branch}</td>
-                <td className="px-4 py-3 text-slate-300">
+              <tr key={s.id} className="hover:bg-surface-hover/50">
+                <td className="px-4 py-3 text-secondary font-mono">{formatInterval(s.interval_secs)}</td>
+                <td className="px-4 py-3 text-secondary">{s.branch}</td>
+                <td className="px-4 py-3 text-secondary">
                   {s.stages.map((st) => (
-                    <span key={st} className="inline-block px-2 py-0.5 text-xs bg-slate-700 rounded mr-1 mb-1">{st}</span>
+                    <span key={st} className="inline-block px-2 py-0.5 text-xs bg-surface-2 text-secondary rounded mr-1 mb-1">{st}</span>
                   ))}
                 </td>
                 <td className="px-4 py-3">
                   {canManage ? (
                     <button
                       onClick={() => toggleMut.mutate({ id: s.id, enabled: !s.enabled })}
-                      className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}
+                      className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-surface-2 text-muted'}`}
                     >
                       {s.enabled ? 'Enabled' : 'Disabled'}
                     </button>
                   ) : (
-                    <span className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
+                    <span className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-surface-2 text-muted'}`}>
                       {s.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-slate-400 text-xs">
+                <td className="px-4 py-3 text-muted text-xs">
                   <TimeAgo date={s.next_run_at} />
                 </td>
                 {canManage && (
@@ -1216,7 +1216,7 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
             ))}
             {!schedules.length && (
               <tr>
-                <td colSpan={canManage ? 6 : 5} className="px-4 py-6 text-center text-slate-500 text-sm">
+                <td colSpan={canManage ? 6 : 5} className="px-4 py-6 text-center text-disabled text-sm">
                   No cron schedules configured.
                 </td>
               </tr>
@@ -1227,25 +1227,25 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Cron Schedule</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add Cron Schedule</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Interval (minutes)</label>
+                <label className="block text-sm text-secondary mb-1">Interval (minutes)</label>
                 <input type="number" min={1} value={intervalMins} onChange={(e) => setIntervalMins(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Branch</label>
+                <label className="block text-sm text-secondary mb-1">Branch</label>
                 <input value={branch} onChange={(e) => setBranch(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="main" />
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent" placeholder="main" />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Stages</label>
+                <label className="block text-sm text-secondary mb-1">Stages</label>
                 {availableStages.length > 0 ? (
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto bg-slate-800 border border-slate-600 rounded-lg p-2">
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto bg-input border border-border rounded-lg p-2">
                     {availableStages.map((name) => (
-                      <label key={name} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-700 cursor-pointer">
+                      <label key={name} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-hover cursor-pointer">
                         <input
                           type="checkbox"
                           checked={selectedStages.includes(name)}
@@ -1253,24 +1253,24 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
                             if (e.target.checked) setSelectedStages((prev) => [...prev, name]);
                             else setSelectedStages((prev) => prev.filter((s) => s !== name));
                           }}
-                          className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                          className="rounded border-border bg-input accent-accent focus:ring-accent"
                         />
-                        <span className="text-sm text-slate-200 font-mono">{name}</span>
+                        <span className="text-sm text-secondary font-mono">{name}</span>
                       </label>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500 italic">No stages configured for this repo. Add stages first.</p>
+                  <p className="text-xs text-disabled italic">No stages configured for this repo. Add stages first.</p>
                 )}
                 {selectedStages.length > 0 && (
-                  <p className="mt-1 text-xs text-slate-400">Selected: {selectedStages.join(', ')}</p>
+                  <p className="mt-1 text-xs text-muted">Selected: {selectedStages.join(', ')}</p>
                 )}
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700">Cancel</button>
+              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Cancel</button>
               <button onClick={() => createMut.mutate()} disabled={selectedStages.length === 0 || createMut.isPending}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700">Create</button>
+                className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Create</button>
             </div>
           </div>
         </div>
@@ -1342,7 +1342,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
     const colors: Record<string, string> = {
       worker: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
       master: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-      both: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+      both: 'bg-accent-soft text-accent-text border-accent/30',
     };
     return (
       <span className={`text-xs px-2 py-0.5 rounded border ${colors[scope] || colors.worker}`}>
@@ -1352,15 +1352,15 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-        <h3 className="text-sm font-semibold text-slate-200">Global Scripts</h3>
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <h3 className="text-sm font-semibold text-secondary">Global Scripts</h3>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500">Runs before first stage / after last stage</span>
+          <span className="text-xs text-muted">Runs before first stage / after last stage</span>
           {canManage && !editing && (
             <button
               onClick={() => setEditing(true)}
-              className="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              className="text-xs px-3 py-1 bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
             >
               Edit
             </button>
@@ -1372,12 +1372,12 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
         {/* Pre-script */}
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs px-2 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/30">PRE</span>
+            <span className="text-xs px-2 py-0.5 rounded border bg-accent-soft text-accent-text border-accent/30">PRE</span>
             {editing ? (
               <select
                 value={preScope}
                 onChange={(e) => setPreScope(e.target.value)}
-                className="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"
+                className="text-xs bg-input border border-border rounded px-2 py-1 text-primary focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="worker">Worker</option>
                 <option value="master">Controller</option>
@@ -1392,17 +1392,17 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                   LOCK {preLockKey || '(default key)'} — {preLockTimeoutSecs}s
                 </span>
               ) : (
-                <span className="text-xs text-slate-600">No lock</span>
+                <span className="text-xs text-disabled">No lock</span>
               )
             )}
             {editing && (
               <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
                 <input type="checkbox" checked={preLockEnabled} onChange={(e) => setPreLockEnabled(e.target.checked)}
-                  className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                <span className="text-xs text-slate-300">Lock</span>
+                  className="rounded border-border bg-input accent-accent focus:ring-accent" />
+                <span className="text-xs text-secondary">Lock</span>
               </label>
             )}
-            <span className="text-xs text-slate-500">Runs before first stage of every build</span>
+            <span className="text-xs text-muted">Runs before first stage of every build</span>
           </div>
           {editing ? (
             <>
@@ -1410,32 +1410,32 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                 value={preScript}
                 onChange={(e) => setPreScript(e.target.value)}
                 rows={6}
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-xs focus:outline-none focus:ring-2 focus:ring-accent resize-y"
                 placeholder="#!/bin/bash&#10;set -e&#10;# Workspace setup script..."
               />
               {preLockEnabled && (
                 <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-orange-700/40 pl-3">
                   <div className="flex-1 min-w-48">
-                    <label className="block text-xs text-slate-400 mb-1">Lock Key</label>
+                    <label className="block text-xs text-muted mb-1">Lock Key</label>
                     <input value={preLockKey} onChange={(e) => setPreLockKey(e.target.value)}
-                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="{{WORKER_ID}}-{{REPO_NAME}}-pre" />
-                    <p className="text-xs text-slate-500 mt-0.5">{'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{JOB_GROUP_ID}}'}</p>
+                    <p className="text-xs text-muted mt-0.5">{'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{JOB_GROUP_ID}}'}</p>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Timeout (secs)</label>
+                    <label className="block text-xs text-muted mb-1">Timeout (secs)</label>
                     <input type="number" min={1} value={preLockTimeoutSecs} onChange={(e) => setPreLockTimeoutSecs(Number(e.target.value))}
-                      className="w-28 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      className="w-28 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent" />
                   </div>
                 </div>
               )}
             </>
           ) : preScript ? (
-            <pre className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+            <pre className="px-3 py-2 bg-surface-2 border border-border rounded-lg text-xs text-secondary font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
               {preScript}
             </pre>
           ) : (
-            <p className="text-xs text-slate-500 italic">No global pre-script configured</p>
+            <p className="text-xs text-disabled italic">No global pre-script configured</p>
           )}
         </div>
 
@@ -1447,7 +1447,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
               <select
                 value={postScope}
                 onChange={(e) => setPostScope(e.target.value)}
-                className="text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"
+                className="text-xs bg-input border border-border rounded px-2 py-1 text-primary focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="worker">Worker</option>
                 <option value="master">Controller</option>
@@ -1462,17 +1462,17 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                   LOCK {postLockKey || '(default key)'} — {postLockTimeoutSecs}s
                 </span>
               ) : (
-                <span className="text-xs text-slate-600">No lock</span>
+                <span className="text-xs text-disabled">No lock</span>
               )
             )}
             {editing && (
               <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
                 <input type="checkbox" checked={postLockEnabled} onChange={(e) => setPostLockEnabled(e.target.checked)}
-                  className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500" />
-                <span className="text-xs text-slate-300">Lock</span>
+                  className="rounded border-border bg-input accent-accent focus:ring-accent" />
+                <span className="text-xs text-secondary">Lock</span>
               </label>
             )}
-            <span className="text-xs text-slate-500">Runs after last stage of every build</span>
+            <span className="text-xs text-muted">Runs after last stage of every build</span>
           </div>
           {editing ? (
             <>
@@ -1480,32 +1480,32 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                 value={postScript}
                 onChange={(e) => setPostScript(e.target.value)}
                 rows={4}
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary font-mono text-xs focus:outline-none focus:ring-2 focus:ring-accent resize-y"
                 placeholder="#!/bin/bash&#10;# Cleanup, notifications..."
               />
               {postLockEnabled && (
                 <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-orange-700/40 pl-3">
                   <div className="flex-1 min-w-48">
-                    <label className="block text-xs text-slate-400 mb-1">Lock Key</label>
+                    <label className="block text-xs text-muted mb-1">Lock Key</label>
                     <input value={postLockKey} onChange={(e) => setPostLockKey(e.target.value)}
-                      className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-2 py-1 bg-input border border-border rounded text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="{{WORKER_ID}}-{{REPO_NAME}}-post" />
-                    <p className="text-xs text-slate-500 mt-0.5">{'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{JOB_GROUP_ID}}'}</p>
+                    <p className="text-xs text-muted mt-0.5">{'{{WORKER_ID}} {{REPO_NAME}} {{COMMIT_SHA}} {{BRANCH}} {{JOB_GROUP_ID}}'}</p>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Timeout (secs)</label>
+                    <label className="block text-xs text-muted mb-1">Timeout (secs)</label>
                     <input type="number" min={1} value={postLockTimeoutSecs} onChange={(e) => setPostLockTimeoutSecs(Number(e.target.value))}
-                      className="w-28 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      className="w-28 px-2 py-1 bg-input border border-border rounded text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent" />
                   </div>
                 </div>
               )}
             </>
           ) : postScript ? (
-            <pre className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+            <pre className="px-3 py-2 bg-surface-2 border border-border rounded-lg text-xs text-secondary font-mono overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
               {postScript}
             </pre>
           ) : (
-            <p className="text-xs text-slate-500 italic">No global post-script configured</p>
+            <p className="text-xs text-disabled italic">No global post-script configured</p>
           )}
         </div>
 
@@ -1526,14 +1526,14 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                 setPostLockKey(repo?.global_post_script_lock_key ?? '');
                 setPostLockTimeoutSecs(repo?.global_post_script_lock_timeout_secs ?? 120);
               }}
-              className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700"
+              className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={() => saveMut.mutate()}
               disabled={saveMut.isPending}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700"
+              className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
             >
               {saveMut.isPending ? 'Saving...' : 'Save'}
             </button>
@@ -1569,18 +1569,18 @@ export default function RepoDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <button onClick={() => nav('/repos')} className="text-slate-400 hover:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 rounded">
+        <button onClick={() => nav('/repos')} className="text-muted hover:text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent rounded">
           &lt; Repos
         </button>
-        <h2 className="text-2xl font-bold text-white">{repo?.repo_name || 'Loading...'}</h2>
+        <h2 className="text-2xl font-bold text-primary">{repo?.repo_name || 'Loading...'}</h2>
       </div>
 
       {repo && (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div><p className="text-xs text-slate-500">URL</p><p className="text-sm text-slate-200 font-mono truncate">{repo.repo_url}</p></div>
-          <div><p className="text-xs text-slate-500">Default Branch</p><p className="text-sm text-slate-200">{repo.default_branch}</p></div>
+        <div className="bg-surface border border-border rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div><p className="text-xs text-muted">URL</p><p className="text-sm text-secondary font-mono truncate">{repo.repo_url}</p></div>
+          <div><p className="text-xs text-muted">Default Branch</p><p className="text-sm text-secondary">{repo.default_branch}</p></div>
           <div>
-            <p className="text-xs text-slate-500">Status</p>
+            <p className="text-xs text-muted">Status</p>
             {canManageRepos ? (
               <button
                 onClick={() => toggleEnabled.mutate()}
@@ -1599,7 +1599,7 @@ export default function RepoDetailPage() {
               </span>
             )}
           </div>
-          <div><p className="text-xs text-slate-500">Stages</p><p className="text-sm text-slate-200">{stageCount}</p></div>
+          <div><p className="text-xs text-muted">Stages</p><p className="text-sm text-secondary">{stageCount}</p></div>
         </div>
       )}
 

@@ -53,18 +53,18 @@ function TagInput({
 
   return (
     <div>
-      <label className="block text-sm text-slate-300 mb-1">{label}</label>
-      <div className="flex flex-wrap gap-1 p-2 bg-slate-800 border border-slate-600 rounded-lg min-h-[42px]">
+      <label className="block text-sm text-secondary mb-1">{label}</label>
+      <div className="flex flex-wrap gap-1 p-2 bg-input border border-border rounded-lg min-h-[42px]">
         {tags.map((t) => (
           <span
             key={t}
-            className="flex items-center gap-1 px-2 py-0.5 bg-slate-700 text-slate-200 rounded text-xs"
+            className="flex items-center gap-1 px-2 py-0.5 bg-surface-2 text-secondary rounded text-xs"
           >
             {t}
             <button
               type="button"
               onClick={() => removeTag(t)}
-              className="text-slate-400 hover:text-white focus:outline-none"
+              className="text-muted hover:text-primary focus:outline-none"
               aria-label={`Remove ${t}`}
             >
               &times;
@@ -76,7 +76,7 @@ function TagInput({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           onBlur={addTag}
-          className="flex-1 min-w-[120px] bg-transparent text-white text-sm outline-none placeholder-slate-500"
+          className="flex-1 min-w-[120px] bg-transparent text-primary text-sm outline-none placeholder:text-disabled"
           placeholder={placeholder ?? 'Type and press Enter'}
         />
       </div>
@@ -115,14 +115,14 @@ function KvEditor({
 
   return (
     <div>
-      <label className="block text-sm text-slate-300 mb-1">{label}</label>
+      <label className="block text-sm text-secondary mb-1">{label}</label>
       {entries.length > 0 && (
         <div className="mb-2 space-y-1">
           {entries.map(([k, v]) => (
             <div key={k} className="flex items-center gap-2 text-xs">
-              <code className="bg-slate-800 px-2 py-1 rounded text-slate-300 font-mono">{k}</code>
-              <span className="text-slate-500">=</span>
-              <code className="bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono flex-1 truncate">
+              <code className="bg-surface-2 px-2 py-1 rounded text-secondary font-mono">{k}</code>
+              <span className="text-muted">=</span>
+              <code className="bg-surface-2 px-2 py-1 rounded text-muted font-mono flex-1 truncate">
                 {v}
               </code>
               <button
@@ -141,14 +141,14 @@ function KvEditor({
         <input
           value={key}
           onChange={(e) => setKey(e.target.value)}
-          className="flex-1 px-2 py-1.5 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="flex-1 px-2 py-1.5 text-xs bg-input border border-border rounded text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
           placeholder="KEY"
         />
-        <span className="text-slate-500 self-center">=</span>
+        <span className="text-muted self-center">=</span>
         <input
           value={val}
           onChange={(e) => setVal(e.target.value)}
-          className="flex-1 px-2 py-1.5 text-xs bg-slate-800 border border-slate-600 rounded text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="flex-1 px-2 py-1.5 text-xs bg-input border border-border rounded text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
           placeholder="value"
           onKeyDown={(e) => e.key === 'Enter' && add()}
         />
@@ -156,7 +156,7 @@ function KvEditor({
           type="button"
           onClick={add}
           disabled={!key.trim()}
-          className="px-2 py-1 text-xs bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-600/30 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          className="px-2 py-1 text-xs bg-accent-soft text-accent-text border border-accent/30 rounded hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
         >
           Add
         </button>
@@ -221,17 +221,17 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full my-4">
-        <h3 className="text-lg font-semibold text-white mb-4">
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full my-4">
+        <h3 className="text-lg font-semibold text-primary mb-4">
           {isEdit ? 'Edit Label Group' : 'Create Label Group'}
         </h3>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Name</label>
+            <label className="block text-sm text-secondary mb-1">Name</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="gpu-workers"
               autoFocus
             />
@@ -258,35 +258,35 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
           />
 
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Pre-script</label>
+            <label className="block text-sm text-secondary mb-1">Pre-script</label>
             <textarea
               value={preScript}
               onChange={(e) => setPreScript(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent resize-none"
               placeholder="#!/bin/bash&#10;echo 'Setup...'"
             />
           </div>
 
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Max concurrent jobs (0 = unlimited)</label>
+            <label className="block text-sm text-secondary mb-1">Max concurrent jobs (0 = unlimited)</label>
             <input
               type="number"
               min="0"
               value={maxConcurrent}
               onChange={(e) => setMaxConcurrent(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
 
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Priority (0 = default, higher = preferred)</label>
+            <label className="block text-sm text-secondary mb-1">Priority (0 = default, higher = preferred)</label>
             <input
               type="number"
               min="0"
               value={priority}
               onChange={(e) => setPriority(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
 
@@ -295,23 +295,23 @@ function LabelGroupFormModal({ initial, onClose, onSaved }: FormModalProps) {
               type="checkbox"
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
-              className="w-4 h-4 rounded accent-blue-600"
+              className="w-4 h-4 rounded accent-accent"
             />
-            <span className="text-sm text-slate-300">Enabled</span>
+            <span className="text-sm text-secondary">Enabled</span>
           </label>
         </div>
 
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Cancel
           </button>
           <button
             onClick={submit}
             disabled={!name.trim() || isPending}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {isPending ? 'Saving...' : isEdit ? 'Update' : 'Create'}
           </button>
@@ -363,24 +363,24 @@ export default function LabelGroupsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         {/* item 37: dynamic count badge; skeleton while loading */}
-        <h2 className="text-2xl font-bold text-white">
+        <h2 className="text-2xl font-bold text-primary">
           Label Groups
           {isLoading
-            ? <span className="ml-2 inline-block h-5 w-8 bg-slate-700 rounded animate-pulse align-middle" />
-            : <span className="ml-2 text-lg text-slate-500">({groups.length})</span>
+            ? <span className="ml-2 inline-block h-5 w-8 bg-surface-2 rounded animate-pulse align-middle" />
+            : <span className="ml-2 text-lg text-muted">({groups.length})</span>
           }
         </h2>
         {canManageRepos && (
           <button
             onClick={() => setShowForm(true)}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
           >
             Create Group
           </button>
         )}
       </div>
 
-      <p className="text-sm text-slate-400">
+      <p className="text-sm text-muted">
         Label groups match workers by labels and can apply shared environment variables, pre-scripts,
         and concurrency limits.
       </p>
@@ -404,23 +404,23 @@ export default function LabelGroupsPage() {
             groups.map((g) => (
               <div
                 key={g.id}
-                className="bg-slate-900 border border-slate-700 rounded-xl p-4"
+                className="bg-surface border border-border rounded-xl p-4"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap mb-2">
-                      <h3 className="text-base font-semibold text-white">{g.name}</h3>
+                      <h3 className="text-base font-semibold text-primary">{g.name}</h3>
                       <span
                         className={`text-xs px-1.5 py-0.5 rounded border ${
                           g.enabled
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : 'bg-slate-700 text-slate-400 border-slate-600'
+                            : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
                         {g.enabled ? 'Enabled' : 'Disabled'}
                       </span>
                       {g.priority > 0 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded border bg-blue-500/10 text-blue-400 border-blue-500/30">
+                        <span className="text-xs px-1.5 py-0.5 rounded border bg-accent-soft text-accent-text border-accent/30">
                           P:{g.priority}
                         </span>
                       )}
@@ -428,11 +428,11 @@ export default function LabelGroupsPage() {
 
                     {g.match_labels.length > 0 && (
                       <div className="flex flex-wrap gap-1 mb-2">
-                        <span className="text-xs text-slate-500 self-center mr-1">Labels:</span>
+                        <span className="text-xs text-muted self-center mr-1">Labels:</span>
                         {g.match_labels.map((l) => (
                           <span
                             key={l}
-                            className="text-xs px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 rounded"
+                            className="text-xs px-1.5 py-0.5 bg-accent-soft text-accent-text border border-accent/30 rounded"
                           >
                             {l}
                           </span>
@@ -442,7 +442,7 @@ export default function LabelGroupsPage() {
 
                     {g.capabilities.length > 0 && (
                       <div className="flex flex-wrap gap-1 mb-2">
-                        <span className="text-xs text-slate-500 self-center mr-1">Capabilities:</span>
+                        <span className="text-xs text-muted self-center mr-1">Capabilities:</span>
                         {g.capabilities.map((c) => (
                           <span
                             key={c}
@@ -454,7 +454,7 @@ export default function LabelGroupsPage() {
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-4 text-xs text-slate-500 mt-1">
+                    <div className="flex flex-wrap gap-4 text-xs text-muted mt-1">
                       {/* item 38: append " jobs" suffix */}
                       {g.max_concurrent_jobs > 0 && (
                         <span>Max concurrent: {g.max_concurrent_jobs} jobs</span>
@@ -477,7 +477,7 @@ export default function LabelGroupsPage() {
                         disabled={toggleMut.isPending}
                         className={`px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 ${
                           g.enabled
-                            ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 focus:ring-slate-500'
+                            ? 'bg-surface-2 text-secondary border-border hover:bg-surface-hover focus:ring-border'
                             : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 focus:ring-emerald-500'
                         }`}
                       >
@@ -485,7 +485,7 @@ export default function LabelGroupsPage() {
                       </button>
                       <button
                         onClick={() => setEditing(g)}
-                        className="px-2 py-1 text-xs bg-blue-600/10 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-600/20 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="px-2 py-1 text-xs bg-accent-soft text-accent-text border border-accent/30 rounded hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-accent"
                       >
                         Edit
                       </button>

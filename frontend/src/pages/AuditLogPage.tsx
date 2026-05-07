@@ -38,20 +38,20 @@ export default function AuditLogPage() {
       key: 'created_at',
       header: 'Timestamp',
       sortable: true,
-      render: (e) => <TimeAgo date={e.created_at} className="text-slate-400 text-xs" />,
+      render: (e) => <TimeAgo date={e.created_at} className="text-muted text-xs" />,
     },
     {
       key: 'username',
       header: 'User',
       sortable: true,
-      render: (e) => <span className="text-slate-200">{e.username}</span>,
+      render: (e) => <span className="text-secondary">{e.username}</span>,
     },
     {
       key: 'action',
       header: 'Action',
       sortable: true,
       render: (e) => (
-        <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300 font-mono">
+        <span className="text-xs px-2 py-0.5 rounded bg-surface-2 text-secondary font-mono">
           {e.action}
         </span>
       ),
@@ -61,28 +61,28 @@ export default function AuditLogPage() {
       header: 'Resource',
       render: (e) =>
         e.resource_type ? (
-          <span className="text-slate-300">
+          <span className="text-secondary">
             {e.resource_type}
             {e.resource_id && (
-              <span className="text-slate-500 text-xs ml-1 font-mono">
+              <span className="text-muted text-xs ml-1 font-mono">
                 {e.resource_id.length > 12 ? e.resource_id.slice(0, 8) + '…' : e.resource_id}
               </span>
             )}
           </span>
         ) : (
-          <span className="text-slate-600">—</span>
+          <span className="text-disabled">—</span>
         ),
     },
     {
       key: 'ip_address',
       header: 'IP',
       render: (e) => (
-        <span className="text-slate-500 text-xs font-mono">{e.ip_address ?? '—'}</span>
+        <span className="text-muted text-xs font-mono">{e.ip_address ?? '—'}</span>
       ),
     },
   ];
 
-  if (isLoading) return <div className="text-slate-400">Loading...</div>;
+  if (isLoading) return <div className="text-muted">Loading...</div>;
   if (isError) return (
     <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
       Failed to load audit log. Please try again.
@@ -92,9 +92,9 @@ export default function AuditLogPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-white">
+        <h2 className="text-2xl font-bold text-primary">
           Audit Log
-          <span className="ml-2 text-sm font-normal text-slate-500">({filtered.length} events)</span>
+          <span className="ml-2 text-sm font-normal text-muted">({filtered.length} events)</span>
         </h2>
       </div>
 
@@ -106,7 +106,7 @@ export default function AuditLogPage() {
           value={filterUser}
           onChange={(e) => { setFilterUser(e.target.value); setPage(0); }}
           aria-label="Filter by username"
-          className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-1.5 text-sm bg-input border border-border rounded-lg text-secondary placeholder:text-disabled focus:outline-none focus:ring-2 focus:ring-accent"
         />
         <input
           type="text"
@@ -114,19 +114,19 @@ export default function AuditLogPage() {
           value={filterAction}
           onChange={(e) => { setFilterAction(e.target.value); setPage(0); }}
           aria-label="Filter by action"
-          className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-1.5 text-sm bg-input border border-border rounded-lg text-secondary placeholder:text-disabled focus:outline-none focus:ring-2 focus:ring-accent"
         />
         <input
           type="date"
           value={filterDate}
           onChange={(e) => { setFilterDate(e.target.value); setPage(0); }}
           aria-label="Filter by date"
-          className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-1.5 text-sm bg-input border border-border rounded-lg text-secondary focus:outline-none focus:ring-2 focus:ring-accent"
         />
         {(filterUser || filterAction || filterDate) && (
           <button
             onClick={() => { setFilterUser(''); setFilterAction(''); setFilterDate(''); setPage(0); }}
-            className="px-3 py-1.5 text-sm text-slate-400 hover:text-white bg-slate-800 border border-slate-700 rounded-lg"
+            className="px-3 py-1.5 text-sm text-muted hover:text-primary bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             Clear
           </button>
@@ -143,7 +143,7 @@ export default function AuditLogPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-slate-400">
+        <div className="flex items-center justify-between text-sm text-muted">
           <span>
             Page {page + 1} of {totalPages}
           </span>
@@ -151,14 +151,14 @@ export default function AuditLogPage() {
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg disabled:opacity-40 hover:bg-slate-700"
+              className="px-3 py-1.5 bg-input border border-border rounded-lg disabled:opacity-40 hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
             >
               Prev
             </button>
             <button
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
-              className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg disabled:opacity-40 hover:bg-slate-700"
+              className="px-3 py-1.5 bg-input border border-border rounded-lg disabled:opacity-40 hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
             >
               Next
             </button>

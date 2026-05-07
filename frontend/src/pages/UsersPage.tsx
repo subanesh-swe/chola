@@ -44,8 +44,8 @@ export default function UsersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Users ({users.length})</h2>
-        <button onClick={() => setShowAdd(true)} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg">Add User</button>
+        <h2 className="text-2xl font-bold text-primary">Users ({users.length})</h2>
+        <button onClick={() => setShowAdd(true)} className="px-4 py-2 text-sm bg-accent hover:bg-accent-hover text-on-accent rounded-lg focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Add User</button>
       </div>
 
       {isError && (
@@ -54,31 +54,31 @@ export default function UsersPage() {
         </div>
       )}
       {isLoading ? <PageSkeleton /> : (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-surface border border-border rounded-xl overflow-hidden">
           <table className="w-full">
-            <thead><tr className="border-b border-slate-700">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Username</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Display Name</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Role</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Created</th>
-              <th className="px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Actions</th>
+            <thead><tr className="border-b border-border">
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Username</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Display Name</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Role</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase">Created</th>
+              <th className="px-4 py-3 text-xs font-semibold text-muted uppercase">Actions</th>
             </tr></thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-border">
               {users.map(u => (
                 <tr key={u.id}>
-                  <td className="px-4 py-3 text-sm text-slate-200">{u.username}</td>
-                  <td className="px-4 py-3 text-sm text-slate-400">{u.display_name || '-'}</td>
-                  <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300">{u.role}</span></td>
+                  <td className="px-4 py-3 text-sm text-secondary">{u.username}</td>
+                  <td className="px-4 py-3 text-sm text-muted">{u.display_name || '-'}</td>
+                  <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded bg-surface-2 text-secondary">{u.role}</span></td>
                   <td className="px-4 py-3"><StatusBadge status={u.active ? 'Connected' : 'Disconnected'} /></td>
-                  <td className="px-4 py-3 text-sm"><TimeAgo date={u.created_at} className="text-slate-500" /></td>
+                  <td className="px-4 py-3 text-sm"><TimeAgo date={u.created_at} className="text-disabled" /></td>
                   <td className="px-4 py-3 text-center space-x-2">
                     <button onClick={() => toggleMut.mutate({ id: u.id, active: !u.active })} className="text-xs text-yellow-400 hover:text-yellow-300">{u.active ? 'Disable' : 'Enable'}</button>
                     <button onClick={() => setDelId(u.id)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
                   </td>
                 </tr>
               ))}
-              {!users.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No users</td></tr>}
+              {!users.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-disabled">No users</td></tr>}
             </tbody>
           </table>
         </div>
@@ -86,21 +86,21 @@ export default function UsersPage() {
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">Add User</h3>
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-primary mb-4">Add User</h3>
             <div className="space-y-3">
-              <div><label className="block text-sm text-slate-300 mb-1">Username</label><input value={username} onChange={e => setUsername(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-              <div><label className="block text-sm text-slate-300 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-              <div><label className="block text-sm text-slate-300 mb-1">Display Name</label><input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-              <div><label className="block text-sm text-slate-300 mb-1">Role</label>
-                <select value={role} onChange={e => setRole(e.target.value as UserRole)} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+              <div><label className="block text-sm text-secondary mb-1">Username</label><input value={username} onChange={e => setUsername(e.target.value)} className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent" /></div>
+              <div><label className="block text-sm text-secondary mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent" /></div>
+              <div><label className="block text-sm text-secondary mb-1">Display Name</label><input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent" /></div>
+              <div><label className="block text-sm text-secondary mb-1">Role</label>
+                <select value={role} onChange={e => setRole(e.target.value as UserRole)} className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-accent">
                   {roles.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg">Cancel</button>
-              <button onClick={() => addMut.mutate()} disabled={!username || !password} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50">Create</button>
+              <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Cancel</button>
+              <button onClick={() => addMut.mutate()} disabled={!username || !password} className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors">Create</button>
             </div>
           </div>
         </div>

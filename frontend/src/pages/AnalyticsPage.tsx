@@ -46,19 +46,19 @@ function StatCard({ label, value, sub, color }: {
   label: string; value: string | number; sub?: string; color: string;
 }) {
   return (
-    <div className={`bg-slate-900 border ${color} rounded-xl p-4`}>
-      <p className="text-xs text-slate-400">{label}</p>
-      <p className="text-2xl font-bold text-white mt-0.5">{value}</p>
-      {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
+    <div className={`bg-surface border ${color} rounded-xl p-4`}>
+      <p className="text-xs text-muted">{label}</p>
+      <p className="text-2xl font-bold text-primary mt-0.5">{value}</p>
+      {sub && <p className="text-xs text-disabled mt-0.5">{sub}</p>}
     </div>
   );
 }
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl">
-      <div className="px-4 py-3 border-b border-slate-700">
-        <h3 className="text-sm font-semibold text-slate-300">{title}</h3>
+    <div className="bg-surface border border-border rounded-xl">
+      <div className="px-4 py-3 border-b border-border">
+        <h3 className="text-sm font-semibold text-secondary">{title}</h3>
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -71,8 +71,8 @@ function ChartTooltipContent({ active, payload, label }: {
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-xs">
-      <p className="text-slate-400 mb-1">{label}</p>
+    <div className="bg-surface-2 border border-border rounded-lg px-3 py-2 text-xs">
+      <p className="text-muted mb-1">{label}</p>
       {payload.map((p) => (
         <p key={p.name} style={{ color: p.color }}>
           {p.name}: {p.value}
@@ -87,7 +87,7 @@ function HBarChart({ data, nameKey, valueKey, label, color }: {
   nameKey: string; valueKey: string; label: string; color: string;
 }) {
   if (!data.length) {
-    return <p className="text-slate-500 text-sm text-center py-6">No data</p>;
+    return <p className="text-disabled text-sm text-center py-6">No data</p>;
   }
   return (
     <ResponsiveContainer width="100%" height={Math.max(data.length * 36, 120)}>
@@ -122,7 +122,7 @@ function FailingReposChart({ data }: { data: FailingRepo[] }) {
 
 function WorkerUtilChart({ data }: { data: WorkerUtilization[] }) {
   if (!data.length) {
-    return <p className="text-slate-500 text-sm text-center py-6">No workers</p>;
+    return <p className="text-disabled text-sm text-center py-6">No workers</p>;
   }
   const items = data.map((w) => ({
     name: w.hostname || w.worker_id.slice(0, 12),
@@ -183,12 +183,12 @@ export default function AnalyticsPage() {
   if (isLoading || !data) {
     return (
       <div className="space-y-6 animate-pulse">
-        <div className="h-8 w-48 bg-slate-800 rounded" />
+        <div className="h-8 w-48 bg-surface-2 rounded" />
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-slate-800 rounded-xl" />)}
+          {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-surface-2 rounded-xl" />)}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-64 bg-slate-800 rounded-xl" />)}
+          {[...Array(4)].map((_, i) => <div key={i} className="h-64 bg-surface-2 rounded-xl" />)}
         </div>
       </div>
     );
@@ -199,16 +199,16 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-white">Analytics</h2>
-        <div className="flex gap-1 bg-slate-800 rounded-lg p-0.5">
+        <h2 className="text-2xl font-bold text-primary">Analytics</h2>
+        <div className="flex gap-1 bg-surface-2 rounded-lg p-0.5">
           {RANGE_OPTIONS.map((opt) => (
             <button
               key={opt.days}
               onClick={() => setPreset(opt.days)}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 activePreset === opt.days
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-accent text-on-accent'
+                  : 'text-muted hover:text-primary'
               }`}
             >
               {opt.label}
@@ -225,7 +225,7 @@ export default function AnalyticsPage() {
           label="Total Builds"
           value={summary.total_builds}
           sub={days !== null ? `Last ${days} days` : 'All time'}
-          color="border-blue-500/30"
+          color="border-accent/30"
         />
         <StatCard
           label="Success Rate"
@@ -236,12 +236,12 @@ export default function AnalyticsPage() {
         <StatCard
           label="Avg Duration"
           value={fmtDuration(summary.avg_duration_secs)}
-          color="border-blue-500/30"
+          color="border-accent/30"
         />
         <StatCard
           label="Avg Queue Wait"
           value={fmtDuration(summary.avg_queue_wait_secs)}
-          color="border-slate-700"
+          color="border-border"
         />
       </div>
 
@@ -262,7 +262,7 @@ export default function AnalyticsPage() {
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-slate-500 text-sm text-center py-16">No build data</p>
+            <p className="text-disabled text-sm text-center py-16">No build data</p>
           )}
         </ChartCard>
 
@@ -281,7 +281,7 @@ export default function AnalyticsPage() {
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-slate-500 text-sm text-center py-16">No duration data</p>
+            <p className="text-disabled text-sm text-center py-16">No duration data</p>
           )}
         </ChartCard>
       </div>
@@ -314,7 +314,7 @@ export default function AnalyticsPage() {
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-slate-500 text-sm text-center py-16">No queue data</p>
+            <p className="text-disabled text-sm text-center py-16">No queue data</p>
           )}
         </ChartCard>
       </div>

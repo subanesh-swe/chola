@@ -13,28 +13,28 @@ export default function TokensPage() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-bold text-white">Tokens</h2>
+      <h2 className="text-2xl font-bold text-primary">Tokens</h2>
 
-      <div className="flex border-b border-slate-700">
+      <div className="flex border-b border-border">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
               activeTab === tab.key
-                ? 'text-blue-400'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'text-accent-text'
+                : 'text-muted hover:text-secondary'
             }`}
           >
             {tab.label}
             {activeTab === tab.key && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500" />
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent" />
             )}
           </button>
         ))}
       </div>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-muted">
         {tabs.find((t) => t.key === activeTab)?.description}
       </p>
 

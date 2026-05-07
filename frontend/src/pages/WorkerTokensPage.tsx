@@ -22,12 +22,12 @@ import type { MutationError } from '../types';
 
 function ScopeBadge({ scope }: { scope: string }) {
   const colors: Record<string, string> = {
-    shared: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    shared: 'bg-accent-soft text-accent-text border-accent/30',
     project: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
     team: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30',
     runner: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   };
-  const cls = colors[scope] ?? 'bg-slate-700 text-slate-400 border-slate-600';
+  const cls = colors[scope] ?? 'bg-surface-2 text-muted border-border';
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded border ${cls}`}>{scope}</span>
   );
@@ -53,61 +53,60 @@ function CreatedTokenModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full">
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-emerald-400 text-lg font-bold">Token created</span>
         </div>
         <p className="text-sm text-yellow-400 mb-4">
           Copy this token now — it will not be shown again.
         </p>
-        {/* item 43: helper text + select-all code block */}
-        <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 mb-1 flex items-center gap-2">
+        <div className="bg-surface-2 border border-border rounded-lg p-3 mb-1 flex items-center gap-2">
           <code className="text-emerald-300 font-mono text-xs break-all flex-1 select-all cursor-text">
             {token.token}
           </code>
           <button
             onClick={copy}
-            className="shrink-0 px-2 py-1 text-xs bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-600/30 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="shrink-0 px-2 py-1 text-xs bg-accent-soft text-accent-text border border-accent/30 rounded hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-accent"
           >
             {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>
-        <p className="text-[11px] text-slate-500 mb-4">Click to select all. Save now — you cannot retrieve it later.</p>
+        <p className="text-[11px] text-muted mb-4">Click to select all. Save now — you cannot retrieve it later.</p>
         <dl className="text-sm space-y-1 mb-4">
           <div className="flex gap-2">
-            <dt className="text-slate-500 w-24">Name</dt>
-            <dd className="text-slate-200">{token.name}</dd>
+            <dt className="text-muted w-24">Name</dt>
+            <dd className="text-secondary">{token.name}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="text-slate-500 w-24">Scope</dt>
+            <dt className="text-muted w-24">Scope</dt>
             <dd><ScopeBadge scope={token.scope} /></dd>
           </div>
           {token.expires_at && (
             <div className="flex gap-2">
-              <dt className="text-slate-500 w-24">Expires</dt>
-              <dd className="text-slate-200"><TimeAgo date={token.expires_at} /></dd>
+              <dt className="text-muted w-24">Expires</dt>
+              <dd className="text-secondary"><TimeAgo date={token.expires_at} /></dd>
             </div>
           )}
           <div className="flex gap-2">
-            <dt className="text-slate-500 w-24">Max uses</dt>
-            <dd className="text-slate-200">{token.max_uses === 0 ? 'Unlimited' : token.max_uses}</dd>
+            <dt className="text-muted w-24">Max uses</dt>
+            <dd className="text-secondary">{token.max_uses === 0 ? 'Unlimited' : token.max_uses}</dd>
           </div>
         </dl>
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 mb-4 text-xs space-y-2">
+        <div className="bg-surface-2 border border-border rounded-lg p-3 mb-4 text-xs space-y-2">
           {token.scope === 'runner' ? (
             <>
-              <p className="text-slate-300 font-medium">Set environment variable for ci-job-runner:</p>
+              <p className="text-secondary font-medium">Set environment variable for ci-job-runner:</p>
               <code className="block text-emerald-300 font-mono">
                 export CHOLA_TOKEN={token.token}
               </code>
             </>
           ) : (
             <>
-              <p className="text-slate-300 font-medium">Add to worker config file:</p>
+              <p className="text-secondary font-medium">Add to worker config file:</p>
               <code className="block text-emerald-300 font-mono">
                 token: &quot;{token.token}&quot;
               </code>
-              <p className="text-slate-400 pt-1">Or set environment variable:</p>
+              <p className="text-muted pt-1">Or set environment variable:</p>
               <code className="block text-emerald-300 font-mono">
                 export CHOLA_TOKEN={token.token}
               </code>
@@ -117,7 +116,7 @@ function CreatedTokenModal({
         <div className="flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-surface-2 text-primary rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             Done
           </button>
@@ -168,25 +167,25 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'worker' }: Creat
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full">
-        <h3 className="text-lg font-semibold text-white mb-4">Create Token</h3>
+      <div className="bg-surface border border-border rounded-xl p-6 max-w-md w-full">
+        <h3 className="text-lg font-semibold text-primary mb-4">Create Token</h3>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Name</label>
+            <label className="block text-sm text-secondary mb-1">Name</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               placeholder="e.g. worker-a or jenkins-runner"
               autoFocus
             />
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Scope</label>
+            <label className="block text-sm text-secondary mb-1">Scope</label>
             <select
               value={scope}
               onChange={(e) => setScope(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             >
               <option value="worker">worker (chola_wkr_)</option>
               <option value="runner">runner (chola_svc_)</option>
@@ -195,7 +194,7 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'worker' }: Creat
           </div>
           {scope === 'worker' && (
             <div>
-              <label className="block text-sm text-slate-300 mb-1">Worker</label>
+              <label className="block text-sm text-secondary mb-1">Worker</label>
               {workers.length > 0 ? (
                 <select
                   value={selectedWorker}
@@ -203,7 +202,7 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'worker' }: Creat
                     setSelectedWorker(e.target.value);
                     if (!name) setName(e.target.value);
                   }}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 >
                   <option value="">— Select registered worker —</option>
                   {workers.map((w: { worker_id: string; hostname: string; status: string }) => (
@@ -213,46 +212,46 @@ function CreateTokenModal({ onClose, onCreated, defaultScope = 'worker' }: Creat
                   ))}
                 </select>
               ) : (
-                <p className="text-xs text-slate-500 italic">
-                  No workers registered. <a href="/workers" className="text-blue-400 underline">Register a worker first</a>.
+                <p className="text-xs text-disabled italic">
+                  No workers registered. <a href="/workers" className="text-accent-text underline">Register a worker first</a>.
                 </p>
               )}
             </div>
           )}
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Expires at (optional)</label>
+            <label className="block text-sm text-secondary mb-1">Expires at (optional)</label>
             <input
               type="datetime-local"
               value={expiresAt ? expiresAt.slice(0, 16) : ''}
               onChange={(e) =>
                 setExpiresAt(e.target.value ? new Date(e.target.value).toISOString() : '')
               }
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             />
-            <p className="text-xs text-slate-500 mt-1">Leave blank for no expiry</p>
+            <p className="text-xs text-muted mt-1">Leave blank for no expiry</p>
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Max uses (0 = unlimited)</label>
+            <label className="block text-sm text-secondary mb-1">Max uses (0 = unlimited)</label>
             <input
               type="number"
               min="0"
               value={maxUses}
               onChange={(e) => setMaxUses(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-input border border-border rounded-lg text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={() => mut.mutate()}
             disabled={!name.trim() || mut.isPending}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             {mut.isPending ? 'Creating...' : 'Create'}
           </button>
@@ -321,20 +320,20 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">
+        <h2 className="text-2xl font-bold text-primary">
           {isRunnerView ? 'Runner Tokens' : 'Worker Tokens'}
         </h2>
         {canManageRepos && (
           <button
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent transition-colors"
           >
             Create Token
           </button>
         )}
       </div>
 
-      <p className="text-sm text-slate-400">
+      <p className="text-sm text-muted">
         {isRunnerView
           ? 'Runner tokens authenticate ci-job-runner and scripts. Set CHOLA_TOKEN env var. Each token is shown only once.'
           : 'Registration tokens allow workers to authenticate and join the pool. Each token is shown only once.'}
@@ -349,7 +348,7 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
       {isLoading ? (
         <PageSkeleton />
       ) : (
-        <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+        <div className="bg-surface border border-border rounded-xl overflow-hidden">
           {tokens.length === 0 ? (
             <EmptyState
               title={isRunnerView ? 'No runner tokens' : 'No worker tokens'}
@@ -362,46 +361,44 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
           ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                <tr className="border-b border-border">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider">
                     Name
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider">
                     Scope
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider">
                     Uses
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider">
                     Expires
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted uppercase tracking-wider">
                     Created
                   </th>
                   {canManageRepos && (
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-muted uppercase tracking-wider">
                       Actions
                     </th>
                   )}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-border">
                 {tokens.map((t) => (
-                  <tr key={t.id} className="hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 py-3 text-white font-medium">{t.name}</td>
+                  <tr key={t.id} className="hover:bg-surface-hover/50 transition-colors">
+                    <td className="px-4 py-3 text-primary font-medium">{t.name}</td>
                     <td className="px-4 py-3">
                       <ScopeBadge scope={t.scope} />
                     </td>
-                    {/* item 40: formatNumber for use_count */}
-                    <td className="px-4 py-3 text-slate-300 font-mono text-xs">
+                    <td className="px-4 py-3 text-secondary font-mono text-xs">
                       {formatNumber(t.use_count)}
                       {t.max_uses > 0 && ` / ${formatNumber(t.max_uses)}`}
                     </td>
-                    {/* item 41: absolute date with relative tooltip */}
-                    <td className="px-4 py-3 text-slate-400 text-xs">
+                    <td className="px-4 py-3 text-muted text-xs">
                       {t.expires_at
                         ? <span title={new Date(t.expires_at).toUTCString()}><TimeAgo date={t.expires_at} /></span>
                         : 'Never'}
@@ -411,17 +408,16 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
                         className={`text-xs px-1.5 py-0.5 rounded border ${
                           t.active
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : 'bg-slate-700 text-slate-400 border-slate-600'
+                            : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
                         {t.active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">
+                    <td className="px-4 py-3 text-disabled text-xs">
                       <TimeAgo date={t.created_at} />
-                      {/* item 42: ' · by ...' format */}
                       {t.created_by && (
-                        <span className="text-slate-600"> &middot; by {t.created_by}</span>
+                        <span className="text-disabled"> &middot; by {t.created_by}</span>
                       )}
                     </td>
                     {canManageRepos && (
@@ -432,7 +428,7 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
                             disabled={toggleMut.isPending}
                             className={`px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 ${
                               t.active
-                                ? 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600 focus:ring-slate-500'
+                                ? 'bg-surface-2 text-secondary border-border hover:bg-surface-hover focus:ring-border'
                                 : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 focus:ring-emerald-500'
                             }`}
                           >
