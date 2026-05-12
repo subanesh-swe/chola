@@ -298,4 +298,56 @@ describe('errors', () => {
     const e = err('branch:');
     expect(e.message).toMatch(/Empty value/i);
   });
+
+  it('unknown field hint now lists bucket', () => {
+    const e = err('bogus:val');
+    expect(e.hint).toContain('bucket');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bucket field (granularity)
+// ---------------------------------------------------------------------------
+
+describe('bucket field', () => {
+  it('bucket:hour -> granularity hour', () => {
+    const r = ok('bucket:hour');
+    expect(r.filters.granularity).toBe('hour');
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it('bucket:day -> granularity day', () => {
+    const r = ok('bucket:day');
+    expect(r.filters.granularity).toBe('day');
+  });
+
+  it('bucket:auto -> granularity auto', () => {
+    const r = ok('bucket:auto');
+    expect(r.filters.granularity).toBe('auto');
+  });
+
+  it('bucket:invalid returns ParseResult error', () => {
+    const e = err('bucket:invalid');
+    expect(e.message).toMatch(/Invalid bucket value "invalid"/);
+    expect(e.hint).toMatch(/auto.*hour.*day|hour.*day.*auto/);
+  });
+
+  it('bucket:HOUR (uppercase) returns error (values are case-sensitive)', () => {
+    const e = err('bucket:HOUR');
+    expect(e.message).toMatch(/Invalid bucket value/i);
+  });
+
+  it('combined: state:failed bucket:day', () => {
+    const r = ok('state:failed bucket:day');
+    expect(r.filters.state).toEqual(['failed']);
+    expect(r.filters.granularity).toBe('day');
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it('bucket works with other terms', () => {
+    const r = ok('branch:main bucket:auto state:running');
+    expect(r.filters.branch).toBe('main');
+    expect(r.filters.granularity).toBe('auto');
+    expect(r.filters.state).toEqual(['running']);
+  });
 });
