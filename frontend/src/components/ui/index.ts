@@ -14,3 +14,4 @@ export { TableSkeleton, DashboardSkeleton } from './PageSkeleton';
 export { SearchDialog } from './SearchDialog';
 export { SearchResult } from './SearchResult';
 export type { SearchResultItem, ResultType } from './SearchResult';
+export { RecentQueriesDropdown } from './RecentQueriesDropdown';
