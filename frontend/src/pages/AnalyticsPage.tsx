@@ -1,8 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getAnalytics } from '../api/analytics';
 import { listRepos } from '../api/repos';
-import { useUrlFilters } from '../hooks/useUrlFilters';
+import { useAppliedFilters } from '../hooks/useAppliedFilters';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { FilterBar } from '../components/ui/FilterBar';
+import { RefreshControl } from '../components/ui/RefreshControl';
 import type { SlowStage, FailingRepo, WorkerUtilization } from '../types';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
@@ -18,28 +21,16 @@ const COLORS = {
   text: '#94a3b8',
 };
 
-const RANGE_OPTIONS = [
-  { label: '7d', days: 7 },
-  { label: '30d', days: 30 },
-  { label: '90d', days: 90 },
-];
-
-function subDaysIso(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+function fmtDuration(secs: number): string {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m`;
+  return `${(secs / 3600).toFixed(1)}h`;
 }
 
 function activeDays(dateFrom: string): number | null {
   if (!dateFrom) return null;
   const diff = Math.round((Date.now() - new Date(dateFrom).getTime()) / 86400000);
   return diff;
-}
-
-function fmtDuration(secs: number): string {
-  if (secs < 60) return `${secs}s`;
-  if (secs < 3600) return `${Math.round(secs / 60)}m`;
-  return `${(secs / 3600).toFixed(1)}h`;
 }
 
 function StatCard({ label, value, sub, color }: {
@@ -144,7 +135,8 @@ function WorkerUtilChart({ data }: { data: WorkerUtilization[] }) {
 }
 
 export default function AnalyticsPage() {
-  const { filters, setFilters, resetFilters } = useUrlFilters();
+  const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('analytics', 30);
 
   const { data: reposData } = useQuery({
     queryKey: ['repos'],
@@ -152,17 +144,27 @@ export default function AnalyticsPage() {
   });
   const repos = reposData?.data ?? [];
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['analytics', filters],
-    queryFn: () => getAnalytics(filters),
-    refetchInterval: 30000,
+  // Query is keyed on `applied` so it only refetches after the user clicks Search
+  // or uses a preset (which calls applyPatch directly).
+  const appliedKey = JSON.stringify(applied);
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+    queryKey: ['analytics', appliedKey],
+    queryFn: () => getAnalytics(applied),
+    placeholderData: keepPreviousData,
+    refetchInterval: refreshSecs > 0 ? refreshSecs * 1000 : false,
   });
 
-  const days = activeDays(filters.dateFrom);
-  const activePreset = RANGE_OPTIONS.find((o) => days !== null && Math.abs(days - o.days) <= 1)?.days ?? null;
+  // Keep a stable ref to refetch so it can be called from event handlers without
+  // re-creating them on every render.
+  const refetchRef = useRef(refetch);
+  useEffect(() => {
+    refetchRef.current = refetch;
+  }, [refetch]);
 
-  const setPreset = (n: number) => {
-    setFilters({ dateFrom: subDaysIso(n), dateTo: '' });
+  const days = activeDays(applied.dateFrom);
+
+  const handlePresetApply = (patch: Partial<typeof applied>) => {
+    applyPatch(patch);
   };
 
   if (isError) {
@@ -171,7 +173,7 @@ export default function AnalyticsPage() {
         <h3 className="font-semibold">Failed to load analytics</h3>
         <p className="text-sm mt-1">An error occurred. Please try again.</p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => void refetchRef.current()}
           className="mt-3 px-3 py-1 bg-red-800 hover:bg-red-700 rounded text-sm text-white"
         >
           Retry
@@ -200,24 +202,24 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl font-bold text-primary">Analytics</h2>
-        <div className="flex gap-1 bg-surface-2 rounded-lg p-0.5">
-          {RANGE_OPTIONS.map((opt) => (
-            <button
-              key={opt.days}
-              onClick={() => setPreset(opt.days)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                activePreset === opt.days
-                  ? 'bg-accent text-on-accent'
-                  : 'text-muted hover:text-primary'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <RefreshControl
+          intervalSecs={refreshSecs}
+          onIntervalChange={setRefreshSecs}
+          onRefresh={() => void refetchRef.current()}
+          isFetching={isFetching}
+        />
       </div>
 
-      <FilterBar filters={filters} repos={repos} onChange={setFilters} onReset={resetFilters} />
+      <FilterBar
+        filters={draft}
+        repos={repos}
+        onChange={patchDraft}
+        onApply={apply}
+        onReset={reset}
+        isDirty={isDirty}
+        isFetching={isFetching}
+        onPresetApply={handlePresetApply}
+      />
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

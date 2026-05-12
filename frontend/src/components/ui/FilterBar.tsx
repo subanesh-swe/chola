@@ -56,9 +56,11 @@ interface Props {
   filters: BuildFilters;
   repos: Repo[];
   onChange: (patch: Partial<BuildFilters>) => void;
-  onApply: () => void;
+  /** Called when Search is clicked or Enter is pressed. Defaults to no-op. */
+  onApply?: () => void;
   onReset: () => void;
-  isDirty: boolean;
+  /** Whether the draft differs from applied. Defaults to false (Search always disabled). */
+  isDirty?: boolean;
   isFetching?: boolean;
   /** Called with a complete patch; bypasses draft and triggers refetch immediately. */
   onPresetApply?: (patch: Partial<BuildFilters>) => void;
@@ -68,9 +70,9 @@ export function FilterBar({
   filters,
   repos,
   onChange,
-  onApply,
+  onApply = () => undefined,
   onReset,
-  isDirty,
+  isDirty = false,
   isFetching,
   onPresetApply,
 }: Props) {
