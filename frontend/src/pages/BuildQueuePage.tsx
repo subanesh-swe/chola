@@ -1,31 +1,55 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listBuildsRaw } from '../api/builds';
+import { listBuilds } from '../api/builds';
+import { listRepos } from '../api/repos';
+import { useAppliedFilters } from '../hooks/useAppliedFilters';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
+import { FilterBar } from '../components/ui/FilterBar';
+import { RefreshControl } from '../components/ui/RefreshControl';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
+import { TableSkeleton } from '../components/ui/PageSkeleton';
+
+const QUEUE_STATES = ['pending', 'reserved', 'running'];
+
+const HIDDEN: Array<'dateRange' | 'stage' | 'exitCode' | 'granularity' | 'rangePresets'> = [
+  'dateRange',
+  'stage',
+  'exitCode',
+  'granularity',
+  'rangePresets',
+];
 
 export default function BuildQueuePage() {
-  const pendingQ = useQuery({
-    queryKey: ['queue', 'pending'],
-    queryFn: () => listBuildsRaw({ limit: 100, state: 'pending' }),
-    refetchInterval: 5000,
+  const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('queue', 5);
+
+  // Seed queue states on first load if user has not set any state filter.
+  useEffect(() => {
+    if (applied.state.length === 0) {
+      applyPatch({ state: QUEUE_STATES });
+    }
+    // Only on mount — intentionally omitting deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const { data: reposData } = useQuery({
+    queryKey: ['repos'],
+    queryFn: () => listRepos({ limit: 100 }),
+  });
+  const repos = reposData?.data ?? [];
+
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+    queryKey: ['queue', applied],
+    queryFn: () => listBuilds({ ...applied, page: 1 }),
+    refetchInterval: refreshSecs > 0 ? refreshSecs * 1000 : false,
+    placeholderData: keepPreviousData,
   });
 
-  const reservedQ = useQuery({
-    queryKey: ['queue', 'reserved'],
-    queryFn: () => listBuildsRaw({ limit: 100, state: 'reserved' }),
-    refetchInterval: 5000,
-  });
-
-  const isLoading = pendingQ.isLoading || reservedQ.isLoading;
-  const isError = pendingQ.isError || reservedQ.isError;
-  const pendingCount = pendingQ.data?.pagination.total ?? 0;
-  const reservedCount = reservedQ.data?.pagination.total ?? 0;
-
-  const queueItems = [
-    ...(pendingQ.data?.data ?? []),
-    ...(reservedQ.data?.data ?? []),
-  ].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const queueItems = data?.data ?? [];
+  const pendingCount = queueItems.filter((j) => j.state === 'pending').length;
+  const reservedCount = queueItems.filter((j) => j.state === 'reserved').length;
 
   return (
     <div className="space-y-4">
@@ -34,15 +58,35 @@ export default function BuildQueuePage() {
           <h2 className="text-2xl font-bold text-primary">Build Queue</h2>
           <p className="text-sm text-muted mt-0.5">Jobs waiting to run</p>
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="text-muted">
-            <span className="text-primary font-semibold">{pendingCount}</span> pending
-          </span>
-          <span className="text-muted">
-            <span className="text-primary font-semibold">{reservedCount}</span> reserved
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-muted">
+              <span className="text-primary font-semibold">{pendingCount}</span> pending
+            </span>
+            <span className="text-muted">
+              <span className="text-primary font-semibold">{reservedCount}</span> reserved
+            </span>
+          </div>
+          <RefreshControl
+            intervalSecs={refreshSecs}
+            onIntervalChange={setRefreshSecs}
+            onRefresh={() => refetch()}
+            isFetching={isFetching}
+          />
         </div>
       </div>
+
+      <FilterBar
+        filters={draft}
+        repos={repos}
+        onChange={patchDraft}
+        onApply={apply}
+        onReset={reset}
+        isDirty={isDirty}
+        isFetching={isFetching}
+        onPresetApply={applyPatch}
+        hiddenFields={HIDDEN}
+      />
 
       {isError && (
         <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
@@ -51,7 +95,7 @@ export default function BuildQueuePage() {
       )}
       <div className="bg-surface border border-border rounded-xl overflow-hidden">
         {isLoading ? (
-          <div className="p-8 text-center text-muted">Loading…</div>
+          <TableSkeleton rows={6} cols={7} />
         ) : (
           <>
             {/* Desktop table */}
