@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getAnalytics } from '../api/analytics';
 import { listRepos } from '../api/repos';
@@ -6,6 +6,7 @@ import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { FilterBar } from '../components/ui/FilterBar';
 import { RefreshControl } from '../components/ui/RefreshControl';
+import { TimeRangeBrush } from '../components/charts/TimeRangeBrush';
 import type { SlowStage, FailingRepo, WorkerUtilization } from '../types';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
@@ -138,6 +139,10 @@ export default function AnalyticsPage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('analytics', 30);
 
+  const buildTrendsRef = useRef<HTMLDivElement>(null);
+  const durationTrendsRef = useRef<HTMLDivElement>(null);
+  const queueWaitRef = useRef<HTMLDivElement>(null);
+
   const { data: reposData } = useQuery({
     queryKey: ['repos'],
     queryFn: () => listRepos({ limit: 100 }),
@@ -166,6 +171,13 @@ export default function AnalyticsPage() {
   const handlePresetApply = (patch: Partial<typeof applied>) => {
     applyPatch(patch);
   };
+
+  const commitBrushRange = useCallback(
+    (from: string, to: string) => {
+      setFilters({ dateFrom: from, dateTo: to });
+    },
+    [setFilters],
+  );
 
   if (isError) {
     return (
@@ -251,18 +263,25 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ChartCard title="Build Trends">
           {build_trends.length ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={build_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
-                <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
-                <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
-                <Tooltip content={<ChartTooltipContent />} />
-                <Area type="monotone" dataKey="success" name="Success" stackId="1"
-                  stroke={COLORS.success} fill={COLORS.success} fillOpacity={0.3} />
-                <Area type="monotone" dataKey="failed" name="Failed" stackId="1"
-                  stroke={COLORS.failed} fill={COLORS.failed} fillOpacity={0.3} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <div ref={buildTrendsRef}>
+              <ResponsiveContainer width="100%" height={268}>
+                <AreaChart data={build_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
+                  <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
+                  <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Area type="monotone" dataKey="success" name="Success" stackId="1"
+                    stroke={COLORS.success} fill={COLORS.success} fillOpacity={0.3} />
+                  <Area type="monotone" dataKey="failed" name="Failed" stackId="1"
+                    stroke={COLORS.failed} fill={COLORS.failed} fillOpacity={0.3} />
+                  <TimeRangeBrush
+                    data={build_trends}
+                    onCommit={commitBrushRange}
+                    containerRef={buildTrendsRef}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <p className="text-disabled text-sm text-center py-16">No build data</p>
           )}
@@ -270,18 +289,25 @@ export default function AnalyticsPage() {
 
         <ChartCard title="Duration Trends">
           {duration_trends.length ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={duration_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
-                <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
-                <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
-                <Tooltip content={<ChartTooltipContent />} />
-                <Line type="monotone" dataKey="avg_duration_secs" name="Avg (s)"
-                  stroke={COLORS.duration} strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="p95_duration_secs" name="p95 (s)"
-                  stroke={COLORS.p95} strokeWidth={2} dot={false} strokeDasharray="5 5" />
-              </LineChart>
-            </ResponsiveContainer>
+            <div ref={durationTrendsRef}>
+              <ResponsiveContainer width="100%" height={268}>
+                <LineChart data={duration_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
+                  <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
+                  <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Line type="monotone" dataKey="avg_duration_secs" name="Avg (s)"
+                    stroke={COLORS.duration} strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="p95_duration_secs" name="p95 (s)"
+                    stroke={COLORS.p95} strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                  <TimeRangeBrush
+                    data={duration_trends}
+                    onCommit={commitBrushRange}
+                    containerRef={durationTrendsRef}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <p className="text-disabled text-sm text-center py-16">No duration data</p>
           )}
@@ -305,16 +331,23 @@ export default function AnalyticsPage() {
         </ChartCard>
         <ChartCard title="Queue Wait Time">
           {queue_wait_trends.length ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={queue_wait_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
-                <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
-                <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
-                <Tooltip content={<ChartTooltipContent />} />
-                <Area type="monotone" dataKey="avg_wait_secs" name="Avg wait (s)"
-                  stroke={COLORS.duration} fill={COLORS.duration} fillOpacity={0.2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <div ref={queueWaitRef}>
+              <ResponsiveContainer width="100%" height={268}>
+                <AreaChart data={queue_wait_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
+                  <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
+                  <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Area type="monotone" dataKey="avg_wait_secs" name="Avg wait (s)"
+                    stroke={COLORS.duration} fill={COLORS.duration} fillOpacity={0.2} />
+                  <TimeRangeBrush
+                    data={queue_wait_trends}
+                    onCommit={commitBrushRange}
+                    containerRef={queueWaitRef}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <p className="text-disabled text-sm text-center py-16">No queue data</p>
           )}
