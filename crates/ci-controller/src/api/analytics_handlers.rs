@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -24,6 +24,49 @@ pub struct AnalyticsParams {
     pub stage_name: Option<String>,
     /// `-1` means "any non-zero" (matches `list_job_groups_paginated` convention).
     pub exit_code: Option<i32>,
+    /// `auto` (default), `hour`, or `day`. Auto picks hour when range <= 7d.
+    pub granularity: Option<String>,
+}
+
+/// Threshold (inclusive) under which `auto` granularity picks hourly bucketing.
+const AUTO_HOUR_MAX_DAYS: i64 = 7;
+
+/// Pick effective bucket size from user mode + resolved window.
+/// - `Some("hour")` → Hour (forced)
+/// - `Some("day")`  → Day  (forced)
+/// - `None` / `Some("auto")` → Hour when `to - from <= 7 days`, else Day
+///
+/// Unknown strings fall through to auto.
+pub(crate) fn resolve_granularity(
+    mode: Option<&str>,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Granularity {
+    match mode.map(str::to_ascii_lowercase).as_deref() {
+        Some("hour") => Granularity::Hour,
+        Some("day") => Granularity::Day,
+        _ => auto_granularity(from, to),
+    }
+}
+
+/// Auto bucket: hour if span <= 7 days, day otherwise. Negative/zero spans
+/// fall back to hour (no buckets either way).
+pub(crate) fn auto_granularity(from: DateTime<Utc>, to: DateTime<Utc>) -> Granularity {
+    let span = to.signed_duration_since(from);
+    if span <= Duration::days(AUTO_HOUR_MAX_DAYS) {
+        Granularity::Hour
+    } else {
+        Granularity::Day
+    }
+}
+
+/// Expand `AnalyticsWindow` into concrete `(from, to)` for granularity decisions.
+/// `LastDays(n)` is anchored at `now`.
+fn window_bounds(window: &AnalyticsWindow, now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
+    match window {
+        AnalyticsWindow::Range { from, to } => (*from, *to),
+        AnalyticsWindow::LastDays(days) => (now - Duration::days(*days as i64), now),
+    }
 }
 
 /// Build an AnalyticsFilters from query params. `from`/`to` win over `days`.
@@ -56,13 +99,15 @@ fn filters_from_params(params: &AnalyticsParams) -> Result<AnalyticsFilters, Api
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let (from_eff, to_eff) = window_bounds(&window, Utc::now());
+    let granularity = resolve_granularity(params.granularity.as_deref(), from_eff, to_eff);
     Ok(AnalyticsFilters {
         window,
         repo_id: params.repo_id,
         branch,
         stage_name,
         exit_code: params.exit_code,
-        granularity: Granularity::default(),
+        granularity,
     })
 }
 
@@ -79,6 +124,7 @@ fn filters_from_params(params: &AnalyticsParams) -> Result<AnalyticsFilters, Api
         ("branch" = Option<String>, Query, description = "Filter by branch"),
         ("stage_name" = Option<String>, Query, description = "Filter by stage name"),
         ("exit_code" = Option<i32>, Query, description = "Filter by exit code; -1 = any non-zero"),
+        ("granularity" = Option<String>, Query, description = "Bucket size: auto (default), hour, day"),
     ),
     responses(
         (status = 200, description = "Build analytics"),
