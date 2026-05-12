@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getAnalytics } from '../api/analytics';
 import { listRepos } from '../api/repos';
@@ -7,6 +7,8 @@ import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { FilterBar } from '../components/ui/FilterBar';
 import { RefreshControl } from '../components/ui/RefreshControl';
 import { TimeRangeBrush } from '../components/charts/TimeRangeBrush';
+import { MaximizeButton } from '../components/charts/MaximizeButton';
+import { FullscreenChartModal } from '../components/charts/FullscreenChartModal';
 import type { SlowStage, FailingRepo, WorkerUtilization } from '../types';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
@@ -46,11 +48,22 @@ function StatCard({ label, value, sub, color }: {
   );
 }
 
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({
+  title,
+  children,
+  onMaximize,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onMaximize?: () => void;
+}) {
   return (
     <div className="bg-surface border border-border rounded-xl">
-      <div className="px-4 py-3 border-b border-border">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <h3 className="text-sm font-semibold text-secondary">{title}</h3>
+        {onMaximize && (
+          <MaximizeButton onClick={onMaximize} aria-label={`Maximize ${title} chart`} />
+        )}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -74,15 +87,17 @@ function ChartTooltipContent({ active, payload, label }: {
   );
 }
 
-function HBarChart({ data, nameKey, valueKey, label, color }: {
+function HBarChart({ data, nameKey, valueKey, label, color, height }: {
   data: Array<Record<string, string | number>>;
   nameKey: string; valueKey: string; label: string; color: string;
+  height?: number | `${number}%`;
 }) {
   if (!data.length) {
     return <p className="text-disabled text-sm text-center py-6">No data</p>;
   }
+  const computedHeight: number | `${number}%` = height ?? Math.max(data.length * 36, 120);
   return (
-    <ResponsiveContainer width="100%" height={Math.max(data.length * 36, 120)}>
+    <ResponsiveContainer width="100%" height={computedHeight}>
       <BarChart data={data} layout="vertical" margin={{ left: 10, right: 20, top: 4, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} horizontal={false} />
         <XAxis type="number" tick={{ fill: COLORS.text, fontSize: 11 }} />
@@ -99,20 +114,20 @@ function HBarChart({ data, nameKey, valueKey, label, color }: {
   );
 }
 
-function SlowestStagesChart({ data }: { data: SlowStage[] }) {
+function SlowestStagesContent({ data, height }: { data: SlowStage[]; height?: number | `${number}%` }) {
   const items = data.map((s) => ({
     name: `${s.stage_name} (${s.repo_name})`,
     avg_secs: s.avg_secs,
   }));
-  return <HBarChart data={items} nameKey="name" valueKey="avg_secs" label="Avg (s)" color={COLORS.p95} />;
+  return <HBarChart data={items} nameKey="name" valueKey="avg_secs" label="Avg (s)" color={COLORS.p95} height={height} />;
 }
 
-function FailingReposChart({ data }: { data: FailingRepo[] }) {
+function FailingReposContent({ data, height }: { data: FailingRepo[]; height?: number | `${number}%` }) {
   const items = data.map((r) => ({ name: r.repo_name, failed: r.failed }));
-  return <HBarChart data={items} nameKey="name" valueKey="failed" label="Failed" color={COLORS.failed} />;
+  return <HBarChart data={items} nameKey="name" valueKey="failed" label="Failed" color={COLORS.failed} height={height} />;
 }
 
-function WorkerUtilChart({ data }: { data: WorkerUtilization[] }) {
+function WorkerUtilContent({ data, height }: { data: WorkerUtilization[]; height?: number | `${number}%` }) {
   if (!data.length) {
     return <p className="text-disabled text-sm text-center py-6">No workers</p>;
   }
@@ -121,8 +136,9 @@ function WorkerUtilChart({ data }: { data: WorkerUtilization[] }) {
     active: w.active_jobs,
     total_30d: w.total_jobs_30d,
   }));
+  const computedHeight: number | `${number}%` = height ?? Math.max(items.length * 36, 120);
   return (
-    <ResponsiveContainer width="100%" height={Math.max(items.length * 36, 120)}>
+    <ResponsiveContainer width="100%" height={computedHeight}>
       <BarChart data={items} layout="vertical" margin={{ left: 10, right: 20, top: 4, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} horizontal={false} />
         <XAxis type="number" tick={{ fill: COLORS.text, fontSize: 11 }} />
@@ -138,6 +154,7 @@ function WorkerUtilChart({ data }: { data: WorkerUtilization[] }) {
 export default function AnalyticsPage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('analytics', 30);
+  const [maximized, setMaximized] = useState<string | null>(null);
 
   const buildTrendsRef = useRef<HTMLDivElement>(null);
   const durationTrendsRef = useRef<HTMLDivElement>(null);
@@ -174,9 +191,9 @@ export default function AnalyticsPage() {
 
   const commitBrushRange = useCallback(
     (from: string, to: string) => {
-      setFilters({ dateFrom: from, dateTo: to });
+      applyPatch({ dateFrom: from, dateTo: to });
     },
-    [setFilters],
+    [applyPatch],
   );
 
   if (isError) {
@@ -209,6 +226,59 @@ export default function AnalyticsPage() {
   }
 
   const { summary, build_trends, duration_trends, slowest_stages, failing_repos, worker_utilization, queue_wait_trends } = data;
+  const failingReposTitle = `Most Failing Repos${days !== null ? ` (${days}d)` : ''}`;
+
+  const renderBuildTrends = (height: number | `${number}%`) =>
+    build_trends.length ? (
+      <ResponsiveContainer width="100%" height={height}>
+        <AreaChart data={build_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
+          <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
+          <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
+          <Tooltip content={<ChartTooltipContent />} />
+          <Area type="monotone" dataKey="success" name="Success" stackId="1"
+            stroke={COLORS.success} fill={COLORS.success} fillOpacity={0.3} />
+          <Area type="monotone" dataKey="failed" name="Failed" stackId="1"
+            stroke={COLORS.failed} fill={COLORS.failed} fillOpacity={0.3} />
+        </AreaChart>
+      </ResponsiveContainer>
+    ) : (
+      <p className="text-disabled text-sm text-center py-16">No build data</p>
+    );
+
+  const renderDurationTrends = (height: number | `${number}%`) =>
+    duration_trends.length ? (
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={duration_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
+          <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
+          <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
+          <Tooltip content={<ChartTooltipContent />} />
+          <Line type="monotone" dataKey="avg_duration_secs" name="Avg (s)"
+            stroke={COLORS.duration} strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="p95_duration_secs" name="p95 (s)"
+            stroke={COLORS.p95} strokeWidth={2} dot={false} strokeDasharray="5 5" />
+        </LineChart>
+      </ResponsiveContainer>
+    ) : (
+      <p className="text-disabled text-sm text-center py-16">No duration data</p>
+    );
+
+  const renderQueueWait = (height: number | `${number}%`) =>
+    queue_wait_trends.length ? (
+      <ResponsiveContainer width="100%" height={height}>
+        <AreaChart data={queue_wait_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
+          <XAxis dataKey="date" tick={{ fill: COLORS.text, fontSize: 11 }} />
+          <YAxis tick={{ fill: COLORS.text, fontSize: 11 }} />
+          <Tooltip content={<ChartTooltipContent />} />
+          <Area type="monotone" dataKey="avg_wait_secs" name="Avg wait (s)"
+            stroke={COLORS.duration} fill={COLORS.duration} fillOpacity={0.2} />
+        </AreaChart>
+      </ResponsiveContainer>
+    ) : (
+      <p className="text-disabled text-sm text-center py-16">No queue data</p>
+    );
 
   return (
     <div className="space-y-6">
@@ -261,7 +331,7 @@ export default function AnalyticsPage() {
 
       {/* Build trends + Duration trends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartCard title="Build Trends">
+        <ChartCard title="Build Trends" onMaximize={() => setMaximized('build_trends')}>
           {build_trends.length ? (
             <div ref={buildTrendsRef}>
               <ResponsiveContainer width="100%" height={268}>
@@ -287,7 +357,7 @@ export default function AnalyticsPage() {
           )}
         </ChartCard>
 
-        <ChartCard title="Duration Trends">
+        <ChartCard title="Duration Trends" onMaximize={() => setMaximized('duration_trends')}>
           {duration_trends.length ? (
             <div ref={durationTrendsRef}>
               <ResponsiveContainer width="100%" height={268}>
@@ -316,20 +386,21 @@ export default function AnalyticsPage() {
 
       {/* Slowest stages + Failing repos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartCard title="Slowest Stages">
-          <SlowestStagesChart data={slowest_stages} />
+        <ChartCard title="Slowest Stages" onMaximize={() => setMaximized('slowest_stages')}>
+          <SlowestStagesContent data={slowest_stages} />
         </ChartCard>
-        <ChartCard title={`Most Failing Repos${days !== null ? ` (${days}d)` : ''}`}>
-          <FailingReposChart data={failing_repos} />
+
+        <ChartCard title={failingReposTitle} onMaximize={() => setMaximized('failing_repos')}>
+          <FailingReposContent data={failing_repos} />
         </ChartCard>
       </div>
 
       {/* Worker utilization + Queue wait */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartCard title="Worker Utilization">
-          <WorkerUtilChart data={worker_utilization} />
+        <ChartCard title="Worker Utilization" onMaximize={() => setMaximized('worker_utilization')}>
+          <WorkerUtilContent data={worker_utilization} />
         </ChartCard>
-        <ChartCard title="Queue Wait Time">
+        <ChartCard title="Queue Wait Time" onMaximize={() => setMaximized('queue_wait_trends')}>
           {queue_wait_trends.length ? (
             <div ref={queueWaitRef}>
               <ResponsiveContainer width="100%" height={268}>
@@ -353,6 +424,31 @@ export default function AnalyticsPage() {
           )}
         </ChartCard>
       </div>
+
+      {/* Fullscreen modals */}
+      <FullscreenChartModal open={maximized === 'build_trends'} onClose={() => setMaximized(null)} title="Build Trends">
+        {renderBuildTrends('100%')}
+      </FullscreenChartModal>
+
+      <FullscreenChartModal open={maximized === 'duration_trends'} onClose={() => setMaximized(null)} title="Duration Trends">
+        {renderDurationTrends('100%')}
+      </FullscreenChartModal>
+
+      <FullscreenChartModal open={maximized === 'slowest_stages'} onClose={() => setMaximized(null)} title="Slowest Stages">
+        <SlowestStagesContent data={slowest_stages} height="100%" />
+      </FullscreenChartModal>
+
+      <FullscreenChartModal open={maximized === 'failing_repos'} onClose={() => setMaximized(null)} title={failingReposTitle}>
+        <FailingReposContent data={failing_repos} height="100%" />
+      </FullscreenChartModal>
+
+      <FullscreenChartModal open={maximized === 'worker_utilization'} onClose={() => setMaximized(null)} title="Worker Utilization">
+        <WorkerUtilContent data={worker_utilization} height="100%" />
+      </FullscreenChartModal>
+
+      <FullscreenChartModal open={maximized === 'queue_wait_trends'} onClose={() => setMaximized(null)} title="Queue Wait Time">
+        {renderQueueWait('100%')}
+      </FullscreenChartModal>
     </div>
   );
 }

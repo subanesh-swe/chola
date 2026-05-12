@@ -1,6 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
 
 interface FullscreenChartModalProps {
   open: boolean;
@@ -44,7 +43,22 @@ export function FullscreenChartModal({ open, onClose, title, children }: Fullscr
             autoFocus
             className="ml-auto p-1.5 rounded text-muted hover:text-primary hover:bg-surface-2 transition-colors"
           >
-            <X size={16} />
+            {/* X icon rendered as inline SVG */}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
         </div>
         <div className="flex-1 min-h-0">
