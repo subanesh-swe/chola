@@ -1,15 +1,18 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
 import { listRepos } from '../api/repos';
-import { useUrlFilters } from '../hooks/useUrlFilters';
+import { useAppliedFilters } from '../hooks/useAppliedFilters';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { FilterBar } from '../components/ui/FilterBar';
+import { RefreshControl } from '../components/ui/RefreshControl';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
 
 export default function BuildsPage() {
-  const { filters, setFilters, resetFilters } = useUrlFilters();
+  const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('builds', 5);
 
   const { data: reposData } = useQuery({
     queryKey: ['repos'],
@@ -17,25 +20,41 @@ export default function BuildsPage() {
   });
   const repos = reposData?.data ?? [];
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['builds', filters],
-    queryFn: () => listBuilds(filters),
-    refetchInterval: 5000,
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+    queryKey: ['builds', applied],
+    queryFn: () => listBuilds(applied),
+    refetchInterval: refreshSecs > 0 ? refreshSecs * 1000 : false,
+    placeholderData: keepPreviousData,
   });
 
   const builds = data?.data ?? [];
   const total = data?.pagination.total ?? 0;
   const PAGE_SIZE = 20;
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const page = filters.page;
+  const page = applied.page;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl font-bold text-primary">Builds</h2>
+        <RefreshControl
+          intervalSecs={refreshSecs}
+          onIntervalChange={setRefreshSecs}
+          onRefresh={() => refetch()}
+          isFetching={isFetching}
+        />
       </div>
 
-      <FilterBar filters={filters} repos={repos} onChange={setFilters} onReset={resetFilters} />
+      <FilterBar
+        filters={draft}
+        repos={repos}
+        onChange={patchDraft}
+        onApply={apply}
+        onReset={reset}
+        isDirty={isDirty}
+        isFetching={isFetching}
+        onPresetApply={applyPatch}
+      />
 
       {/* Show archived toggle */}
       <label className="inline-flex items-center gap-2 cursor-pointer select-none">
@@ -141,7 +160,7 @@ export default function BuildsPage() {
       {totalPages > 1 && (
         <div className="flex justify-center gap-3">
           <button
-            onClick={() => setFilters({ page: Math.max(1, page - 1) })}
+            onClick={() => applyPatch({ page: Math.max(1, page - 1) })}
             disabled={page <= 1}
             className="px-3 py-1 text-sm rounded-lg text-secondary hover:bg-surface-hover disabled:text-disabled disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-accent"
           >
@@ -149,7 +168,7 @@ export default function BuildsPage() {
           </button>
           <span className="px-3 py-1 text-sm text-muted">{page} / {totalPages}</span>
           <button
-            onClick={() => setFilters({ page: Math.min(totalPages, page + 1) })}
+            onClick={() => applyPatch({ page: Math.min(totalPages, page + 1) })}
             disabled={page >= totalPages}
             className="px-3 py-1 text-sm rounded-lg text-secondary hover:bg-surface-hover disabled:text-disabled disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-accent"
           >
