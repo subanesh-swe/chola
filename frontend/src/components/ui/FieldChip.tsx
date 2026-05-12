@@ -40,6 +40,8 @@ export function FieldChip({ field, label, values, onInsert, freeText, className 
   }, [open]);
 
   const handleClick = () => {
+    if (loading) return;
+
     if (freeText) {
       onInsert(`${field}:`);
       return;

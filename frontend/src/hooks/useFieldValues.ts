@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { listRepos, getStageNames } from '../api/repos';
 import { listDistinctBranches } from '../api/branches';
 
@@ -29,40 +30,72 @@ const BUCKET_VALUES: FieldValue[] = [
   { value: 'day', hint: 'daily buckets' },
 ];
 
-async function fetchRepoValues(): Promise<FieldValue[]> {
-  const resp = await listRepos({ limit: 200 });
-  return (resp.data ?? []).map((r) => ({ value: r.id, label: r.repo_name }));
+const TTL_MS = 5 * 60 * 1000;
+
+interface Cache {
+  ts: number;
+  promise: Promise<FieldValue[]> | null;
 }
 
-async function fetchStageValues(): Promise<FieldValue[]> {
-  const reposResp = await listRepos({ limit: 200 });
-  const repos = reposResp.data ?? [];
-  const results = await Promise.all(repos.map((r) => getStageNames(r.id).catch(() => [])));
-  const seen = new Set<string>();
-  const out: FieldValue[] = [];
-  for (const names of results) {
-    for (const name of names) {
-      if (!seen.has(name)) {
-        seen.add(name);
-        out.push({ value: name });
-      }
-    }
+const repoCache: Cache = { ts: 0, promise: null };
+const stageCache: Cache = { ts: 0, promise: null };
+const branchCache: Cache = { ts: 0, promise: null };
+
+function isFresh(cache: Cache): boolean {
+  return cache.promise !== null && Date.now() - cache.ts < TTL_MS;
+}
+
+function fetchRepoValues(): Promise<FieldValue[]> {
+  if (!isFresh(repoCache)) {
+    repoCache.ts = Date.now();
+    repoCache.promise = listRepos({ limit: 200 }).then((resp) =>
+      (resp.data ?? []).map((r) => ({ value: r.id, label: r.repo_name })),
+    );
   }
-  return out.sort((a, b) => a.value.localeCompare(b.value));
+  return repoCache.promise!;
 }
 
-async function fetchBranchValues(): Promise<FieldValue[]> {
-  const branches = await listDistinctBranches();
-  return branches.map((b) => ({ value: b }));
+function fetchStageValues(): Promise<FieldValue[]> {
+  if (!isFresh(stageCache)) {
+    stageCache.ts = Date.now();
+    stageCache.promise = listRepos({ limit: 200 }).then(async (reposResp) => {
+      const repos = reposResp.data ?? [];
+      const results = await Promise.all(repos.map((r) => getStageNames(r.id).catch(() => [])));
+      const seen = new Set<string>();
+      const out: FieldValue[] = [];
+      for (const names of results) {
+        for (const name of names) {
+          if (!seen.has(name)) {
+            seen.add(name);
+            out.push({ value: name });
+          }
+        }
+      }
+      return out.sort((a, b) => a.value.localeCompare(b.value));
+    });
+  }
+  return stageCache.promise!;
 }
+
+function fetchBranchValues(): Promise<FieldValue[]> {
+  if (!isFresh(branchCache)) {
+    branchCache.ts = Date.now();
+    branchCache.promise = listDistinctBranches().then((branches) =>
+      branches.map((b) => ({ value: b })),
+    );
+  }
+  return branchCache.promise!;
+}
+
+const FIELD_VALUES_SINGLETON: Record<string, FieldValue[] | (() => Promise<FieldValue[]>)> = {
+  state: STATE_VALUES,
+  exit_code: EXIT_CODE_VALUES,
+  bucket: BUCKET_VALUES,
+  repo: fetchRepoValues,
+  stage: fetchStageValues,
+  branch: fetchBranchValues,
+};
 
 export function useFieldValues(): Record<string, FieldValue[] | (() => Promise<FieldValue[]>)> {
-  return {
-    state: STATE_VALUES,
-    exit_code: EXIT_CODE_VALUES,
-    bucket: BUCKET_VALUES,
-    repo: fetchRepoValues,
-    stage: fetchStageValues,
-    branch: fetchBranchValues,
-  };
+  return useMemo(() => FIELD_VALUES_SINGLETON, []);
 }

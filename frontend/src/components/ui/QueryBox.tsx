@@ -8,8 +8,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import type { BuildFilters } from '../../hooks/useUrlFilters';
-import type { FieldValue } from '../../hooks/useFieldValues';
-import type { useFieldValues } from '../../hooks/useFieldValues';
+import type { FieldValue, useFieldValues } from '../../hooks/useFieldValues';
 import { parseQuery, type ParseError, KNOWN_FIELDS } from '../../utils/parseQuery';
 import { RecentQueriesDropdown } from './RecentQueriesDropdown';
 
@@ -293,16 +292,22 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
 
   useEffect(() => {
     if (!showSuggestions) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const target = (e instanceof TouchEvent ? e.touches[0]?.target : e.target) as Node | null;
       if (
-        !inputRef.current?.contains(e.target as Node) &&
-        !dropdownRef.current?.contains(e.target as Node)
+        target &&
+        !inputRef.current?.contains(target) &&
+        !dropdownRef.current?.contains(target)
       ) {
         setShowSuggestions(false);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('mousedown', handler as EventListener);
+    document.addEventListener('touchstart', handler as EventListener);
+    return () => {
+      document.removeEventListener('mousedown', handler as EventListener);
+      document.removeEventListener('touchstart', handler as EventListener);
+    };
   }, [showSuggestions]);
 
   const hasError = parseError !== null;

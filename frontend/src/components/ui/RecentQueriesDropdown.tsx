@@ -24,8 +24,10 @@ interface PopoverPos {
 export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, className }: Props) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<PopoverPos>({ top: 0, left: 0, width: 200 });
+  const [activeIndex, setActiveIndex] = useState(-1);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const recompute = () => {
     if (!btnRef.current) return;
@@ -38,37 +40,63 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
   };
 
   const toggle = () => {
-    if (!open) recompute();
+    if (!open) {
+      recompute();
+      setActiveIndex(-1);
+    }
     setOpen((v) => !v);
   };
 
-  // Close on Escape
+  // Close on Escape; arrow-key navigation within popover
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpen(false);
         btnRef.current?.focus();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveIndex((i) => {
+          const next = Math.min(i + 1, history.length - 1);
+          rowRefs.current[next]?.focus();
+          return next;
+        });
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveIndex((i) => {
+          const next = Math.max(i - 1, 0);
+          rowRefs.current[next]?.focus();
+          return next;
+        });
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open]);
+  }, [open, history.length]);
 
-  // Close on outside click
+  // Close on outside click / touch
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const target = (e instanceof TouchEvent ? e.touches[0]?.target : e.target) as Node | null;
       if (
+        target &&
         !popoverRef.current?.contains(target) &&
         !btnRef.current?.contains(target)
       ) {
         setOpen(false);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('mousedown', handler as EventListener);
+    document.addEventListener('touchstart', handler as EventListener);
+    return () => {
+      document.removeEventListener('mousedown', handler as EventListener);
+      document.removeEventListener('touchstart', handler as EventListener);
+    };
   }, [open]);
 
   // Reposition on scroll/resize
@@ -119,13 +147,16 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
             </p>
           ) : (
             <>
-              {history.map((q) => (
-                <div
+              {history.map((q, idx) => (
+                <button
                   key={q}
+                  ref={(el) => { rowRefs.current[idx] = el; }}
+                  type="button"
                   role="option"
-                  aria-selected={false}
+                  aria-selected={idx === activeIndex}
                   onClick={() => handlePick(q)}
-                  className="flex items-center justify-between gap-2 px-3 py-1.5 cursor-pointer hover:bg-surface-hover group"
+                  onFocus={() => setActiveIndex(idx)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left cursor-pointer hover:bg-surface-hover group focus:outline-none focus:bg-surface-hover"
                 >
                   <span
                     className="text-sm text-primary truncate flex-1"
@@ -151,7 +182,7 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
                       </svg>
                     </button>
                   )}
-                </div>
+                </button>
               ))}
               <div className="border-t border-border mt-1 pt-1">
                 <button
