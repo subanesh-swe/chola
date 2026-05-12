@@ -16,3 +16,5 @@ export { SearchResult } from './SearchResult';
 export type { SearchResultItem, ResultType } from './SearchResult';
 export { RecentQueriesDropdown } from './RecentQueriesDropdown';
 export { RefreshControl } from './RefreshControl';
+export { FieldChip } from './FieldChip';
+export { FieldChipsRow } from './FieldChipsRow';
