@@ -431,6 +431,31 @@ pub enum AnalyticsWindow {
     LastDays(i32),
 }
 
+/// Bucket size for trend aggregation. The string form is fed straight into
+/// `DATE_TRUNC` — values are allowlisted at construction so user input cannot
+/// reach SQL unchecked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Granularity {
+    Hour,
+    Day,
+}
+
+impl Granularity {
+    /// SQL token for `DATE_TRUNC`. Hard-coded — never derived from user input.
+    pub fn as_sql_unit(self) -> &'static str {
+        match self {
+            Granularity::Hour => "hour",
+            Granularity::Day => "day",
+        }
+    }
+}
+
+impl Default for Granularity {
+    fn default() -> Self {
+        Granularity::Day
+    }
+}
+
 /// Filters threaded into every analytics query. `exit_code = Some(-1)` means
 /// "any non-zero" (matches subtask-3's sentinel convention in
 /// `list_job_groups_paginated`).
@@ -441,6 +466,7 @@ pub struct AnalyticsFilters {
     pub branch: Option<String>,
     pub stage_name: Option<String>,
     pub exit_code: Option<i32>,
+    pub granularity: Granularity,
 }
 
 /// Build artefact: a WHERE clause string and the bind index following the last
@@ -3896,12 +3922,17 @@ impl Storage {
         filters: &AnalyticsFilters,
     ) -> anyhow::Result<Vec<BuildTrendPoint>> {
         let plan = filters.plan_for_job_groups("", &[]);
+        // `g` is sourced from the Granularity enum (allowlisted to `hour`/`day`),
+        // never from raw user input — safe to splice.
+        let g = filters.granularity.as_sql_unit();
         let q = format!(
-            "SELECT DATE(created_at)::text as date, COUNT(*)::bigint as total, \
+            "SELECT TO_CHAR(DATE_TRUNC('{g}', created_at) AT TIME ZONE 'UTC', \
+             'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as date, \
+             COUNT(*)::bigint as total, \
              COUNT(*) FILTER (WHERE state = 'success')::bigint as success, \
              COUNT(*) FILTER (WHERE state = 'failed')::bigint as failed \
              FROM {s}.job_groups {wc} \
-             GROUP BY DATE(created_at) ORDER BY date",
+             GROUP BY DATE_TRUNC('{g}', created_at) ORDER BY DATE_TRUNC('{g}', created_at)",
             s = self.schema,
             wc = plan.where_clause
         );
@@ -3924,12 +3955,14 @@ impl Storage {
         filters: &AnalyticsFilters,
     ) -> anyhow::Result<Vec<DurationTrendPoint>> {
         let plan = filters.plan_for_job_groups("", &["completed_at IS NOT NULL"]);
+        let g = filters.granularity.as_sql_unit();
         let q = format!(
-            "SELECT DATE(created_at)::text as date, \
+            "SELECT TO_CHAR(DATE_TRUNC('{g}', created_at) AT TIME ZONE 'UTC', \
+             'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as date, \
              COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)))::bigint, 0) as avg_duration_secs, \
              COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)))::bigint, 0) as p95_duration_secs \
              FROM {s}.job_groups {wc} \
-             GROUP BY DATE(created_at) ORDER BY date",
+             GROUP BY DATE_TRUNC('{g}', created_at) ORDER BY DATE_TRUNC('{g}', created_at)",
             s = self.schema,
             wc = plan.where_clause
         );
@@ -4041,14 +4074,16 @@ impl Storage {
         filters: &AnalyticsFilters,
     ) -> anyhow::Result<Vec<QueueWaitPoint>> {
         let plan = filters.plan_for_jobs("j", "sc", "jg", &["j.started_at IS NOT NULL"]);
+        let g = filters.granularity.as_sql_unit();
         let q = format!(
-            "SELECT DATE(j.created_at)::text as date, \
+            "SELECT TO_CHAR(DATE_TRUNC('{g}', j.created_at) AT TIME ZONE 'UTC', \
+             'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as date, \
              COALESCE(AVG(EXTRACT(EPOCH FROM (j.started_at - j.created_at)))::bigint, 0) as avg_wait_secs \
              FROM {s}.jobs j \
              LEFT JOIN {s}.stage_configs sc ON j.stage_config_id = sc.id \
              LEFT JOIN {s}.job_groups jg ON j.job_group_id = jg.id \
              {wc} \
-             GROUP BY DATE(j.created_at) ORDER BY date",
+             GROUP BY DATE_TRUNC('{g}', j.created_at) ORDER BY DATE_TRUNC('{g}', j.created_at)",
             s = self.schema,
             wc = plan.where_clause
         );

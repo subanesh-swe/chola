@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::state::ControllerState;
-use crate::storage::{AnalyticsFilters, AnalyticsWindow};
+use crate::storage::{AnalyticsFilters, AnalyticsWindow, Granularity};
 
 use super::date_parse::parse_flexible_datetime;
 use super::error::ApiError;
@@ -62,6 +62,7 @@ fn filters_from_params(params: &AnalyticsParams) -> Result<AnalyticsFilters, Api
         branch,
         stage_name,
         exit_code: params.exit_code,
+        granularity: Granularity::default(),
     })
 }
 
