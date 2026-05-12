@@ -189,3 +189,98 @@ pub async fn get_analytics(
         "queue_wait_trends": queue_wait,
     })))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{auto_granularity, resolve_granularity, Granularity};
+    use chrono::{Duration, TimeZone, Utc};
+
+    fn anchor() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn auto_one_day_picks_hour() {
+        let to = anchor();
+        let from = to - Duration::days(1);
+        assert_eq!(auto_granularity(from, to), Granularity::Hour);
+    }
+
+    #[test]
+    fn auto_seven_days_picks_hour() {
+        let to = anchor();
+        let from = to - Duration::days(7);
+        assert_eq!(auto_granularity(from, to), Granularity::Hour);
+    }
+
+    #[test]
+    fn auto_eight_days_picks_day() {
+        let to = anchor();
+        let from = to - Duration::days(8);
+        assert_eq!(auto_granularity(from, to), Granularity::Day);
+    }
+
+    #[test]
+    fn auto_sixty_days_picks_day() {
+        let to = anchor();
+        let from = to - Duration::days(60);
+        assert_eq!(auto_granularity(from, to), Granularity::Day);
+    }
+
+    #[test]
+    fn auto_just_over_seven_days_picks_day() {
+        let to = anchor();
+        let from = to - Duration::days(7) - Duration::seconds(1);
+        assert_eq!(auto_granularity(from, to), Granularity::Day);
+    }
+
+    #[test]
+    fn explicit_hour_overrides_long_range() {
+        let to = anchor();
+        let from = to - Duration::days(90);
+        assert_eq!(
+            resolve_granularity(Some("hour"), from, to),
+            Granularity::Hour
+        );
+    }
+
+    #[test]
+    fn explicit_day_overrides_short_range() {
+        let to = anchor();
+        let from = to - Duration::days(1);
+        assert_eq!(
+            resolve_granularity(Some("day"), from, to),
+            Granularity::Day
+        );
+    }
+
+    #[test]
+    fn auto_mode_string_matches_default() {
+        let to = anchor();
+        let from = to - Duration::days(3);
+        assert_eq!(
+            resolve_granularity(Some("auto"), from, to),
+            Granularity::Hour
+        );
+    }
+
+    #[test]
+    fn unknown_mode_falls_back_to_auto() {
+        let to = anchor();
+        let from = to - Duration::days(30);
+        assert_eq!(
+            resolve_granularity(Some("week"), from, to),
+            Granularity::Day
+        );
+    }
+
+    #[test]
+    fn case_insensitive_explicit_mode() {
+        let to = anchor();
+        let from = to - Duration::days(30);
+        assert_eq!(
+            resolve_granularity(Some("HOUR"), from, to),
+            Granularity::Hour
+        );
+    }
+}
