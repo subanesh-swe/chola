@@ -58,7 +58,7 @@ export function QueryBox({ value, onChange, onSubmit, className }: Props) {
               'w-full bg-surface-2 border rounded-lg px-3 py-1.5 text-sm text-primary',
               'placeholder:text-disabled focus:outline-none focus:ring-1',
               hasError
-                ? 'border-red-500/70 focus:ring-red-500/50'
+                ? 'border-danger/70 focus:ring-danger/50'
                 : 'border-border-strong focus:ring-accent',
             ].join(' ')}
           />
@@ -89,7 +89,7 @@ export function QueryBox({ value, onChange, onSubmit, className }: Props) {
 
       {hasError && (
         <div id="qbox-error" role="alert" className="mt-1 space-y-0.5">
-          <p className="text-xs text-red-400">{parseError.message}</p>
+          <p className="text-xs text-danger">{parseError.message}</p>
           {parseError.hint && (
             <p className="text-xs text-disabled">{parseError.hint}</p>
           )}
@@ -99,7 +99,7 @@ export function QueryBox({ value, onChange, onSubmit, className }: Props) {
       {!hasError && warnings.length > 0 && (
         <div id="qbox-warnings" className="mt-1 space-y-0.5">
           {warnings.map((w, i) => (
-            <p key={i} className="text-xs text-amber-400/80" title={w.hint}>
+            <p key={i} className="text-xs text-warning/80" title={w.hint}>
               {w.message}
             </p>
           ))}

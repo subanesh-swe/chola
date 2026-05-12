@@ -1,22 +1,19 @@
 /**
- * Returns a `YYYY-MM-DDTHH:mm` string (no seconds, no timezone suffix) suitable
- * for `<input type="datetime-local">`. The value represents the current local time.
+ * Returns a `YYYY-MM-DDTHH:mm` string (no seconds, no timezone suffix)
+ * representing the current local time, suitable for `<input type="datetime-local">`.
  */
-export function nowIso(): string {
+export function nowLocal(): string {
   const d = new Date();
-  // Shift to local time by subtracting the timezone offset.
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
 }
 
 /**
- * Returns a `YYYY-MM-DDTHH:mm` string for `n` days before now (local time),
- * at the start of that day (00:00).
+ * Returns a `YYYY-MM-DDTHH:mm` string for `hours` ago in local time,
+ * suitable for `<input type="datetime-local">`.
  */
-export function subDaysIso(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  d.setHours(0, 0, 0, 0);
+export function hoursAgoLocal(hours: number): string {
+  const d = new Date(Date.now() - hours * 3600 * 1000);
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
 }

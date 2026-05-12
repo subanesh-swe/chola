@@ -13,24 +13,19 @@ interface BrushChangePayload {
 interface TimeRangeBrushProps {
   data: DataPoint[];
   onCommit: (from: string, to: string) => void;
-  containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
 /**
  * Renders a Recharts <Brush> and commits the selected date range to the
  * caller on mouseup (not on every drag tick).
  *
+ * Listens on `window` so traveller drags that overshoot the container
+ * boundary still fire the commit.
+ *
  * Usage:
- *   const containerRef = useRef<HTMLDivElement>(null);
- *   <div ref={containerRef}>
- *     <ResponsiveContainer ...>
- *       <SomeChart ...>
- *         <TimeRangeBrush data={data} onCommit={handleCommit} containerRef={containerRef} />
- *       </SomeChart>
- *     </ResponsiveContainer>
- *   </div>
+ *   <TimeRangeBrush data={data} onCommit={handleCommit} />
  */
-export function TimeRangeBrush({ data, onCommit, containerRef }: TimeRangeBrushProps) {
+export function TimeRangeBrush({ data, onCommit }: TimeRangeBrushProps) {
   const pendingRef = useRef<{ startIndex: number; endIndex: number } | null>(null);
 
   const handleBrushChange = (payload: BrushChangePayload) => {
@@ -42,25 +37,22 @@ export function TimeRangeBrush({ data, onCommit, containerRef }: TimeRangeBrushP
   };
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
     const handleMouseUp = () => {
       const p = pendingRef.current;
       if (!p) return;
+      pendingRef.current = null;
       const from = data[p.startIndex]?.date;
       const to = data[p.endIndex]?.date;
       if (from && to) {
         onCommit(from, to);
       }
-      pendingRef.current = null;
     };
 
-    el.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mouseup', handleMouseUp, { passive: true });
     return () => {
-      el.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [containerRef, data, onCommit]);
+  }, [data, onCommit]);
 
   return (
     <Brush

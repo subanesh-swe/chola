@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { BuildFilters, Granularity } from '../../hooks/useUrlFilters';
 import type { Repo } from '../../types';
 import { getStageNames } from '../../api/repos';
+import { nowLocal, hoursAgoLocal } from '../../utils/date';
 import { QueryBox } from './QueryBox';
 
 const ALL_STATES = ['pending', 'reserved', 'running', 'success', 'failed', 'cancelled'];
@@ -37,20 +38,6 @@ function modeFromValue(v: string): ExitMode {
   if (v === '0') return '0';
   if (v === 'nonzero') return 'nonzero';
   return 'custom';
-}
-
-/** Returns `YYYY-MM-DDTHH:mm` for now in local time. */
-function nowLocal(): string {
-  const d = new Date();
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-
-/** Returns `YYYY-MM-DDTHH:mm` for `hours` ago in local time. */
-function hoursAgoLocal(hours: number): string {
-  const d = new Date(Date.now() - hours * 3600 * 1000);
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
 }
 
 type HideableField = 'dateRange' | 'stage' | 'exitCode' | 'granularity' | 'rangePresets';
@@ -272,9 +259,7 @@ function DateRangeInputs({
   return (
     <>
       <div className="flex flex-col gap-1">
-        <label className="text-xs text-muted">
-          From <span className="text-disabled">(UTC)</span>
-        </label>
+        <label className="text-xs text-muted">From</label>
         <input
           type="datetime-local"
           value={filters.dateFrom}
@@ -283,15 +268,14 @@ function DateRangeInputs({
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-xs text-muted">
-          To <span className="text-disabled">(UTC)</span>
-        </label>
+        <label className="text-xs text-muted">To</label>
         <input
           type="datetime-local"
           value={filters.dateTo}
           onChange={(e) => onChange({ dateTo: e.target.value, page: 1 })}
           className="bg-surface-2 border border-border-strong rounded-lg px-3 py-1.5 text-sm text-primary focus:outline-none focus:ring-1 focus:ring-accent"
         />
+        <span className="text-xs text-disabled">Times are local; the server normalizes to UTC.</span>
       </div>
     </>
   );

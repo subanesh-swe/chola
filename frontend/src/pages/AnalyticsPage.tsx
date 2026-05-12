@@ -156,9 +156,7 @@ export default function AnalyticsPage() {
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('analytics', 30);
   const [maximized, setMaximized] = useState<string | null>(null);
 
-  const buildTrendsRef = useRef<HTMLDivElement>(null);
-  const durationTrendsRef = useRef<HTMLDivElement>(null);
-  const queueWaitRef = useRef<HTMLDivElement>(null);
+
 
   const { data: reposData } = useQuery({
     queryKey: ['repos'],
@@ -333,7 +331,7 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ChartCard title="Build Trends" onMaximize={() => setMaximized('build_trends')}>
           {build_trends.length ? (
-            <div ref={buildTrendsRef}>
+            <div>
               <ResponsiveContainer width="100%" height={268}>
                 <AreaChart data={build_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
@@ -347,7 +345,6 @@ export default function AnalyticsPage() {
                   <TimeRangeBrush
                     data={build_trends}
                     onCommit={commitBrushRange}
-                    containerRef={buildTrendsRef}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -359,7 +356,7 @@ export default function AnalyticsPage() {
 
         <ChartCard title="Duration Trends" onMaximize={() => setMaximized('duration_trends')}>
           {duration_trends.length ? (
-            <div ref={durationTrendsRef}>
+            <div>
               <ResponsiveContainer width="100%" height={268}>
                 <LineChart data={duration_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
@@ -373,7 +370,6 @@ export default function AnalyticsPage() {
                   <TimeRangeBrush
                     data={duration_trends}
                     onCommit={commitBrushRange}
-                    containerRef={durationTrendsRef}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -402,7 +398,7 @@ export default function AnalyticsPage() {
         </ChartCard>
         <ChartCard title="Queue Wait Time" onMaximize={() => setMaximized('queue_wait_trends')}>
           {queue_wait_trends.length ? (
-            <div ref={queueWaitRef}>
+            <div>
               <ResponsiveContainer width="100%" height={268}>
                 <AreaChart data={queue_wait_trends} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} />
@@ -414,7 +410,6 @@ export default function AnalyticsPage() {
                   <TimeRangeBrush
                     data={queue_wait_trends}
                     onCommit={commitBrushRange}
-                    containerRef={queueWaitRef}
                   />
                 </AreaChart>
               </ResponsiveContainer>
