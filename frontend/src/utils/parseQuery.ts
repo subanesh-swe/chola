@@ -3,7 +3,7 @@
  *
  * Grammar: term (WS term)*
  *   term  := field operator value
- *   field := branch | repo | stage | state | exit_code | from | to
+ *   field := branch | repo | stage | state | exit_code | from | to | bucket
  *   operator := ":" | ":!=" | ":>=" | ":<=" | ":>" | ":<"
  *   value := quoted-string | bare-token
  *
@@ -17,9 +17,10 @@
  *   exit_code -> exitCode  ("!=0" / ">=N" / "<N" -> "nonzero" sentinel; "0" -> "0")
  *   from      -> dateFrom
  *   to        -> dateTo
+ *   bucket    -> granularity ("auto" | "hour" | "day")
  */
 
-import type { BuildFilters } from '../hooks/useUrlFilters';
+import type { BuildFilters, Granularity } from '../hooks/useUrlFilters';
 
 export interface ParseError {
   message: string;
@@ -32,8 +33,10 @@ export type ParseResult =
   | { ok: true; filters: Partial<BuildFilters>; warnings: ParseError[] }
   | { ok: false; error: ParseError };
 
-const KNOWN_FIELDS = ['branch', 'repo', 'stage', 'state', 'exit_code', 'from', 'to'] as const;
+export const KNOWN_FIELDS = ['branch', 'repo', 'stage', 'state', 'exit_code', 'from', 'to', 'bucket'] as const;
 type KnownField = (typeof KNOWN_FIELDS)[number];
+
+const BUCKET_VALUES: Granularity[] = ['auto', 'hour', 'day'];
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -264,6 +267,18 @@ function applyTerm(
 
     case 'to': {
       return { ...acc, dateTo: value };
+    }
+
+    case 'bucket': {
+      if (!(BUCKET_VALUES as readonly string[]).includes(value)) {
+        return {
+          message: `Invalid bucket value "${value}"`,
+          hint: `Valid values: ${BUCKET_VALUES.join(', ')}`,
+          start,
+          end,
+        };
+      }
+      return { ...acc, granularity: value as Granularity };
     }
   }
 }
