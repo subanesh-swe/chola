@@ -53,6 +53,8 @@ function hoursAgoLocal(hours: number): string {
   return local.toISOString().slice(0, 16);
 }
 
+type HideableField = 'dateRange' | 'stage' | 'exitCode' | 'granularity' | 'rangePresets';
+
 interface Props {
   filters: BuildFilters;
   repos: Repo[];
@@ -65,6 +67,8 @@ interface Props {
   isFetching?: boolean;
   /** Called with a complete patch; bypasses draft and triggers refetch immediately. */
   onPresetApply?: (patch: Partial<BuildFilters>) => void;
+  /** Fields to hide — lets queue / other pages show a trimmed filter set. */
+  hiddenFields?: HideableField[];
 }
 
 export function FilterBar({
@@ -76,7 +80,9 @@ export function FilterBar({
   isDirty = false,
   isFetching,
   onPresetApply,
+  hiddenFields = [],
 }: Props) {
+  const hide = (f: HideableField) => hiddenFields.includes(f);
   const [queryBoxValue, setQueryBoxValue] = useState('');
 
   const toggleState = (s: string) => {
@@ -127,19 +133,21 @@ export function FilterBar({
       />
 
       {/* Range presets */}
-      <div className="flex flex-wrap items-center gap-1">
-        <span className="text-xs text-muted mr-1">Range:</span>
-        {RANGE_PRESETS.map((preset) => (
-          <button
-            key={preset.label}
-            type="button"
-            onClick={() => applyPreset(preset.hours)}
-            className="text-xs px-2 py-0.5 rounded border border-border-strong text-muted hover:text-primary hover:border-muted transition-colors"
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
+      {!hide('rangePresets') && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-xs text-muted mr-1">Range:</span>
+          {RANGE_PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => applyPreset(preset.hours)}
+              className="text-xs px-2 py-0.5 rounded border border-border-strong text-muted hover:text-primary hover:border-muted transition-colors"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Main filter row */}
       <div className="flex flex-wrap items-end gap-3">
@@ -172,23 +180,29 @@ export function FilterBar({
           />
         </div>
 
-        <DateRangeInputs filters={filters} onChange={onChange} />
+        {!hide('dateRange') && <DateRangeInputs filters={filters} onChange={onChange} />}
 
-        <StageSelect
-          repoId={filters.repo}
-          value={filters.stage}
-          onChange={(s) => onChange({ stage: s, page: 1 })}
-        />
+        {!hide('stage') && (
+          <StageSelect
+            repoId={filters.repo}
+            value={filters.stage}
+            onChange={(s) => onChange({ stage: s, page: 1 })}
+          />
+        )}
 
-        <ExitCodeSelect
-          value={filters.exitCode}
-          onChange={(v) => onChange({ exitCode: v, page: 1 })}
-        />
+        {!hide('exitCode') && (
+          <ExitCodeSelect
+            value={filters.exitCode}
+            onChange={(v) => onChange({ exitCode: v, page: 1 })}
+          />
+        )}
 
-        <GranularityToggle
-          value={filters.granularity}
-          onChange={(g) => onChange({ granularity: g })}
-        />
+        {!hide('granularity') && (
+          <GranularityToggle
+            value={filters.granularity}
+            onChange={(g) => onChange({ granularity: g })}
+          />
+        )}
 
         <div className="flex items-end gap-2 self-end ml-auto">
           <button
