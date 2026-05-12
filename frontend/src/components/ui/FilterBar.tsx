@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { BuildFilters, Granularity } from '../../hooks/useUrlFilters';
 import type { Repo } from '../../types';
 import { getStageNames } from '../../api/repos';
+import { QueryBox } from './QueryBox';
 
 const ALL_STATES = ['pending', 'reserved', 'running', 'success', 'failed', 'cancelled'];
 
@@ -76,6 +77,8 @@ export function FilterBar({
   isFetching,
   onPresetApply,
 }: Props) {
+  const [queryBoxValue, setQueryBoxValue] = useState('');
+
   const toggleState = (s: string) => {
     const next = filters.state.includes(s)
       ? filters.state.filter((x) => x !== s)
@@ -101,11 +104,28 @@ export function FilterBar({
     }
   };
 
+  const handleQuerySubmit = (parsed: Partial<BuildFilters>) => {
+    // Merge parsed filters and apply immediately (skip the Search-button step).
+    if (onPresetApply) {
+      onPresetApply({ ...parsed, page: 1 });
+    } else {
+      onChange({ ...parsed, page: 1 });
+      onApply();
+    }
+  };
+
   return (
     <div
       className="flex flex-col gap-3 p-3 bg-surface-2/50 border border-border rounded-xl"
       onKeyDown={onEnter}
     >
+      {/* KQL-lite query box */}
+      <QueryBox
+        value={queryBoxValue}
+        onChange={setQueryBoxValue}
+        onSubmit={handleQuerySubmit}
+      />
+
       {/* Range presets */}
       <div className="flex flex-wrap items-center gap-1">
         <span className="text-xs text-muted mr-1">Range:</span>
