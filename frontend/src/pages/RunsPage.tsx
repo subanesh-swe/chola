@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { listRuns, type Run } from '../api/runs';
 import { DataTable, type Column } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { Pagination } from '../components/ui/Pagination';
 import { EmptyState } from '../components/ui/EmptyState';
+import { RefreshControl } from '../components/ui/RefreshControl';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { formatSecs } from '../utils/format';
 
 const PAGE_SIZE = 25;
@@ -85,8 +87,9 @@ export default function RunsPage() {
   const [page, setPage] = useState(1);
   const [stateFilter, setStateFilter] = useState('');
   const [workerFilter, setWorkerFilter] = useState('');
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('runs', 0);
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['runs', page, stateFilter, workerFilter],
     queryFn: () =>
       listRuns({
@@ -95,7 +98,8 @@ export default function RunsPage() {
         state: stateFilter || undefined,
         worker_id: workerFilter || undefined,
       }),
-    refetchInterval: 5000,
+    refetchInterval: refreshSecs > 0 ? refreshSecs * 1000 : false,
+    placeholderData: keepPreviousData,
   });
 
   const runs = data?.data ?? [];
@@ -106,7 +110,7 @@ export default function RunsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl font-bold text-primary">Runs</h2>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <label htmlFor="run-state" className="text-sm text-muted">
               State:
@@ -143,6 +147,12 @@ export default function RunsPage() {
               className="bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-primary w-36 focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
+          <RefreshControl
+            intervalSecs={refreshSecs}
+            onIntervalChange={setRefreshSecs}
+            onRefresh={() => refetch()}
+            isFetching={isFetching}
+          />
         </div>
       </div>
 
