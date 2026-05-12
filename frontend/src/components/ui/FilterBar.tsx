@@ -1,12 +1,10 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import type { BuildFilters, Granularity } from '../../hooks/useUrlFilters';
-import type { Repo } from '../../types';
-import { getStageNames } from '../../api/repos';
+import { useRef, type KeyboardEvent } from 'react';
+import type { BuildFilters } from '../../hooks/useUrlFilters';
+import { useFieldValues } from '../../hooks/useFieldValues';
+import type { useQueryHistory } from '../../hooks/useQueryHistory';
 import { nowLocal, hoursAgoLocal } from '../../utils/date';
-import { QueryBox } from './QueryBox';
-
-const ALL_STATES = ['pending', 'reserved', 'running', 'success', 'failed', 'cancelled'];
+import { QueryBox, type QueryBoxHandle } from './QueryBox';
+import { FieldChipsRow } from './FieldChipsRow';
 
 const RANGE_PRESETS = [
   { label: '1h', hours: 1 },
@@ -18,49 +16,29 @@ const RANGE_PRESETS = [
   { label: '90d', hours: 24 * 90 },
 ];
 
-const GRANULARITY_OPTIONS: Array<{ label: string; value: Granularity }> = [
-  { label: 'Hour', value: 'hour' },
-  { label: 'Day', value: 'day' },
-  { label: 'Auto', value: 'auto' },
-];
-
-type ExitMode = 'any' | '0' | 'nonzero' | 'custom';
-
-const EXIT_CODE_OPTIONS: Array<{ label: string; value: ExitMode }> = [
-  { label: 'Any', value: 'any' },
-  { label: 'Success (0)', value: '0' },
-  { label: 'Non-zero', value: 'nonzero' },
-  { label: 'Custom...', value: 'custom' },
-];
-
-function modeFromValue(v: string): ExitMode {
-  if (v === '') return 'any';
-  if (v === '0') return '0';
-  if (v === 'nonzero') return 'nonzero';
-  return 'custom';
-}
-
-type HideableField = 'dateRange' | 'stage' | 'exitCode' | 'granularity' | 'rangePresets';
+type HideableField = 'dateRange' | 'rangePresets';
 
 interface Props {
   filters: BuildFilters;
-  repos: Repo[];
+  queryValue: string;
+  onQueryChange: (v: string) => void;
   onChange: (patch: Partial<BuildFilters>) => void;
-  /** Called when Search is clicked or Enter is pressed. Defaults to no-op. */
+  /** Called when Search is clicked or Enter is pressed. */
   onApply?: () => void;
   onReset: () => void;
-  /** Whether the draft differs from applied. Defaults to false (Search always disabled). */
   isDirty?: boolean;
   isFetching?: boolean;
   /** Called with a complete patch; bypasses draft and triggers refetch immediately. */
   onPresetApply?: (patch: Partial<BuildFilters>) => void;
   /** Fields to hide — lets queue / other pages show a trimmed filter set. */
   hiddenFields?: HideableField[];
+  historyApi: ReturnType<typeof useQueryHistory>;
 }
 
 export function FilterBar({
   filters,
-  repos,
+  queryValue,
+  onQueryChange,
   onChange,
   onApply = () => undefined,
   onReset,
@@ -68,16 +46,11 @@ export function FilterBar({
   isFetching,
   onPresetApply,
   hiddenFields = [],
+  historyApi,
 }: Props) {
   const hide = (f: HideableField) => hiddenFields.includes(f);
-  const [queryBoxValue, setQueryBoxValue] = useState('');
-
-  const toggleState = (s: string) => {
-    const next = filters.state.includes(s)
-      ? filters.state.filter((x) => x !== s)
-      : [...filters.state, s];
-    onChange({ state: next, page: 1 });
-  };
+  const queryRef = useRef<QueryBoxHandle>(null);
+  const fieldValues = useFieldValues();
 
   const onEnter = (e: KeyboardEvent) => {
     if (e.key === 'Enter') onApply();
@@ -97,8 +70,8 @@ export function FilterBar({
     }
   };
 
-  const handleQuerySubmit = (parsed: Partial<BuildFilters>) => {
-    // Merge parsed filters and apply immediately (skip the Search-button step).
+  const handleQuerySubmit = (parsed: Partial<BuildFilters>, rawQuery: string) => {
+    historyApi.push(rawQuery);
     if (onPresetApply) {
       onPresetApply({ ...parsed, page: 1 });
     } else {
@@ -107,143 +80,81 @@ export function FilterBar({
     }
   };
 
+  const handlePickHistory = (q: string) => {
+    onQueryChange(q);
+  };
+
+  const handleInsertChip = (token: string) => {
+    queryRef.current?.insertAtCaret(token);
+  };
+
   return (
     <div
       className="flex flex-col gap-3 p-3 bg-surface-2/50 border border-border rounded-xl"
       onKeyDown={onEnter}
     >
-      {/* KQL-lite query box */}
-      <QueryBox
-        value={queryBoxValue}
-        onChange={setQueryBoxValue}
-        onSubmit={handleQuerySubmit}
-      />
+      {/* Date range + presets */}
+      {!hide('dateRange') && (
+        <div className="flex flex-wrap items-end gap-3">
+          <DateRangeInputs filters={filters} onChange={onChange} />
 
-      {/* Range presets */}
-      {!hide('rangePresets') && (
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-xs text-muted mr-1">Range:</span>
-          {RANGE_PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              onClick={() => applyPreset(preset.hours)}
-              className="text-xs px-2 py-0.5 rounded border border-border-strong text-muted hover:text-primary hover:border-muted transition-colors"
-            >
-              {preset.label}
-            </button>
-          ))}
+          {!hide('rangePresets') && (
+            <div className="flex flex-wrap items-center gap-1 self-end pb-0.5">
+              <span className="text-xs text-muted mr-1">Range:</span>
+              {RANGE_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => applyPreset(preset.hours)}
+                  className="text-xs px-2 py-0.5 rounded border border-border-strong text-muted hover:text-primary hover:border-muted transition-colors"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Main filter row */}
-      <div className="flex flex-wrap items-end gap-3">
-        <StateMultiSelect selected={filters.state} onToggle={toggleState} />
+      {/* Query box */}
+      <QueryBox
+        ref={queryRef}
+        value={queryValue}
+        onChange={onQueryChange}
+        onSubmit={handleQuerySubmit}
+        history={historyApi.history}
+        onPickHistory={handlePickHistory}
+        onClearHistory={historyApi.clear}
+        onRemoveHistoryEntry={historyApi.remove}
+        fieldValues={fieldValues}
+      />
 
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted">Repo</label>
-          <select
-            value={filters.repo}
-            onChange={(e) => onChange({ repo: e.target.value, stage: '', page: 1 })}
-            className="bg-surface-2 border border-border-strong rounded-lg px-3 py-1.5 text-sm text-primary min-w-[140px] focus:outline-none focus:ring-1 focus:ring-accent"
-          >
-            <option value="">All repos</option>
-            {repos.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.repo_name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Field chips for quick token insertion */}
+      <FieldChipsRow onInsert={handleInsertChip} />
 
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted">Branch</label>
-          <input
-            type="text"
-            value={filters.branch}
-            onChange={(e) => onChange({ branch: e.target.value, page: 1 })}
-            placeholder="e.g. main"
-            className="bg-surface-2 border border-border-strong rounded-lg px-3 py-1.5 text-sm text-primary w-32 focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-        </div>
-
-        {!hide('dateRange') && <DateRangeInputs filters={filters} onChange={onChange} />}
-
-        {!hide('stage') && (
-          <StageSelect
-            repoId={filters.repo}
-            value={filters.stage}
-            onChange={(s) => onChange({ stage: s, page: 1 })}
-          />
-        )}
-
-        {!hide('exitCode') && (
-          <ExitCodeSelect
-            value={filters.exitCode}
-            onChange={(v) => onChange({ exitCode: v, page: 1 })}
-          />
-        )}
-
-        {!hide('granularity') && (
-          <GranularityToggle
-            value={filters.granularity}
-            onChange={(g) => onChange({ granularity: g })}
-          />
-        )}
-
-        <div className="flex items-end gap-2 self-end ml-auto">
-          <button
-            type="button"
-            onClick={onReset}
-            className="text-xs text-muted hover:text-secondary px-2 py-1.5 rounded-lg hover:bg-surface-hover transition-colors"
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            onClick={onApply}
-            disabled={!isDirty}
-            className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
-              !isDirty
-                ? 'bg-surface-2 text-disabled cursor-not-allowed'
-                : isFetching
-                  ? 'bg-accent text-on-accent animate-pulse'
-                  : 'bg-accent hover:bg-accent/80 text-on-accent'
-            }`}
-          >
-            Search
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StateMultiSelect({
-  selected,
-  onToggle,
-}: {
-  selected: string[];
-  onToggle: (s: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted">State</label>
-      <div className="flex flex-wrap gap-1">
-        {ALL_STATES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => onToggle(s)}
-            className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-              selected.includes(s)
-                ? 'bg-accent border-accent/70 text-on-accent'
-                : 'bg-surface-2 border-border-strong text-muted hover:border-muted'
-            }`}
-          >
-            {s}
-          </button>
-        ))}
+      {/* Actions */}
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          type="button"
+          onClick={onReset}
+          className="text-xs text-muted hover:text-secondary px-2 py-1.5 rounded-lg hover:bg-surface-hover transition-colors"
+        >
+          Reset
+        </button>
+        <button
+          type="button"
+          onClick={onApply}
+          disabled={!isDirty}
+          className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
+            !isDirty
+              ? 'bg-surface-2 text-disabled cursor-not-allowed'
+              : isFetching
+                ? 'bg-accent text-on-accent animate-pulse'
+                : 'bg-accent hover:bg-accent/80 text-on-accent'
+          }`}
+        >
+          Search
+        </button>
       </div>
     </div>
   );
@@ -278,128 +189,5 @@ function DateRangeInputs({
         <span className="text-xs text-disabled">Times are local; the server normalizes to UTC.</span>
       </div>
     </>
-  );
-}
-
-function StageSelect({
-  repoId,
-  value,
-  onChange,
-}: {
-  repoId: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const { data: stages = [] } = useQuery({
-    queryKey: ['stage-names', repoId],
-    queryFn: () => getStageNames(repoId),
-    enabled: !!repoId,
-  });
-
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted">Stage</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={!repoId}
-        className="bg-surface-2 border border-border-strong rounded-lg px-3 py-1.5 text-sm text-primary min-w-[120px] disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-accent"
-      >
-        <option value="">All stages</option>
-        {stages.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function ExitCodeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [mode, setMode] = useState<ExitMode>(() => modeFromValue(value));
-  const [customInput, setCustomInput] = useState(modeFromValue(value) === 'custom' ? value : '');
-
-  // Sync local state when the bound value changes from outside (URL back/forward, reset).
-  useEffect(() => {
-    const m = modeFromValue(value);
-    setMode(m);
-    if (m === 'custom') setCustomInput(value);
-    else if (m === 'any') setCustomInput('');
-  }, [value]);
-
-  const handleModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const m = e.target.value as ExitMode;
-    setMode(m);
-    if (m === 'any') onChange('');
-    else if (m === '0') onChange('0');
-    else if (m === 'nonzero') onChange('nonzero');
-    else onChange(customInput);
-  };
-
-  const handleCustomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value;
-    setCustomInput(v);
-    if (mode === 'custom') onChange(v);
-  };
-
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted">Exit code</label>
-      <div className="flex gap-1">
-        <select
-          value={mode}
-          onChange={handleModeChange}
-          className="bg-surface-2 border border-border-strong rounded-lg px-3 py-1.5 text-sm text-primary min-w-[110px] focus:outline-none focus:ring-1 focus:ring-accent"
-        >
-          {EXIT_CODE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-        {mode === 'custom' && (
-          <input
-            type="number"
-            value={customInput}
-            onChange={handleCustomChange}
-            placeholder="code"
-            className="bg-surface-2 border border-border-strong rounded-lg px-2 py-1.5 text-sm text-primary w-20 focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function GranularityToggle({
-  value,
-  onChange,
-}: {
-  value: Granularity;
-  onChange: (g: Granularity) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted">Granularity</label>
-      <div className="flex rounded-lg overflow-hidden border border-border-strong">
-        {GRANULARITY_OPTIONS.map((opt, idx) => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={`text-xs px-2.5 py-1.5 transition-colors ${
-              idx > 0 ? 'border-l border-border-strong' : ''
-            } ${
-              value === opt.value
-                ? 'bg-accent text-on-accent'
-                : 'bg-surface-2 text-muted hover:text-primary hover:bg-surface-hover'
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
