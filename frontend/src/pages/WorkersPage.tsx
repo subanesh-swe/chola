@@ -20,6 +20,8 @@ import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo,
 import type { Worker as CholaWorker } from '../types/worker';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { EmptyState } from '../components/ui/EmptyState';
+import { RefreshControl } from '../components/ui/RefreshControl';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
 
 // ── System Info panel ────────────────────────────────────────────────────────
 
@@ -915,7 +917,12 @@ export default function WorkersPage() {
   const [editingLabelsId, setEditingLabelsId] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState<string[]>([]);
   const [editingLimitsId, setEditingLimitsId] = useState<string | null>(null);
-  const { data, isLoading, isError } = useQuery({ queryKey: ['workers'], queryFn: () => listWorkers(), refetchInterval: 5000 });
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('workers', 10);
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+    queryKey: ['workers'],
+    queryFn: () => listWorkers(),
+    refetchInterval: refreshSecs > 0 ? refreshSecs * 1000 : false,
+  });
 
   const drainMut = useMutation({
     mutationFn: (id: string) => drainWorker(id),
@@ -975,7 +982,7 @@ export default function WorkersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         {/* item 21: skeleton for count badge while loading */}
         <h2 className="text-2xl font-bold text-primary">
           Workers
@@ -984,14 +991,22 @@ export default function WorkersPage() {
             : <span className="ml-1">({workers.length})</span>
           }
         </h2>
-        {canManageWorkers && (
-          <button
-            onClick={() => setShowRegisterModal(true)}
-            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            Register Worker
-          </button>
-        )}
+        <div className="flex items-center gap-3 flex-wrap">
+          <RefreshControl
+            intervalSecs={refreshSecs}
+            onIntervalChange={setRefreshSecs}
+            onRefresh={() => refetch()}
+            isFetching={isFetching}
+          />
+          {canManageWorkers && (
+            <button
+              onClick={() => setShowRegisterModal(true)}
+              className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              Register Worker
+            </button>
+          )}
+        </div>
       </div>
 
       {isError && (
