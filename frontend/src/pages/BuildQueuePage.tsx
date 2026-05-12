@@ -1,10 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
-import { listRepos } from '../api/repos';
 import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
+import { useQueryHistory } from '../hooks/useQueryHistory';
 import { FilterBar } from '../components/ui/FilterBar';
 import { RefreshControl } from '../components/ui/RefreshControl';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -13,17 +13,14 @@ import { TableSkeleton } from '../components/ui/PageSkeleton';
 
 const QUEUE_STATES = ['pending', 'reserved', 'running'];
 
-const HIDDEN: Array<'dateRange' | 'stage' | 'exitCode' | 'granularity' | 'rangePresets'> = [
-  'dateRange',
-  'stage',
-  'exitCode',
-  'granularity',
-  'rangePresets',
-];
+// BuildQueue only hides date range (queue is real-time; no date filtering needed)
+const HIDDEN: Array<'dateRange' | 'rangePresets'> = ['dateRange', 'rangePresets'];
 
 export default function BuildQueuePage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('queue', 5);
+  const [queryValue, setQueryValue] = useState('');
+  const historyApi = useQueryHistory('queue');
 
   // Seed queue states on first load if user has not set any state filter.
   useEffect(() => {
@@ -33,12 +30,6 @@ export default function BuildQueuePage() {
     // Only on mount — intentionally omitting deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const { data: reposData } = useQuery({
-    queryKey: ['repos'],
-    queryFn: () => listRepos({ limit: 100 }),
-  });
-  const repos = reposData?.data ?? [];
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['queue', applied],
@@ -78,7 +69,8 @@ export default function BuildQueuePage() {
 
       <FilterBar
         filters={draft}
-        repos={repos}
+        queryValue={queryValue}
+        onQueryChange={setQueryValue}
         onChange={patchDraft}
         onApply={apply}
         onReset={reset}
@@ -86,6 +78,7 @@ export default function BuildQueuePage() {
         isFetching={isFetching}
         onPresetApply={applyPatch}
         hiddenFields={HIDDEN}
+        historyApi={historyApi}
       />
 
       {isError && (

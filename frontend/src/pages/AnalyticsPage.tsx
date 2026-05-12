@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getAnalytics } from '../api/analytics';
-import { listRepos } from '../api/repos';
 import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
+import { useQueryHistory } from '../hooks/useQueryHistory';
 import { FilterBar } from '../components/ui/FilterBar';
 import { RefreshControl } from '../components/ui/RefreshControl';
 import { TimeRangeBrush } from '../components/charts/TimeRangeBrush';
@@ -155,14 +155,8 @@ export default function AnalyticsPage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('analytics', 30);
   const [maximized, setMaximized] = useState<string | null>(null);
-
-
-
-  const { data: reposData } = useQuery({
-    queryKey: ['repos'],
-    queryFn: () => listRepos({ limit: 100 }),
-  });
-  const repos = reposData?.data ?? [];
+  const [queryValue, setQueryValue] = useState('');
+  const historyApi = useQueryHistory('analytics');
 
   // Query is keyed on `applied` so it only refetches after the user clicks Search
   // or uses a preset (which calls applyPatch directly).
@@ -292,13 +286,15 @@ export default function AnalyticsPage() {
 
       <FilterBar
         filters={draft}
-        repos={repos}
+        queryValue={queryValue}
+        onQueryChange={setQueryValue}
         onChange={patchDraft}
         onApply={apply}
         onReset={reset}
         isDirty={isDirty}
         isFetching={isFetching}
         onPresetApply={handlePresetApply}
+        historyApi={historyApi}
       />
 
       {/* Summary cards */}

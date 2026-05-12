@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
-import { listRepos } from '../api/repos';
 import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
+import { useQueryHistory } from '../hooks/useQueryHistory';
 import { FilterBar } from '../components/ui/FilterBar';
 import { RefreshControl } from '../components/ui/RefreshControl';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -13,12 +14,8 @@ import { TableSkeleton } from '../components/ui/PageSkeleton';
 export default function BuildsPage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('builds', 5);
-
-  const { data: reposData } = useQuery({
-    queryKey: ['repos'],
-    queryFn: () => listRepos({ limit: 100 }),
-  });
-  const repos = reposData?.data ?? [];
+  const [queryValue, setQueryValue] = useState('');
+  const historyApi = useQueryHistory('builds');
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['builds', applied],
@@ -47,13 +44,15 @@ export default function BuildsPage() {
 
       <FilterBar
         filters={draft}
-        repos={repos}
+        queryValue={queryValue}
+        onQueryChange={setQueryValue}
         onChange={patchDraft}
         onApply={apply}
         onReset={reset}
         isDirty={isDirty}
         isFetching={isFetching}
         onPresetApply={applyPatch}
+        historyApi={historyApi}
       />
 
       {/* Show archived toggle */}
