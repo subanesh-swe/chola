@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 export type SortDir = 'asc' | 'desc';
+export type Granularity = 'hour' | 'day' | 'auto';
 
 export interface BuildFilters {
   state: string[];
@@ -15,6 +16,7 @@ export interface BuildFilters {
   sortKey: string;
   sortDir: SortDir;
   includeArchived: boolean;
+  granularity: Granularity;
 }
 
 const DEFAULTS: BuildFilters = {
@@ -29,11 +31,19 @@ const DEFAULTS: BuildFilters = {
   sortKey: '',
   sortDir: 'desc',
   includeArchived: false,
+  granularity: 'auto',
 };
 
 function parseStates(raw: string | null): string[] {
   if (!raw) return [];
   return raw.split(',').filter(Boolean);
+}
+
+const GRANULARITY_VALUES: Granularity[] = ['hour', 'day', 'auto'];
+
+function parseGranularity(raw: string | null): Granularity {
+  if (raw && GRANULARITY_VALUES.includes(raw as Granularity)) return raw as Granularity;
+  return 'auto';
 }
 
 function parseFilters(p: URLSearchParams): BuildFilters {
@@ -49,6 +59,7 @@ function parseFilters(p: URLSearchParams): BuildFilters {
     sortKey: p.get('sortKey') ?? '',
     sortDir: (p.get('sortDir') as SortDir) ?? 'desc',
     includeArchived: p.get('includeArchived') === 'true',
+    granularity: parseGranularity(p.get('granularity')),
   };
 }
 
@@ -91,6 +102,12 @@ export function useUrlFilters() {
 
         if (merged.includeArchived) next.set('includeArchived', 'true');
         else next.delete('includeArchived');
+
+        if (merged.granularity && merged.granularity !== 'auto') {
+          next.set('granularity', merged.granularity);
+        } else {
+          next.delete('granularity');
+        }
 
         const pageVal = 'page' in patch ? patch.page! : 1;
         if (pageVal > 1) next.set('page', String(pageVal));
