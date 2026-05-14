@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
@@ -16,6 +16,15 @@ export default function BuildsPage() {
   // queryValue mirrors applied.q so the QueryBox reflects the active ChQL query.
   const [queryValue, setQueryValue] = useState(applied.q);
   const historyApi = useQueryHistory('builds');
+
+  // Seed date defaults on first load when URL has no date filter.
+  useEffect(() => {
+    if (!applied.dateFrom && !applied.dateTo) {
+      applyPatch({ dateFrom: 'now-24h', dateTo: 'now' });
+    }
+    // Only on mount — intentionally omitting deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['builds', applied],

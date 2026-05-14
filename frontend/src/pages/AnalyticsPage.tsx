@@ -158,6 +158,15 @@ export default function AnalyticsPage() {
   const [queryValue, setQueryValue] = useState(applied.q);
   const historyApi = useQueryHistory('analytics');
 
+  // Seed date defaults on first load when URL has no date filter.
+  useEffect(() => {
+    if (!applied.dateFrom && !applied.dateTo) {
+      applyPatch({ dateFrom: 'now-7d', dateTo: 'now' });
+    }
+    // Only on mount — intentionally omitting deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Query is keyed on `applied` so it only refetches after the user clicks Search
   // or uses a preset (which calls applyPatch directly).
   const appliedKey = JSON.stringify(applied);
