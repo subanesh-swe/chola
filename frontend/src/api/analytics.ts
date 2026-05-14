@@ -10,6 +10,7 @@ interface AnalyticsQueryParams {
   stage_name?: string;
   exit_code?: number;
   granularity?: string;
+  q?: string;
 }
 
 // `granularity` may not be in BuildFilters yet (owned by another workstream).
@@ -27,6 +28,7 @@ function filtersToAnalyticsParams(filters: AnalyticsFilters): AnalyticsQueryPara
     params.exit_code = filters.exitCode === 'nonzero' ? -1 : Number(filters.exitCode);
   }
   if (filters.granularity) params.granularity = filters.granularity;
+  if (filters.q) params.q = filters.q;
   return params;
 }
 

@@ -27,6 +27,7 @@ export const listRuns = (params?: {
   offset?: number;
   state?: string;
   worker_id?: string;
+  q?: string;
 }) =>
   apiClient
     .get<PaginatedResponse>('/runs', { params })

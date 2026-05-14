@@ -20,6 +20,7 @@ export interface ListBuildsQueryParams {
   sort_by?: string;
   sort_dir?: string;
   include_archived?: boolean;
+  q?: string;
 }
 
 // Normalize API response: backend returns `id`, frontend expects `job_group_id`
@@ -42,6 +43,7 @@ function filtersToParams(filters: Partial<BuildFilters>, limit: number, offset: 
   if (filters.sortKey) params.sort_by = filters.sortKey;
   if (filters.sortDir) params.sort_dir = filters.sortDir;
   if (filters.includeArchived) params.include_archived = true;
+  if (filters.q) params.q = filters.q;
 
   return params;
 }
