@@ -52,3 +52,5 @@ sysinfo = "0.38"
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 mime_guess = "2"
+logos = "0.14"
+chumsky = "0.10"

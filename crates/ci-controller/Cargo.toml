@@ -48,3 +48,5 @@ regex = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 mime_guess = { workspace = true }
+logos = { workspace = true }
+chumsky = { workspace = true }
