@@ -13,6 +13,8 @@ pub mod lexer;
 pub mod parser;
 
 #[cfg(test)]
+mod corpus_test;
+#[cfg(test)]
 mod tests;
 
 #[allow(unused_imports)]
