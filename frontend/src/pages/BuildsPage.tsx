@@ -14,7 +14,8 @@ import { TableSkeleton } from '../components/ui/PageSkeleton';
 export default function BuildsPage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('builds', 5);
-  const [queryValue, setQueryValue] = useState('');
+  // queryValue mirrors applied.q so the QueryBox reflects the active ChQL query.
+  const [queryValue, setQueryValue] = useState(applied.q);
   const historyApi = useQueryHistory('builds');
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({

@@ -155,7 +155,8 @@ export default function AnalyticsPage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('analytics', 30);
   const [maximized, setMaximized] = useState<string | null>(null);
-  const [queryValue, setQueryValue] = useState('');
+  // queryValue mirrors applied.q so the QueryBox reflects the active ChQL query.
+  const [queryValue, setQueryValue] = useState(applied.q);
   const historyApi = useQueryHistory('analytics');
 
   // Query is keyed on `applied` so it only refetches after the user clicks Search

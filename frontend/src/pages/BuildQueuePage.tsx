@@ -19,7 +19,8 @@ const HIDDEN: Array<'dateRange' | 'rangePresets'> = ['dateRange', 'rangePresets'
 export default function BuildQueuePage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('queue', 5);
-  const [queryValue, setQueryValue] = useState('');
+  // queryValue mirrors applied.q so the QueryBox reflects the active ChQL query.
+  const [queryValue, setQueryValue] = useState(applied.q);
   const historyApi = useQueryHistory('queue');
 
   // Seed queue states on first load if user has not set any state filter.
