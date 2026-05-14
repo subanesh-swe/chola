@@ -1,19 +1,13 @@
 /**
- * Returns a `YYYY-MM-DDTHH:mm` string (no seconds, no timezone suffix)
- * representing the current local time, suitable for `<input type="datetime-local">`.
+ * Common relative date presets for the DateExpressionInput datalist.
  */
-export function nowLocal(): string {
-  const d = new Date();
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-
-/**
- * Returns a `YYYY-MM-DDTHH:mm` string for `hours` ago in local time,
- * suitable for `<input type="datetime-local">`.
- */
-export function hoursAgoLocal(hours: number): string {
-  const d = new Date(Date.now() - hours * 3600 * 1000);
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
+export const RELATIVE_PRESETS = [
+  'now',
+  'now-15m',
+  'now-1h',
+  'now-6h',
+  'now-24h',
+  'now-7d',
+  'now-30d',
+  'now-90d',
+];
