@@ -20,6 +20,7 @@ mod log_aggregator;
 mod monitoring;
 mod notifier;
 pub mod openapi;
+mod query;
 mod rate_limit;
 mod redis_store;
 mod reservation;
