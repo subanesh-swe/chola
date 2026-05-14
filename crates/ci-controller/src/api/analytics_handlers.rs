@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
+use crate::query;
 use crate::state::ControllerState;
 use crate::storage::{AnalyticsFilters, AnalyticsWindow, Granularity};
 
@@ -26,6 +27,9 @@ pub struct AnalyticsParams {
     pub exit_code: Option<i32>,
     /// `auto` (default), `hour`, or `day`. Auto picks hour when range <= 7d.
     pub granularity: Option<String>,
+    /// ChQL expression for free-form filtering. Layered on top of typed
+    /// filters when both are present. See `local/plans/CHQL.md`.
+    pub q: Option<String>,
 }
 
 /// Threshold (inclusive) under which `auto` granularity picks hourly bucketing.
@@ -67,6 +71,23 @@ fn window_bounds(window: &AnalyticsWindow, now: DateTime<Utc>) -> (DateTime<Utc>
         AnalyticsWindow::Range { from, to } => (*from, *to),
         AnalyticsWindow::LastDays(days) => (now - Duration::days(*days as i64), now),
     }
+}
+
+/// Parse + compile an optional `?q=` ChQL expression to a SqlFragment. Empty
+/// or whitespace-only input yields `None` so the storage path stays fast.
+pub(crate) fn compile_chql_param(q: Option<&str>) -> Result<Option<query::SqlFragment>, ApiError> {
+    let Some(raw) = q else {
+        return Ok(None);
+    };
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    let ast = query::parse(raw).map_err(ApiError::from)?;
+    let Some(ast) = ast else {
+        return Ok(None);
+    };
+    let frag = query::compile(&ast).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Some(frag))
 }
 
 /// Build an AnalyticsFilters from query params. `from`/`to` win over `days`.
@@ -125,6 +146,7 @@ fn filters_from_params(params: &AnalyticsParams) -> Result<AnalyticsFilters, Api
         ("stage_name" = Option<String>, Query, description = "Filter by stage name"),
         ("exit_code" = Option<i32>, Query, description = "Filter by exit code; -1 = any non-zero"),
         ("granularity" = Option<String>, Query, description = "Bucket size: auto (default), hour, day"),
+        ("q" = Option<String>, Query, description = "ChQL expression layered over typed filters"),
     ),
     responses(
         (status = 200, description = "Build analytics"),
@@ -140,15 +162,17 @@ pub async fn get_analytics(
 ) -> Result<Json<Value>, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
     let filters = filters_from_params(&params)?;
+    let chql_frag = compile_chql_param(params.q.as_deref())?;
+    let chql_ref = chql_frag.as_ref();
 
     let (build_trends, duration_trends, slowest_stages, failing_repos, worker_util, queue_wait) =
         tokio::try_join!(
-            storage.get_build_trends(&filters),
-            storage.get_duration_trends(&filters),
-            storage.get_slowest_stages(&filters, 10),
-            storage.get_most_failing_repos(&filters, 10),
+            storage.get_build_trends(&filters, chql_ref),
+            storage.get_duration_trends(&filters, chql_ref),
+            storage.get_slowest_stages(&filters, 10, chql_ref),
+            storage.get_most_failing_repos(&filters, 10, chql_ref),
             storage.get_worker_utilization(),
-            storage.get_queue_wait_trends(&filters),
+            storage.get_queue_wait_trends(&filters, chql_ref),
         )
         .map_err(|e| ApiError::Internal(format!("Analytics query failed: {}", e)))?;
 

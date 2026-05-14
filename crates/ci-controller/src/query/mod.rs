@@ -15,7 +15,11 @@ pub mod parser;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
 pub use ast::{Ast, CmpOp, Value};
+#[allow(unused_imports)]
 pub use compile::{compile, CompileError, SqlBind, SqlFragment};
+#[allow(unused_imports)]
 pub use error::ChqlError;
+#[allow(unused_imports)]
 pub use parser::parse;

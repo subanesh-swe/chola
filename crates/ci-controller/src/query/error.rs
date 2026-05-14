@@ -26,6 +26,7 @@ impl ChqlError {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
         self

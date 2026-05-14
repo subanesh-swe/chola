@@ -634,6 +634,79 @@ impl AnalyticsFilters {
     }
 }
 
+/// Merge an existing `AnalyticsPlan` with an optional ChQL [`SqlFragment`].
+/// Returns the combined WHERE clause and the next bind index.
+///
+/// `wrap_subquery` controls how the fragment is spliced:
+/// - `false` — fragment AND-appended directly. The query must be rooted at
+///   the `job_groups` table (un-aliased) so the compiler's EXISTS subqueries
+///   referencing `job_groups.id` resolve correctly.
+/// - `true`  — fragment wrapped as `<alias>.id IN (SELECT id FROM job_groups
+///   WHERE <fragment>)`. Use this for queries rooted at `jobs` or with an
+///   aliased `job_groups jg`.
+///
+/// The fragment uses `?` placeholders; we renumber them to `$N` starting at
+/// `plan.next_idx`. The caller must bind existing filter args first, then the
+/// fragment's binds (use [`bind_chql`]).
+pub fn merge_chql(
+    plan: AnalyticsPlan,
+    chql: Option<&crate::query::SqlFragment>,
+    wrap_subquery: Option<&str>,
+) -> AnalyticsPlan {
+    match chql {
+        None => plan,
+        Some(frag) => {
+            let (renumbered, next_idx) = frag.to_pg(plan.next_idx);
+            let chunk = match wrap_subquery {
+                None => renumbered,
+                Some(alias) => {
+                    // Splice ChQL into a subselect against job_groups so the
+                    // compiler's `job_groups.id` references stay valid.
+                    format!(
+                        "{alias}.id IN (SELECT id FROM job_groups WHERE {renumbered})"
+                    )
+                }
+            };
+            let where_clause = if plan.where_clause.is_empty() {
+                format!("WHERE {chunk}")
+            } else {
+                format!("{} AND ({chunk})", plan.where_clause)
+            };
+            AnalyticsPlan {
+                where_clause,
+                next_idx,
+            }
+        }
+    }
+}
+
+/// Bind a ChQL fragment's args onto a Postgres query, in order.
+pub fn bind_chql<'q>(
+    mut q: PgQuery<'q>,
+    chql: Option<&'q crate::query::SqlFragment>,
+) -> PgQuery<'q> {
+    if let Some(frag) = chql {
+        for b in &frag.binds {
+            q = b.bind(q);
+        }
+    }
+    q
+}
+
+/// Same as [`bind_chql`] but for `query_scalar`.
+#[allow(dead_code)]
+pub fn bind_chql_scalar<'q, T>(
+    mut q: sqlx::query::QueryScalar<'q, sqlx::Postgres, T, sqlx::postgres::PgArguments>,
+    chql: Option<&'q crate::query::SqlFragment>,
+) -> sqlx::query::QueryScalar<'q, sqlx::Postgres, T, sqlx::postgres::PgArguments> {
+    if let Some(frag) = chql {
+        for b in &frag.binds {
+            q = b.bind_scalar(q);
+        }
+    }
+    q
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct BuildTrendPoint {
     pub date: String,
@@ -1914,6 +1987,7 @@ impl Storage {
         date_to: Option<DateTime<Utc>>,
         stage_name_filter: Option<&str>,
         exit_code_filter: Option<i32>,
+        chql: Option<&crate::query::SqlFragment>,
     ) -> anyhow::Result<(Vec<JobGroup>, i64)> {
         // Build WHERE fragments + remember bind order so count + data queries
         // bind in lockstep.
@@ -1967,6 +2041,21 @@ impl Storage {
             format!("WHERE {}", clauses.join(" AND "))
         };
 
+        // Splice ChQL fragment after the typed filters. The fragment uses `?`
+        // placeholders; renumber to `$N` starting after the last typed bind.
+        let (where_clause, idx) = if let Some(frag) = chql {
+            let (renumbered, next_after) = frag.to_pg(idx + 1);
+            let merged = if where_clause.is_empty() {
+                format!("WHERE {renumbered}")
+            } else {
+                format!("{where_clause} AND ({renumbered})")
+            };
+            // `next_after` is the next free slot; LIMIT/OFFSET start there.
+            (merged, next_after - 1)
+        } else {
+            (where_clause, idx)
+        };
+
         let count_q = format!("SELECT COUNT(*) FROM job_groups {where_clause}");
         let data_q = format!(
             "SELECT {JOB_GROUP_COLUMNS} FROM job_groups {where_clause} \
@@ -1977,7 +2066,9 @@ impl Storage {
 
         // Apply filter binds in the same order clauses were pushed above.
         // Macro avoids the closure lifetime mismatch between sqlx::query::Query
-        // and sqlx::query::QueryScalar generic parameters.
+        // and sqlx::query::QueryScalar generic parameters. ChQL fragment binds
+        // (if any) come AFTER the typed filter binds — matching the SQL splice
+        // order above.
         macro_rules! bind_filters {
             ($q:expr) => {{
                 let mut q = $q;
@@ -2002,6 +2093,15 @@ impl Storage {
                 if let Some(code) = exit_code_filter {
                     if code != -1 {
                         q = q.bind(code);
+                    }
+                }
+                if let Some(frag) = chql {
+                    for b in &frag.binds {
+                        q = match b {
+                            crate::query::SqlBind::Str(s) => q.bind(s.as_str()),
+                            crate::query::SqlBind::Num(n) => q.bind(*n),
+                            crate::query::SqlBind::Date(d) => q.bind(*d),
+                        };
                     }
                 }
                 q
@@ -3920,8 +4020,9 @@ impl Storage {
     pub async fn get_build_trends(
         &self,
         filters: &AnalyticsFilters,
+        chql: Option<&crate::query::SqlFragment>,
     ) -> anyhow::Result<Vec<BuildTrendPoint>> {
-        let plan = filters.plan_for_job_groups("", &[]);
+        let plan = merge_chql(filters.plan_for_job_groups("", &[]), chql, None);
         // `g` is sourced from the Granularity enum (allowlisted to `hour`/`day`),
         // never from raw user input — safe to splice.
         let g = filters.granularity.as_sql_unit();
@@ -3938,6 +4039,7 @@ impl Storage {
         );
         let mut query = sqlx::query(&q);
         query = filters.bind_for_job_groups(query);
+        query = bind_chql(query, chql);
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
@@ -3953,8 +4055,13 @@ impl Storage {
     pub async fn get_duration_trends(
         &self,
         filters: &AnalyticsFilters,
+        chql: Option<&crate::query::SqlFragment>,
     ) -> anyhow::Result<Vec<DurationTrendPoint>> {
-        let plan = filters.plan_for_job_groups("", &["completed_at IS NOT NULL"]);
+        let plan = merge_chql(
+            filters.plan_for_job_groups("", &["completed_at IS NOT NULL"]),
+            chql,
+            None,
+        );
         let g = filters.granularity.as_sql_unit();
         let q = format!(
             "SELECT TO_CHAR(DATE_TRUNC('{g}', created_at) AT TIME ZONE 'UTC', \
@@ -3968,6 +4075,7 @@ impl Storage {
         );
         let mut query = sqlx::query(&q);
         query = filters.bind_for_job_groups(query);
+        query = bind_chql(query, chql);
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
@@ -3983,12 +4091,17 @@ impl Storage {
         &self,
         filters: &AnalyticsFilters,
         limit: i32,
+        chql: Option<&crate::query::SqlFragment>,
     ) -> anyhow::Result<Vec<SlowStage>> {
-        let plan = filters.plan_for_jobs(
-            "j",
-            "sc",
-            "jg",
-            &["j.completed_at IS NOT NULL", "j.started_at IS NOT NULL"],
+        let plan = merge_chql(
+            filters.plan_for_jobs(
+                "j",
+                "sc",
+                "jg",
+                &["j.completed_at IS NOT NULL", "j.started_at IS NOT NULL"],
+            ),
+            chql,
+            Some("jg"),
         );
         let limit_idx = plan.next_idx;
         let q = format!(
@@ -4004,6 +4117,7 @@ impl Storage {
         );
         let mut query = sqlx::query(&q);
         query = filters.bind_for_jobs(query);
+        query = bind_chql(query, chql);
         query = query.bind(limit);
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
@@ -4020,8 +4134,9 @@ impl Storage {
         &self,
         filters: &AnalyticsFilters,
         limit: i32,
+        chql: Option<&crate::query::SqlFragment>,
     ) -> anyhow::Result<Vec<FailingRepo>> {
-        let plan = filters.plan_for_job_groups("jg", &[]);
+        let plan = merge_chql(filters.plan_for_job_groups("jg", &[]), chql, Some("jg"));
         let limit_idx = plan.next_idx;
         let q = format!(
             "SELECT r.repo_name, COUNT(*)::bigint as total, \
@@ -4034,6 +4149,7 @@ impl Storage {
         );
         let mut query = sqlx::query(&q);
         query = filters.bind_for_job_groups(query);
+        query = bind_chql(query, chql);
         query = query.bind(limit);
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
@@ -4072,8 +4188,13 @@ impl Storage {
     pub async fn get_queue_wait_trends(
         &self,
         filters: &AnalyticsFilters,
+        chql: Option<&crate::query::SqlFragment>,
     ) -> anyhow::Result<Vec<QueueWaitPoint>> {
-        let plan = filters.plan_for_jobs("j", "sc", "jg", &["j.started_at IS NOT NULL"]);
+        let plan = merge_chql(
+            filters.plan_for_jobs("j", "sc", "jg", &["j.started_at IS NOT NULL"]),
+            chql,
+            Some("jg"),
+        );
         let g = filters.granularity.as_sql_unit();
         let q = format!(
             "SELECT TO_CHAR(DATE_TRUNC('{g}', j.created_at) AT TIME ZONE 'UTC', \
@@ -4089,6 +4210,7 @@ impl Storage {
         );
         let mut query = sqlx::query(&q);
         query = filters.bind_for_jobs(query);
+        query = bind_chql(query, chql);
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows
             .iter()

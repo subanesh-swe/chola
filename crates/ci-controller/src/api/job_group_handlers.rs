@@ -37,6 +37,8 @@ pub struct ListParams {
     /// includes rows from `*_archive` tables. Defaults to false; the
     /// fast path query is unchanged when omitted.
     pub include_archived: Option<bool>,
+    /// ChQL expression layered over typed filters. See `local/plans/CHQL.md`.
+    pub q: Option<String>,
 }
 
 // ── Request bodies ───────────────────────────────────────────────────────────
@@ -68,6 +70,7 @@ pub struct TriggerRequest {
         ("date_to" = Option<String>, Query, description = "Filter by created_at <= RFC3339"),
         ("stage_name" = Option<String>, Query, description = "Only groups with at least one job for this stage"),
         ("exit_code" = Option<i32>, Query, description = "Only groups with at least one job with this exit_code"),
+        ("q" = Option<String>, Query, description = "ChQL expression (e.g. state:failed AND branch:i(\"main\"))"),
     ),
     responses(
         (status = 200, description = "Paginated job group list"),
@@ -95,10 +98,13 @@ pub async fn list(
         .as_deref()
         .map(|v| parse_flexible_datetime("date_to", v, true))
         .transpose()?;
+    let chql_frag = super::analytics_handlers::compile_chql_param(params.q.as_deref())?;
 
     // Caller opts in to archive UNION via ?include_archived=true. The
     // fast path remains the existing live-only query so unchanged
     // callers don't take a perf hit.
+    // NOTE: ChQL (?q=) is currently wired only into the live query; when
+    // include_archived=true the ChQL fragment is ignored.
     let include_archived = params.include_archived.unwrap_or(false);
     let (groups, total): (Vec<(ci_core::models::job_group::JobGroup, bool)>, i64) =
         if include_archived {
@@ -128,6 +134,7 @@ pub async fn list(
                     date_to,
                     params.stage_name.as_deref(),
                     params.exit_code,
+                    chql_frag.as_ref(),
                 )
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?;

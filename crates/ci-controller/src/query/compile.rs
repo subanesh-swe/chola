@@ -96,6 +96,32 @@ pub enum SqlBind {
     Date(chrono::DateTime<chrono::Utc>),
 }
 
+impl SqlBind {
+    /// Apply this bind to a sqlx Postgres query.
+    pub fn bind<'q>(
+        &'q self,
+        q: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+        match self {
+            SqlBind::Str(s) => q.bind(s.as_str()),
+            SqlBind::Num(n) => q.bind(*n),
+            SqlBind::Date(d) => q.bind(*d),
+        }
+    }
+
+    /// Same as `bind` but for `query_scalar`.
+    pub fn bind_scalar<'q, T>(
+        &'q self,
+        q: sqlx::query::QueryScalar<'q, sqlx::Postgres, T, sqlx::postgres::PgArguments>,
+    ) -> sqlx::query::QueryScalar<'q, sqlx::Postgres, T, sqlx::postgres::PgArguments> {
+        match self {
+            SqlBind::Str(s) => q.bind(s.as_str()),
+            SqlBind::Num(n) => q.bind(*n),
+            SqlBind::Date(d) => q.bind(*d),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SqlFragment {
     /// SQL with `?` placeholders, one per `binds` entry, left-to-right.
