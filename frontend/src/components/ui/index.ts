@@ -18,3 +18,4 @@ export { RecentQueriesDropdown } from './RecentQueriesDropdown';
 export { RefreshControl } from './RefreshControl';
 export { FieldChip } from './FieldChip';
 export { FieldChipsRow } from './FieldChipsRow';
+export { DateExpressionInput } from './DateExpressionInput';

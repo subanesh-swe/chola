@@ -6,7 +6,6 @@ import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { useQueryHistory } from '../hooks/useQueryHistory';
 import { FilterBar } from '../components/ui/FilterBar';
-import { RefreshControl } from '../components/ui/RefreshControl';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
@@ -14,7 +13,7 @@ import { TableSkeleton } from '../components/ui/PageSkeleton';
 const QUEUE_STATES = ['pending', 'reserved', 'running'];
 
 // BuildQueue only hides date range (queue is real-time; no date filtering needed)
-const HIDDEN: Array<'dateRange' | 'rangePresets'> = ['dateRange', 'rangePresets'];
+const HIDDEN: Array<'dateRange'> = ['dateRange'];
 
 export default function BuildQueuePage() {
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
@@ -50,21 +49,13 @@ export default function BuildQueuePage() {
           <h2 className="text-2xl font-bold text-primary">Build Queue</h2>
           <p className="text-sm text-muted mt-0.5">Jobs waiting to run</p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-muted">
-              <span className="text-primary font-semibold">{pendingCount}</span> pending
-            </span>
-            <span className="text-muted">
-              <span className="text-primary font-semibold">{reservedCount}</span> reserved
-            </span>
-          </div>
-          <RefreshControl
-            intervalSecs={refreshSecs}
-            onIntervalChange={setRefreshSecs}
-            onRefresh={() => refetch()}
-            isFetching={isFetching}
-          />
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-muted">
+            <span className="text-primary font-semibold">{pendingCount}</span> pending
+          </span>
+          <span className="text-muted">
+            <span className="text-primary font-semibold">{reservedCount}</span> reserved
+          </span>
         </div>
       </div>
 
@@ -80,6 +71,9 @@ export default function BuildQueuePage() {
         onPresetApply={applyPatch}
         hiddenFields={HIDDEN}
         historyApi={historyApi}
+        refreshSecs={refreshSecs}
+        onIntervalChange={setRefreshSecs}
+        onRefresh={() => refetch()}
       />
 
       {isError && (
