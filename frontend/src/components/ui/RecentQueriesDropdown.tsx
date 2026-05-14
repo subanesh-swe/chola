@@ -32,10 +32,14 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
   const recompute = () => {
     if (!btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
+    const width = Math.max(r.width, 280);
+    const wouldOverflowRight = r.left + width > window.innerWidth - 8;
     setPos({
       top: r.bottom + window.scrollY + 4,
-      left: r.left + window.scrollX,
-      width: Math.max(r.width, 280),
+      left: wouldOverflowRight
+        ? r.right + window.scrollX - width
+        : r.left + window.scrollX,
+      width,
     });
   };
 
