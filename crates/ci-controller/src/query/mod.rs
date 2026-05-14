@@ -9,6 +9,8 @@
 pub mod ast;
 pub mod error;
 pub mod lexer;
+pub mod parser;
 
 pub use ast::{Ast, CmpOp, Value};
 pub use error::ChqlError;
+pub use parser::parse;
