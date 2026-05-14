@@ -70,12 +70,13 @@ export function FilterBar({
     }
   };
 
-  const handleQuerySubmit = (parsed: Partial<BuildFilters>, rawQuery: string) => {
+  const handleQuerySubmit = (rawQuery: string) => {
     historyApi.push(rawQuery);
+    const patch: Partial<BuildFilters> = { q: rawQuery, page: 1 };
     if (onPresetApply) {
-      onPresetApply({ ...parsed, page: 1 });
+      onPresetApply(patch);
     } else {
-      onChange({ ...parsed, page: 1 });
+      onChange(patch);
       onApply();
     }
   };

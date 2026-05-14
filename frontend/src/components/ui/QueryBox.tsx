@@ -7,9 +7,12 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
-import type { BuildFilters } from '../../hooks/useUrlFilters';
-import type { FieldValue, useFieldValues } from '../../hooks/useFieldValues';
-import { parseQuery, type ParseError, KNOWN_FIELDS } from '../../utils/parseQuery';
+import { parse } from '../../lib/chql';
+import { suggestAt } from '../../lib/chql/suggest';
+import type { Suggestion, FieldValueProvider } from '../../lib/chql/suggest';
+import type { ValidField } from '../../lib/chql/ast';
+import { VALID_FIELDS } from '../../lib/chql/ast';
+import type { useFieldValues, FieldValue } from '../../hooks/useFieldValues';
 import { RecentQueriesDropdown } from './RecentQueriesDropdown';
 
 export interface QueryBoxHandle {
@@ -21,86 +24,22 @@ export interface QueryBoxHandle {
 interface Props {
   value: string;
   onChange: (v: string) => void;
-  onSubmit: (filters: Partial<BuildFilters>, rawQuery: string) => void;
+  onSubmit: (rawQuery: string) => void;
   history: string[];
   onPickHistory: (q: string) => void;
   onClearHistory: () => void;
   onRemoveHistoryEntry?: (q: string) => void;
   fieldValues: ReturnType<typeof useFieldValues>;
-  fields?: string[];
   placeholder?: string;
   className?: string;
 }
 
-interface SuggestionField {
-  kind: 'field';
-  label: string;
-}
-
-interface SuggestionValue {
-  kind: 'value';
-  field: string;
-  item: FieldValue;
-}
-
-type Suggestion = SuggestionField | SuggestionValue;
-
-function computeSuggestions(
-  inputValue: string,
-  caretPos: number,
-  fields: string[],
-  fieldValues: ReturnType<typeof useFieldValues>,
-  resolvedValues: Record<string, FieldValue[]>,
-): { suggestions: Suggestion[]; needsFetch: string | null } {
-  const before = inputValue.slice(0, caretPos);
-
-  let tokenStart = before.length;
-  while (tokenStart > 0 && before[tokenStart - 1] !== ' ' && before[tokenStart - 1] !== '\t') {
-    tokenStart--;
-  }
-  const currentToken = before.slice(tokenStart);
-  const colonIdx = currentToken.indexOf(':');
-
-  if (colonIdx === -1) {
-    const partial = currentToken.toLowerCase();
-    const suggestions: Suggestion[] = fields
-      .filter((f) => f.startsWith(partial))
-      .map((f) => ({ kind: 'field' as const, label: f }));
-    return { suggestions, needsFetch: null };
-  }
-
-  const fieldName = currentToken.slice(0, colonIdx);
-  const valuePrefix = currentToken.slice(colonIdx + 1).toLowerCase();
-
-  if (!fields.includes(fieldName)) {
-    return { suggestions: [], needsFetch: null };
-  }
-
-  const fieldDef = fieldValues[fieldName];
-  if (!fieldDef) {
-    return { suggestions: [], needsFetch: null };
-  }
-
-  if (Array.isArray(fieldDef)) {
-    const matches = fieldDef.filter((fv) => fv.value.toLowerCase().startsWith(valuePrefix));
-    return {
-      suggestions: matches.map((item) => ({ kind: 'value' as const, field: fieldName, item })),
-      needsFetch: null,
-    };
-  }
-
-  if (resolvedValues[fieldName]) {
-    const matches = resolvedValues[fieldName].filter((fv) =>
-      fv.value.toLowerCase().startsWith(valuePrefix),
-    );
-    return {
-      suggestions: matches.map((item) => ({ kind: 'value' as const, field: fieldName, item })),
-      needsFetch: null,
-    };
-  }
-
-  return { suggestions: [], needsFetch: fieldName };
-}
+const KIND_BADGE_CLASSES: Record<Suggestion['kind'], string> = {
+  field: 'bg-blue-900/40 text-blue-300',
+  value: 'bg-emerald-900/40 text-emerald-300',
+  operator: 'bg-amber-900/40 text-amber-300',
+  keyword: 'bg-purple-900/40 text-purple-300',
+};
 
 export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
   {
@@ -112,21 +51,38 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
     onClearHistory,
     onRemoveHistoryEntry,
     fieldValues,
-    fields = Array.from(KNOWN_FIELDS),
-    placeholder = 'Search: branch:main state:failed bucket:day',
+    placeholder = 'Search: state:failed OR state:cancelled branch:main',
     className,
   },
   ref,
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [parseError, setParseError] = useState<ParseError | null>(null);
-  const [warnings, setWarnings] = useState<ParseError[]>([]);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [highlightIdx, setHighlightIdx] = useState(-1);
-  const [loadingField, setLoadingField] = useState<string | null>(null);
-  const [resolvedValues, setResolvedValues] = useState<Record<string, FieldValue[]>>({});
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+
+  // Build a FieldValueProvider that bridges our useFieldValues hook format
+  // to the async provider signature expected by suggestAt.
+  const fieldValueProvider: FieldValueProvider = useCallback(
+    async (field: ValidField): Promise<string[]> => {
+      const entry = fieldValues[field as string];
+      if (!entry) return [];
+      if (Array.isArray(entry)) {
+        return (entry as FieldValue[]).map((fv) => fv.value);
+      }
+      // It's a fetch function.
+      try {
+        const vals = await (entry as () => Promise<FieldValue[]>)();
+        return vals.map((fv) => fv.value);
+      } catch {
+        return [];
+      }
+    },
+    [fieldValues],
+  );
 
   useImperativeHandle(ref, () => ({
     insertAtCaret(token: string) {
@@ -154,53 +110,31 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
   }));
 
   const submit = useCallback(() => {
-    const result = parseQuery(value);
+    const result = parse(value);
     if (!result.ok) {
-      setParseError(result.error);
-      setWarnings([]);
+      const first = result.errors[0];
+      setParseError(first?.message ?? 'Invalid query');
       return;
     }
     setParseError(null);
-    setWarnings(result.warnings);
     setShowSuggestions(false);
-    onSubmit(result.filters, value);
+    onSubmit(value);
   }, [value, onSubmit]);
 
   const recomputeSuggestions = useCallback(
     (inputValue: string, caretPos: number) => {
-      const { suggestions: sugs, needsFetch } = computeSuggestions(
-        inputValue,
-        caretPos,
-        fields,
-        fieldValues,
-        resolvedValues,
-      );
-      setSuggestions(sugs);
-      setHighlightIdx(-1);
-
-      if (needsFetch && !loadingField) {
-        const fetchFn = fieldValues[needsFetch];
-        if (typeof fetchFn === 'function') {
-          setLoadingField(needsFetch);
-          (fetchFn as () => Promise<FieldValue[]>)()
-            .then((vals) => {
-              setResolvedValues((prev) => ({ ...prev, [needsFetch]: vals }));
-              const colonIdx = inputValue.slice(0, caretPos).lastIndexOf(':');
-              const prefix = colonIdx >= 0 ? inputValue.slice(colonIdx + 1, caretPos).toLowerCase() : '';
-              setSuggestions(
-                vals
-                  .filter((fv) => fv.value.toLowerCase().startsWith(prefix))
-                  .map((item) => ({ kind: 'value' as const, field: needsFetch, item })),
-              );
-            })
-            .catch(() => {
-              setResolvedValues((prev) => ({ ...prev, [needsFetch]: [] }));
-            })
-            .finally(() => setLoadingField(null));
-        }
-      }
+      setIsLoadingSuggestions(true);
+      suggestAt(inputValue, caretPos, fieldValueProvider)
+        .then((sugs) => {
+          setSuggestions(sugs);
+          setHighlightIdx(-1);
+        })
+        .catch(() => {
+          setSuggestions([]);
+        })
+        .finally(() => setIsLoadingSuggestions(false));
     },
-    [fields, fieldValues, resolvedValues, loadingField],
+    [fieldValueProvider],
   );
 
   const acceptSuggestion = useCallback(
@@ -210,14 +144,14 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
       const before = value.slice(0, caretPos);
       const after = value.slice(caretPos);
 
+      // Find start of the current token (non-whitespace run).
       let tokenStart = before.length;
-      while (tokenStart > 0 && before[tokenStart - 1] !== ' ' && before[tokenStart - 1] !== '\t') {
+      while (tokenStart > 0 && !/\s/.test(before[tokenStart - 1]!)) {
         tokenStart--;
       }
       const prefix = before.slice(0, tokenStart);
-      const replacement = sug.kind === 'field'
-        ? `${sug.label}:`
-        : `${sug.field}:${sug.item.value} `;
+      const suffix = sug.insertText.endsWith(' ') ? '' : ' ';
+      const replacement = sug.insertText + suffix;
 
       const next = prefix + replacement + after;
       onChange(next);
@@ -311,7 +245,7 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
   }, [showSuggestions]);
 
   const hasError = parseError !== null;
-  const showDrop = showSuggestions && (suggestions.length > 0 || loadingField !== null);
+  const showDrop = showSuggestions && (suggestions.length > 0 || isLoadingSuggestions);
 
   return (
     <div className={className}>
@@ -329,10 +263,10 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
               setShowSuggestions(true);
             }}
             placeholder={placeholder}
-            aria-label="KQL query box"
+            aria-label="ChQL query box"
             aria-autocomplete="list"
             aria-expanded={showDrop}
-            aria-describedby={hasError ? 'qbox-error' : warnings.length ? 'qbox-warnings' : undefined}
+            aria-describedby={hasError ? 'qbox-error' : undefined}
             className={[
               'w-full bg-surface-2 border rounded-lg px-3 py-1.5 text-sm text-primary',
               'placeholder:text-disabled focus:outline-none focus:ring-1',
@@ -352,7 +286,7 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
                 'bg-surface-2 border border-border-strong rounded-xl shadow-lg py-1',
               ].join(' ')}
             >
-              {loadingField && suggestions.length === 0 ? (
+              {isLoadingSuggestions && suggestions.length === 0 ? (
                 <div className="flex items-center gap-2 px-3 py-2">
                   <svg
                     className="w-3.5 h-3.5 animate-spin text-muted"
@@ -364,14 +298,12 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                   </svg>
-                  <span className="text-xs text-muted">Loading values…</span>
+                  <span className="text-xs text-muted">Loading suggestions...</span>
                 </div>
               ) : (
                 suggestions.map((sug, idx) => {
                   const isHighlighted = idx === highlightIdx;
-                  const key = sug.kind === 'field'
-                    ? `field:${sug.label}`
-                    : `val:${sug.field}:${sug.item.value}`;
+                  const key = `${sug.kind}:${sug.label}`;
                   return (
                     <button
                       key={key}
@@ -384,25 +316,19 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
                       }}
                       onMouseEnter={() => setHighlightIdx(idx)}
                       className={[
-                        'w-full flex flex-col items-start px-3 py-1.5 text-left transition-colors',
+                        'w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors',
                         isHighlighted
                           ? 'bg-accent/15 text-primary'
                           : 'text-secondary hover:bg-surface-hover',
                       ].join(' ')}
                     >
-                      {sug.kind === 'field' ? (
-                        <span className="text-xs font-mono">
-                          {sug.label}
-                          <span className="text-disabled">:</span>
-                        </span>
-                      ) : (
-                        <>
-                          <span className="text-xs">{sug.item.label ?? sug.item.value}</span>
-                          {sug.item.hint && (
-                            <span className="text-[10px] text-disabled">{sug.item.hint}</span>
-                          )}
-                        </>
+                      <span className="text-xs font-mono flex-1 truncate">{sug.label}</span>
+                      {sug.detail && (
+                        <span className="text-[10px] text-disabled truncate max-w-[80px]">{sug.detail}</span>
                       )}
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase shrink-0 ${KIND_BADGE_CLASSES[sug.kind]}`}>
+                        {sug.kind}
+                      </span>
                     </button>
                   );
                 })
@@ -441,21 +367,22 @@ export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(
       </div>
 
       {hasError && (
-        <div id="qbox-error" role="alert" className="mt-1 space-y-0.5">
-          <p className="text-xs text-danger">{parseError.message}</p>
-          {parseError.hint && <p className="text-xs text-disabled">{parseError.hint}</p>}
+        <div id="qbox-error" role="alert" className="mt-1">
+          <p className="text-xs text-danger">{parseError}</p>
         </div>
       )}
 
-      {!hasError && warnings.length > 0 && (
-        <div id="qbox-warnings" className="mt-1 space-y-0.5">
-          {warnings.map((w, i) => (
-            <p key={i} className="text-xs text-warning/80" title={w.hint}>
-              {w.message}
-            </p>
-          ))}
-        </div>
-      )}
+      <div className="mt-1 flex flex-wrap gap-1">
+        {VALID_FIELDS.map((f) => (
+          <span
+            key={f}
+            className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border text-disabled font-mono cursor-default"
+            title={`Field: ${f}`}
+          >
+            {f}:
+          </span>
+        ))}
+      </div>
     </div>
   );
 });
