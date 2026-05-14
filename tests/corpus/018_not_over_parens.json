@@ -1,0 +1,21 @@
+{
+  "input": "NOT ( state:running OR state:queued )",
+  "ast": {
+    "type": "not",
+    "expr": {
+      "type": "or",
+      "left": {
+        "type": "cmp",
+        "field": "state",
+        "op": "eq",
+        "value": { "kind": "str", "v": "running" }
+      },
+      "right": {
+        "type": "cmp",
+        "field": "state",
+        "op": "eq",
+        "value": { "kind": "str", "v": "queued" }
+      }
+    }
+  }
+}

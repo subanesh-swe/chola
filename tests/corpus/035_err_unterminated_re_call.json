@@ -1,0 +1,7 @@
+{
+  "input": "state:re(",
+  "error": {
+    "message": "Unterminated function call: expected string literal then ')'",
+    "position": 9
+  }
+}

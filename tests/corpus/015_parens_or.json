@@ -1,0 +1,18 @@
+{
+  "input": "( state:failed OR state:cancelled )",
+  "ast": {
+    "type": "or",
+    "left": {
+      "type": "cmp",
+      "field": "state",
+      "op": "eq",
+      "value": { "kind": "str", "v": "failed" }
+    },
+    "right": {
+      "type": "cmp",
+      "field": "state",
+      "op": "eq",
+      "value": { "kind": "str", "v": "cancelled" }
+    }
+  }
+}

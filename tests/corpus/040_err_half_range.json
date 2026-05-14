@@ -1,0 +1,7 @@
+{
+  "input": "exit_code:[1,",
+  "error": {
+    "message": "Unterminated range: expected number or string then ']'",
+    "position": 10
+  }
+}

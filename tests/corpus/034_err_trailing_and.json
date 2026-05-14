@@ -1,0 +1,7 @@
+{
+  "input": "state:failed AND",
+  "error": {
+    "message": "Expected expression after 'AND'",
+    "position": 13
+  }
+}

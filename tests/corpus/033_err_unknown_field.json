@@ -1,0 +1,7 @@
+{
+  "input": "unknownfield:value",
+  "error": {
+    "message": "Unknown field 'unknownfield'. Valid fields: state, branch, repo, repo_id, stage, exit_code, created_at, completed_at",
+    "position": 0
+  }
+}

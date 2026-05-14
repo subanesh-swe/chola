@@ -1,0 +1,7 @@
+{
+  "input": "branch:i(\"foo",
+  "error": {
+    "message": "Unterminated string literal",
+    "position": 9
+  }
+}

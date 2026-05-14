@@ -1,0 +1,9 @@
+{
+  "input": "branch:re(\"^feat/\")",
+  "ast": {
+    "type": "cmp",
+    "field": "branch",
+    "op": "regex",
+    "value": { "kind": "str", "v": "^feat/" }
+  }
+}

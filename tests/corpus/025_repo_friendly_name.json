@@ -1,0 +1,9 @@
+{
+  "input": "repo:\"chola\"",
+  "ast": {
+    "type": "cmp",
+    "field": "repo",
+    "op": "eq",
+    "value": { "kind": "str", "v": "chola" }
+  }
+}

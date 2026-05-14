@@ -1,0 +1,9 @@
+{
+  "input": "exit_code:>=1",
+  "ast": {
+    "type": "cmp",
+    "field": "exit_code",
+    "op": "gte",
+    "value": { "kind": "num", "v": 1 }
+  }
+}

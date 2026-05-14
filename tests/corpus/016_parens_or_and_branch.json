@@ -1,0 +1,27 @@
+{
+  "input": "( state:failed OR state:cancelled ) AND branch:main",
+  "ast": {
+    "type": "and",
+    "left": {
+      "type": "or",
+      "left": {
+        "type": "cmp",
+        "field": "state",
+        "op": "eq",
+        "value": { "kind": "str", "v": "failed" }
+      },
+      "right": {
+        "type": "cmp",
+        "field": "state",
+        "op": "eq",
+        "value": { "kind": "str", "v": "cancelled" }
+      }
+    },
+    "right": {
+      "type": "cmp",
+      "field": "branch",
+      "op": "eq",
+      "value": { "kind": "str", "v": "main" }
+    }
+  }
+}

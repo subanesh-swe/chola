@@ -1,0 +1,27 @@
+{
+  "input": "state:failed AND ( branch:main OR branch:dev )",
+  "ast": {
+    "type": "and",
+    "left": {
+      "type": "cmp",
+      "field": "state",
+      "op": "eq",
+      "value": { "kind": "str", "v": "failed" }
+    },
+    "right": {
+      "type": "or",
+      "left": {
+        "type": "cmp",
+        "field": "branch",
+        "op": "eq",
+        "value": { "kind": "str", "v": "main" }
+      },
+      "right": {
+        "type": "cmp",
+        "field": "branch",
+        "op": "eq",
+        "value": { "kind": "str", "v": "dev" }
+      }
+    }
+  }
+}

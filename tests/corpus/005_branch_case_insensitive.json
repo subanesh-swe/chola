@@ -1,0 +1,9 @@
+{
+  "input": "branch:i(\"Main\")",
+  "ast": {
+    "type": "cmp",
+    "field": "branch",
+    "op": "ilike_contains",
+    "value": { "kind": "str", "v": "Main" }
+  }
+}

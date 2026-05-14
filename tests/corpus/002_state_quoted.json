@@ -1,0 +1,9 @@
+{
+  "input": "state:\"failed\"",
+  "ast": {
+    "type": "cmp",
+    "field": "state",
+    "op": "eq",
+    "value": { "kind": "str", "v": "failed" }
+  }
+}

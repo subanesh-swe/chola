@@ -1,0 +1,9 @@
+{
+  "input": "stage:lint",
+  "ast": {
+    "type": "cmp",
+    "field": "stage",
+    "op": "eq",
+    "value": { "kind": "str", "v": "lint" }
+  }
+}

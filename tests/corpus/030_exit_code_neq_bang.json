@@ -1,0 +1,9 @@
+{
+  "input": "exit_code:!0",
+  "ast": {
+    "type": "cmp",
+    "field": "exit_code",
+    "op": "neq",
+    "value": { "kind": "num", "v": 0 }
+  }
+}

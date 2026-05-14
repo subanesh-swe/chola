@@ -1,0 +1,9 @@
+{
+  "input": "created_at:>=\"2026-04-01\"",
+  "ast": {
+    "type": "cmp",
+    "field": "created_at",
+    "op": "gte",
+    "value": { "kind": "date", "v": "2026-04-01" }
+  }
+}

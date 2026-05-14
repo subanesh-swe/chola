@@ -1,0 +1,9 @@
+{
+  "input": "repo_id:\"abc-uuid\"",
+  "ast": {
+    "type": "cmp",
+    "field": "repo_id",
+    "op": "eq",
+    "value": { "kind": "str", "v": "abc-uuid" }
+  }
+}

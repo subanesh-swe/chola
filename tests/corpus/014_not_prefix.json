@@ -1,0 +1,12 @@
+{
+  "input": "NOT state:running",
+  "ast": {
+    "type": "not",
+    "expr": {
+      "type": "cmp",
+      "field": "state",
+      "op": "eq",
+      "value": { "kind": "str", "v": "running" }
+    }
+  }
+}

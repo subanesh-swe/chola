@@ -1,0 +1,18 @@
+{
+  "input": "branch:i(\"Feat\") AND branch:re(\"feat/[0-9]+\")",
+  "ast": {
+    "type": "and",
+    "left": {
+      "type": "cmp",
+      "field": "branch",
+      "op": "ilike_contains",
+      "value": { "kind": "str", "v": "Feat" }
+    },
+    "right": {
+      "type": "cmp",
+      "field": "branch",
+      "op": "regex",
+      "value": { "kind": "str", "v": "feat/[0-9]+" }
+    }
+  }
+}

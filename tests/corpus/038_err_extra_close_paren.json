@@ -1,0 +1,7 @@
+{
+  "input": "state:failed )",
+  "error": {
+    "message": "Unexpected token ')'",
+    "position": 13
+  }
+}

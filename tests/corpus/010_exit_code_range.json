@@ -1,0 +1,9 @@
+{
+  "input": "exit_code:[1, 5]",
+  "ast": {
+    "type": "in_range",
+    "field": "exit_code",
+    "lo": { "kind": "num", "v": 1 },
+    "hi": { "kind": "num", "v": 5 }
+  }
+}

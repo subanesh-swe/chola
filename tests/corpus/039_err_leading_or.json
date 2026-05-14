@@ -1,0 +1,7 @@
+{
+  "input": "OR state:failed",
+  "error": {
+    "message": "Unexpected 'OR': expected expression",
+    "position": 0
+  }
+}

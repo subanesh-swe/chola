@@ -1,0 +1,7 @@
+{
+  "input": "state::",
+  "error": {
+    "message": "Unexpected token ':'",
+    "position": 6
+  }
+}

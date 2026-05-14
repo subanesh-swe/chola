@@ -1,0 +1,7 @@
+{
+  "input": "( state:failed",
+  "error": {
+    "message": "Unclosed parenthesis: expected ')'",
+    "position": 0
+  }
+}

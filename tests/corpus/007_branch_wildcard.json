@@ -1,0 +1,9 @@
+{
+  "input": "branch:\"feat/*\"",
+  "ast": {
+    "type": "cmp",
+    "field": "branch",
+    "op": "wildcard",
+    "value": { "kind": "str", "v": "feat/*" }
+  }
+}
