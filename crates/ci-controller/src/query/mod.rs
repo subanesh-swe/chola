@@ -7,10 +7,15 @@
 //! See `local/plans/CHQL.md` for the grammar specification.
 
 pub mod ast;
+pub mod compile;
 pub mod error;
 pub mod lexer;
 pub mod parser;
 
+#[cfg(test)]
+mod tests;
+
 pub use ast::{Ast, CmpOp, Value};
+pub use compile::{compile, CompileError, SqlBind, SqlFragment};
 pub use error::ChqlError;
 pub use parser::parse;
