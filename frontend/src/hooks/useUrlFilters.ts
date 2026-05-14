@@ -17,6 +17,8 @@ export interface BuildFilters {
   sortDir: SortDir;
   includeArchived: boolean;
   granularity: Granularity;
+  /** Raw ChQL query string — sent as ?q= to the backend. */
+  q: string;
 }
 
 const DEFAULTS: BuildFilters = {
@@ -32,6 +34,7 @@ const DEFAULTS: BuildFilters = {
   sortDir: 'desc',
   includeArchived: false,
   granularity: 'auto',
+  q: '',
 };
 
 function parseStates(raw: string | null): string[] {
@@ -60,6 +63,7 @@ function parseFilters(p: URLSearchParams): BuildFilters {
     sortDir: (p.get('sortDir') as SortDir) ?? 'desc',
     includeArchived: p.get('includeArchived') === 'true',
     granularity: parseGranularity(p.get('granularity')),
+    q: p.get('q') ?? '',
   };
 }
 
@@ -108,6 +112,9 @@ export function useUrlFilters() {
         } else {
           next.delete('granularity');
         }
+
+        if (merged.q) next.set('q', merged.q);
+        else next.delete('q');
 
         const pageVal = 'page' in patch ? patch.page! : 1;
         if (pageVal > 1) next.set('page', String(pageVal));
