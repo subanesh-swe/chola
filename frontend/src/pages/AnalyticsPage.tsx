@@ -5,7 +5,6 @@ import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { useQueryHistory } from '../hooks/useQueryHistory';
 import { FilterBar } from '../components/ui/FilterBar';
-import { RefreshControl } from '../components/ui/RefreshControl';
 import { TimeRangeBrush } from '../components/charts/TimeRangeBrush';
 import { MaximizeButton } from '../components/charts/MaximizeButton';
 import { FullscreenChartModal } from '../components/charts/FullscreenChartModal';
@@ -275,15 +274,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-primary">Analytics</h2>
-        <RefreshControl
-          intervalSecs={refreshSecs}
-          onIntervalChange={setRefreshSecs}
-          onRefresh={() => void refetchRef.current()}
-          isFetching={isFetching}
-        />
-      </div>
+      <h2 className="text-2xl font-bold text-primary">Analytics</h2>
 
       <FilterBar
         filters={draft}
@@ -296,6 +287,9 @@ export default function AnalyticsPage() {
         isFetching={isFetching}
         onPresetApply={handlePresetApply}
         historyApi={historyApi}
+        refreshSecs={refreshSecs}
+        onIntervalChange={setRefreshSecs}
+        onRefresh={() => void refetchRef.current()}
       />
 
       {/* Summary cards */}

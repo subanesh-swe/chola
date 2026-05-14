@@ -6,7 +6,6 @@ import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
 import { useQueryHistory } from '../hooks/useQueryHistory';
 import { FilterBar } from '../components/ui/FilterBar';
-import { RefreshControl } from '../components/ui/RefreshControl';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
@@ -33,15 +32,7 @@ export default function BuildsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-primary">Builds</h2>
-        <RefreshControl
-          intervalSecs={refreshSecs}
-          onIntervalChange={setRefreshSecs}
-          onRefresh={() => refetch()}
-          isFetching={isFetching}
-        />
-      </div>
+      <h2 className="text-2xl font-bold text-primary">Builds</h2>
 
       <FilterBar
         filters={draft}
@@ -54,6 +45,9 @@ export default function BuildsPage() {
         isFetching={isFetching}
         onPresetApply={applyPatch}
         historyApi={historyApi}
+        refreshSecs={refreshSecs}
+        onIntervalChange={setRefreshSecs}
+        onRefresh={() => refetch()}
       />
 
       {/* Show archived toggle */}
