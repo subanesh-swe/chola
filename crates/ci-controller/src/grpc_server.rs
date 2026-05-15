@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -2633,6 +2634,61 @@ impl Orchestrator for OrchestratorService {
     }
 }
 
+/// Reconcile each worker's in-memory allocation counters against the actual sum
+/// of their assigned non-terminal groups. Corrects any drift that slips through
+/// normal release paths (e.g. future new code paths or controller restart edge cases).
+async fn reconcile_worker_allocations(state: &Arc<ControllerState>) {
+    // Snapshot worker ids (avoid holding two write locks simultaneously).
+    let worker_ids: Vec<String> = {
+        let wr = state.worker_registry.read().await;
+        wr.all_workers()
+            .iter()
+            .map(|w| w.info.worker_id.clone())
+            .collect()
+    };
+
+    // Compute expected sums per worker from job_group_registry.
+    let expected: HashMap<String, (u32, u64, u64)> = {
+        let jg = state.job_group_registry.read().await;
+        let mut map: HashMap<String, (u32, u64, u64)> = HashMap::new();
+        for wid in &worker_ids {
+            let groups = jg.get_groups_for_worker(wid);
+            let mut sum = (0u32, 0u64, 0u64);
+            for g in groups {
+                if !g.state.is_terminal() {
+                    sum.0 += g.allocated_resources.cpu;
+                    sum.1 += g.allocated_resources.memory_mb;
+                    sum.2 += g.allocated_resources.disk_mb;
+                }
+            }
+            map.insert(wid.clone(), sum);
+        }
+        map
+    };
+
+    // Apply correction under write lock if drift detected.
+    let mut wr = state.worker_registry.write().await;
+    for wid in &worker_ids {
+        let Some(w) = wr.get_mut(wid) else {
+            continue;
+        };
+        let expected_sum = expected.get(wid).copied().unwrap_or_default();
+        let actual_sum = (w.allocated_cpu, w.allocated_memory_mb, w.allocated_disk_mb);
+        if actual_sum != expected_sum {
+            tracing::warn!(
+                worker_id = %wid,
+                actual_cpu = actual_sum.0, expected_cpu = expected_sum.0,
+                actual_mem = actual_sum.1, expected_mem = expected_sum.1,
+                actual_disk = actual_sum.2, expected_disk = expected_sum.2,
+                "Worker allocation drift detected; correcting"
+            );
+            w.allocated_cpu = expected_sum.0;
+            w.allocated_memory_mb = expected_sum.1;
+            w.allocated_disk_mb = expected_sum.2;
+        }
+    }
+}
+
 /// Start the gRPC server.
 ///
 /// Accepts the fully-constructed shared `ControllerState` so both the gRPC and
@@ -2769,6 +2825,20 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                 if count > 0 {
                     warn!("Cancelled {} orphaned jobs", count);
                 }
+            }
+        });
+    }
+
+    // ── Worker allocation reconciler — every 60 seconds ──────────────────────
+    {
+        let state_for_recon = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            // First tick fires immediately; skip it so we don't race with startup.
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                reconcile_worker_allocations(&state_for_recon).await;
             }
         });
     }
