@@ -22,7 +22,10 @@ impl std::fmt::Display for CompileError {
             Self::OperatorNotSupported { field, op } => {
                 write!(f, "Operator {op:?} not supported on field '{field}'")
             }
-            Self::InvalidDate(v) => write!(f, "Invalid date literal '{v}' (expected YYYY-MM-DD or RFC3339)"),
+            Self::InvalidDate(v) => write!(
+                f,
+                "Invalid date literal '{v}' (expected YYYY-MM-DD or RFC3339)"
+            ),
         }
     }
 }
@@ -41,7 +44,7 @@ impl From<CompileError> for super::error::ChqlError {
 pub enum Column {
     State,
     Branch,
-    Repo,    // friendly name — resolved via subquery on `repos.name`
+    Repo, // friendly name — resolved via subquery on `repos.name`
     RepoId,
     StageName,
     ExitCode,

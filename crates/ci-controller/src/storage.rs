@@ -662,9 +662,7 @@ pub fn merge_chql(
                 Some(alias) => {
                     // Splice ChQL into a subselect against job_groups so the
                     // compiler's `job_groups.id` references stay valid.
-                    format!(
-                        "{alias}.id IN (SELECT id FROM job_groups WHERE {renumbered})"
-                    )
+                    format!("{alias}.id IN (SELECT id FROM job_groups WHERE {renumbered})")
                 }
             };
             let where_clause = if plan.where_clause.is_empty() {

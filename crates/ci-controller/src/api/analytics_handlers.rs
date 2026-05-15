@@ -272,10 +272,7 @@ mod tests {
     fn explicit_day_overrides_short_range() {
         let to = anchor();
         let from = to - Duration::days(1);
-        assert_eq!(
-            resolve_granularity(Some("day"), from, to),
-            Granularity::Day
-        );
+        assert_eq!(resolve_granularity(Some("day"), from, to), Granularity::Day);
     }
 
     #[test]

@@ -77,7 +77,12 @@ fn chql_corpus_all_cases() {
         let has_ast_key = raw_json.get("ast").is_some();
         let has_error_key = raw_json.get("error").is_some();
         let expected_ast_opt = if has_ast_key {
-            Some(raw_json.get("ast").cloned().unwrap_or(serde_json::Value::Null))
+            Some(
+                raw_json
+                    .get("ast")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )
         } else {
             None
         };

@@ -1,8 +1,8 @@
 //! Unit tests for the ChQL pipeline beyond the corpus runner.
 
-use super::*;
 use super::ast::{Ast, CmpOp, Value};
 use super::compile::{compile, SqlBind};
+use super::*;
 
 // ── Parser ───────────────────────────────────────────────────────────────────
 
@@ -100,7 +100,9 @@ fn compile_stage_uses_jobs_subquery() {
 fn compile_repo_friendly_name_uses_subselect() {
     let ast = parse(r#"repo:"chola""#).unwrap().unwrap();
     let frag = compile(&ast).unwrap();
-    assert!(frag.sql.contains("repo_id IN (SELECT id FROM repos WHERE repo_name = ?)"));
+    assert!(frag
+        .sql
+        .contains("repo_id IN (SELECT id FROM repos WHERE repo_name = ?)"));
     assert_eq!(frag.binds, vec![SqlBind::Str("chola".into())]);
 }
 

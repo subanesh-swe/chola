@@ -131,10 +131,7 @@ impl Parser {
                     let span = span.clone();
                     self.bump();
                     if self.peek().is_none() {
-                        return Err(ChqlError::at(
-                            "Expected expression after 'AND'",
-                            span.end,
-                        ));
+                        return Err(ChqlError::at("Expected expression after 'AND'", span.end));
                     }
                     let right = self.parse_not()?;
                     left = Ast::And {
@@ -205,10 +202,7 @@ impl Parser {
         if !VALID_FIELDS.contains(&field_name) {
             let valid = VALID_FIELDS.join(", ");
             return Err(ChqlError::at(
-                format!(
-                    "Unknown field '{}'. Valid fields: {}",
-                    field_name, valid
-                ),
+                format!("Unknown field '{}'. Valid fields: {}", field_name, valid),
                 field_span.start,
             ));
         }
@@ -219,7 +213,10 @@ impl Parser {
             }
             Some((tok, span)) => {
                 return Err(ChqlError::at(
-                    format!("Expected ':' after field '{field_name}', got {}", tok_display(&tok)),
+                    format!(
+                        "Expected ':' after field '{field_name}', got {}",
+                        tok_display(&tok)
+                    ),
                     span.start,
                 ))
             }
@@ -242,7 +239,10 @@ impl Parser {
         let (tok, span) = match self.peek().cloned() {
             Some(p) => p,
             None => {
-                return Err(ChqlError::at("Expected value after ':'", field_span.end + 1));
+                return Err(ChqlError::at(
+                    "Expected value after ':'",
+                    field_span.end + 1,
+                ));
             }
         };
         match tok {
@@ -251,12 +251,7 @@ impl Parser {
                 self.bump();
                 let (next_tok, next_span) = match self.peek().cloned() {
                     Some(p) => p,
-                    None => {
-                        return Err(ChqlError::at(
-                            "Expected value after '!'",
-                            span.end,
-                        ))
-                    }
+                    None => return Err(ChqlError::at("Expected value after '!'", span.end)),
                 };
                 let value = match next_tok {
                     Token::String(s) => {
@@ -321,10 +316,7 @@ impl Parser {
                     }
                     Token::String(s) => {
                         if !s.terminated {
-                            return Err(ChqlError::at(
-                                "Unterminated string literal",
-                                n_span.start,
-                            ));
+                            return Err(ChqlError::at("Unterminated string literal", n_span.start));
                         }
                         self.bump();
                         // Date fields get Date kind; everything else Str.
@@ -374,10 +366,7 @@ impl Parser {
             // Quoted string → exact (or wildcard if contains '*') or date
             Token::String(s) => {
                 if !s.terminated {
-                    return Err(ChqlError::at(
-                        "Unterminated string literal",
-                        span.start,
-                    ));
+                    return Err(ChqlError::at("Unterminated string literal", span.start));
                 }
                 self.bump();
                 let v = s.value;
@@ -438,10 +427,7 @@ impl Parser {
         let value = match tok {
             Token::String(s) => {
                 if !s.terminated {
-                    return Err(ChqlError::at(
-                        "Unterminated string literal",
-                        span.start,
-                    ));
+                    return Err(ChqlError::at("Unterminated string literal", span.start));
                 }
                 self.bump();
                 Value::Str { v: s.value }
@@ -478,11 +464,7 @@ impl Parser {
 
     /// Parse `[lo, hi]` after the `[` has been consumed. `open_span` points
     /// at the `[` so its `.end` is right after the bracket.
-    fn parse_range(
-        &mut self,
-        field_name: &str,
-        open_span: Range<usize>,
-    ) -> Result<Ast, ChqlError> {
+    fn parse_range(&mut self, field_name: &str, open_span: Range<usize>) -> Result<Ast, ChqlError> {
         let lo = self.parse_range_endpoint(field_name, open_span.end)?;
         match self.peek().cloned() {
             Some((Token::Comma, _)) => {
@@ -551,10 +533,7 @@ impl Parser {
             }
             Token::String(s) => {
                 if !s.terminated {
-                    return Err(ChqlError::at(
-                        "Unterminated string literal",
-                        span.start,
-                    ));
+                    return Err(ChqlError::at("Unterminated string literal", span.start));
                 }
                 self.bump();
                 if is_date_field(field_name) {
@@ -578,7 +557,10 @@ fn is_date_field(name: &str) -> bool {
 /// Returns true if `t` can begin a new atom — used to detect implicit-AND
 /// adjacency.
 fn can_start_atom(t: &Token) -> bool {
-    matches!(t, Token::Ident(_) | Token::LParen | Token::Not | Token::String(_))
+    matches!(
+        t,
+        Token::Ident(_) | Token::LParen | Token::Not | Token::String(_)
+    )
 }
 
 fn tok_display(t: &Token) -> String {
