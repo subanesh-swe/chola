@@ -2682,6 +2682,7 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                             format!("Worker {} disconnected (heartbeat timeout)", worker_id);
                         let mut db_updates: Vec<uuid::Uuid> = Vec::new();
 
+                        let mut release_totals = (0u32, 0u64, 0u64);
                         {
                             let mut jg = state_for_hb.job_group_registry.write().await;
                             let (to_migrate, to_fail) = jg.handle_worker_death(worker_id);
@@ -2690,6 +2691,9 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                 jg.fail_group_jobs(gid, &death_reason);
                                 if let Some(g) = jg.get_mut(gid) {
                                     g.status_reason = Some(death_reason.clone());
+                                    release_totals.0 += g.allocated_resources.cpu;
+                                    release_totals.1 += g.allocated_resources.memory_mb;
+                                    release_totals.2 += g.allocated_resources.disk_mb;
                                 }
                                 state_for_hb.metrics.dec_active_builds();
                                 db_updates.push(*gid);
@@ -2700,6 +2704,19 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                                     "{} groups need migration from dead worker {} (not yet implemented)",
                                     to_migrate.len(),
                                     worker_id
+                                );
+                            }
+                        }
+                        // Release accumulated allocations back to the dead worker so
+                        // its counters reflect reality. Future reconnects / fresh
+                        // registrations rely on this being zero.
+                        if release_totals.0 > 0 || release_totals.1 > 0 || release_totals.2 > 0 {
+                            let mut wr = state_for_hb.worker_registry.write().await;
+                            if let Some(w) = wr.get_mut(worker_id) {
+                                w.release(release_totals.0, release_totals.1, release_totals.2);
+                                info!(
+                                    "Released stale allocation on dead worker {}: cpu={} mem_mb={} disk_mb={}",
+                                    worker_id, release_totals.0, release_totals.1, release_totals.2
                                 );
                             }
                         }
