@@ -368,6 +368,18 @@ async fn main() -> anyhow::Result<()> {
                 if restored > 0 {
                     info!("Restored {} jobs to group registries", restored);
                 }
+                // Per-group view must agree with `JobRegistry`'s post-recovery
+                // state — both maps hold their own copies of `Job`. Without
+                // this, `check_group_completion` keeps seeing `Running`
+                // jobs from the DB snapshot and refuses to fire the cascade
+                // even after the worker side has long since terminated.
+                let stale = jgr.mark_stale_jobs_unknown();
+                if stale > 0 {
+                    warn!(
+                        "Marked {} stale running/assigned jobs as Unknown in group registry",
+                        stale
+                    );
+                }
             }
             Err(e) => warn!("Failed to restore group_jobs: {}", e),
         }
