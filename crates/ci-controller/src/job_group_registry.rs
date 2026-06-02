@@ -83,6 +83,28 @@ impl JobGroupRegistry {
         self.group_jobs.entry(*group_id).or_default().push(job);
     }
 
+    /// Mark `Running`/`Assigned` jobs in every group as `Unknown` — the
+    /// sibling of `JobRegistry::mark_stale_jobs_unknown`, but for the
+    /// per-group view used by `check_group_completion`. Called during
+    /// startup recovery so the in-memory state on both sides agrees that
+    /// jobs whose workers were mid-flight at crash time have an indeterminate
+    /// outcome, instead of staying "running" forever. Returns the count of
+    /// jobs that were transitioned.
+    pub fn mark_stale_jobs_unknown(&mut self) -> usize {
+        let now = chrono::Utc::now();
+        let mut transitioned = 0usize;
+        for jobs in self.group_jobs.values_mut() {
+            for job in jobs.iter_mut() {
+                if matches!(job.state, JobState::Running | JobState::Assigned) {
+                    job.state = JobState::Unknown;
+                    job.updated_at = now;
+                    transitioned += 1;
+                }
+            }
+        }
+        transitioned
+    }
+
     pub fn get_jobs_for_group(&self, group_id: &Uuid) -> &[Job] {
         self.group_jobs
             .get(group_id)
@@ -422,6 +444,35 @@ mod tests {
         let raw = "acab57ba-a068-478b-b755-f9299f3c7c66-vira-ci";
         let other_raw = "deadbeef-dead-beef-dead-beefdeadbeef-other";
         assert!(!job_id_matches(other_raw, raw));
+    }
+
+    #[test]
+    fn mark_stale_jobs_unknown_transitions_running_and_assigned() {
+        let mut reg = JobGroupRegistry::new();
+        let g1 = Uuid::new_v4();
+        let g2 = Uuid::new_v4();
+
+        let mut j_run = Job::new("j1".into(), "/bin/true".into(), JobType::Common, 0, 0, 0);
+        j_run.state = JobState::Running;
+        let mut j_assigned = Job::new("j2".into(), "/bin/true".into(), JobType::Common, 0, 0, 0);
+        j_assigned.state = JobState::Assigned;
+        let mut j_done = Job::new("j3".into(), "/bin/true".into(), JobType::Common, 0, 0, 0);
+        j_done.state = JobState::Success;
+
+        reg.add_job_to_group(&g1, j_run);
+        reg.add_job_to_group(&g1, j_done);
+        reg.add_job_to_group(&g2, j_assigned);
+
+        let transitioned = reg.mark_stale_jobs_unknown();
+        assert_eq!(transitioned, 2);
+
+        let g1_jobs = reg.get_jobs_for_group(&g1);
+        assert_eq!(g1_jobs[0].state, JobState::Unknown);
+        // Terminal jobs are untouched.
+        assert_eq!(g1_jobs[1].state, JobState::Success);
+
+        let g2_jobs = reg.get_jobs_for_group(&g2);
+        assert_eq!(g2_jobs[0].state, JobState::Unknown);
     }
 
     #[test]
