@@ -2848,25 +2848,54 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
         let state_reaper = state.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+            const STUCK_REASON: &str = "Group stuck: running for more than 4 hours";
             loop {
                 interval.tick().await;
-                let mut jgr = state_reaper.job_group_registry.write().await;
-                let now = chrono::Utc::now();
-                let stuck: Vec<uuid::Uuid> = jgr
-                    .active_groups()
-                    .iter()
-                    .filter(|g| {
-                        matches!(g.state, ci_core::models::job_group::JobGroupState::Running)
-                            && (now - g.updated_at).num_hours() >= 4
-                    })
-                    .map(|g| g.id)
-                    .collect();
-                for gid in stuck {
-                    warn!("Failing stuck group {} (running > 4h)", gid);
-                    jgr.update_state(&gid, ci_core::models::job_group::JobGroupState::Failed);
-                    if let Some(g) = jgr.get_mut(&gid) {
-                        g.status_reason =
-                            Some("Group stuck: running for more than 4 hours".to_string());
+
+                // Phase 1: update in-memory state under write lock, collect ids.
+                let stuck: Vec<uuid::Uuid> = {
+                    let mut jgr = state_reaper.job_group_registry.write().await;
+                    let now = chrono::Utc::now();
+                    let stuck: Vec<uuid::Uuid> = jgr
+                        .active_groups()
+                        .iter()
+                        .filter(|g| {
+                            matches!(g.state, ci_core::models::job_group::JobGroupState::Running)
+                                && (now - g.updated_at).num_hours() >= 4
+                        })
+                        .map(|g| g.id)
+                        .collect();
+                    for gid in &stuck {
+                        warn!("Failing stuck group {} (running > 4h)", gid);
+                        jgr.update_state(gid, ci_core::models::job_group::JobGroupState::Failed);
+                        if let Some(g) = jgr.get_mut(gid) {
+                            g.status_reason = Some(STUCK_REASON.to_string());
+                        }
+                    }
+                    stuck
+                }; // jgr write lock dropped here
+
+                // Phase 2: persist the transition to DB so it survives restart and
+                // so terminal-entry eviction doesn't drop the row from memory
+                // while the DB still says `running`.
+                if let Some(storage) = &state_reaper.storage {
+                    for gid in &stuck {
+                        if let Err(e) = storage
+                            .update_job_group_state(
+                                *gid,
+                                ci_core::models::job_group::JobGroupState::Failed,
+                                Some(STUCK_REASON),
+                            )
+                            .await
+                        {
+                            warn!("Failed to persist stuck-group {} state to DB: {}", gid, e);
+                        }
+                        if let Err(e) = storage.cancel_jobs_for_group(*gid).await {
+                            warn!(
+                                "Failed to cancel orphaned jobs in DB for stuck group {}: {}",
+                                gid, e
+                            );
+                        }
                     }
                 }
             }
