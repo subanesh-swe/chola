@@ -99,7 +99,7 @@ impl JobGroupRegistry {
         exit_code: Option<i32>,
     ) {
         if let Some(jobs) = self.group_jobs.get_mut(group_id) {
-            if let Some(job) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+            if let Some(job) = jobs.iter_mut().find(|j| job_id_matches(&j.job_id, job_id)) {
                 job.state = state;
                 job.exit_code = exit_code;
                 job.updated_at = chrono::Utc::now();
@@ -126,7 +126,7 @@ impl JobGroupRegistry {
         self.group_jobs
             .get_mut(group_id)?
             .iter_mut()
-            .find(|j| j.job_id == job_id)
+            .find(|j| job_id_matches(&j.job_id, job_id))
     }
 
     /// Check if all jobs in a group have reached terminal state.
@@ -373,5 +373,76 @@ impl JobGroupRegistry {
         }
 
         result
+    }
+}
+
+/// Match a stored job_id against a worker-reported lookup id.
+///
+/// `do_submit_stage` stores jobs in the registry keyed by the raw worker
+/// `job_id` (typically `"{group_id}-{stage_name}"`). Recovery, by contrast,
+/// reads the DB primary key into the registry — and that key is
+/// `Uuid::v5(NAMESPACE_OID, raw_job_id)` (see `db_job_to_job` in `main.rs`
+/// and the `Uuid::new_v5` call sites in `grpc_server.rs`). Worker
+/// `report_status` always sends the raw form, so post-restart lookups would
+/// silently miss the recovery-loaded entries.
+///
+/// Accept either form to keep the completion cascade working across both
+/// normal and post-recovery code paths.
+fn job_id_matches(stored: &str, lookup_raw: &str) -> bool {
+    if stored == lookup_raw {
+        return true;
+    }
+    let v5 = Uuid::new_v5(&Uuid::NAMESPACE_OID, lookup_raw.as_bytes()).to_string();
+    stored == v5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ci_core::models::job::JobType;
+
+    #[test]
+    fn job_id_matches_raw_form() {
+        let raw = "acab57ba-a068-478b-b755-f9299f3c7c66-vira-ci";
+        assert!(job_id_matches(raw, raw));
+    }
+
+    #[test]
+    fn job_id_matches_v5_form() {
+        // Recovery stored the v5-hashed form (db.id.to_string()); worker
+        // reports the raw form — they must still match.
+        let raw = "acab57ba-a068-478b-b755-f9299f3c7c66-vira-ci";
+        let v5 = Uuid::new_v5(&Uuid::NAMESPACE_OID, raw.as_bytes()).to_string();
+        assert_ne!(raw, v5);
+        assert!(job_id_matches(&v5, raw));
+    }
+
+    #[test]
+    fn job_id_matches_rejects_unrelated() {
+        let raw = "acab57ba-a068-478b-b755-f9299f3c7c66-vira-ci";
+        let other_raw = "deadbeef-dead-beef-dead-beefdeadbeef-other";
+        assert!(!job_id_matches(other_raw, raw));
+    }
+
+    #[test]
+    fn update_job_in_group_matches_v5_stored_id() {
+        // Simulates post-restart state: the registry holds a Job keyed by
+        // the v5-hashed UUID (as recovery's `db_job_to_job` produces), but
+        // the worker pushes status using the raw job_id.
+        let group_id = Uuid::new_v4();
+        let raw = format!("{group_id}-vira-ci");
+        let v5 = Uuid::new_v5(&Uuid::NAMESPACE_OID, raw.as_bytes()).to_string();
+
+        let mut reg = JobGroupRegistry::new();
+        let mut job = Job::new(v5.clone(), "/bin/true".into(), JobType::Common, 0, 0, 0);
+        job.state = JobState::Running;
+        reg.add_job_to_group(&group_id, job);
+
+        reg.update_job_in_group(&group_id, &raw, JobState::Success, Some(0));
+
+        let stored = reg.get_jobs_for_group(&group_id);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].state, JobState::Success);
+        assert_eq!(stored[0].exit_code, Some(0));
     }
 }
