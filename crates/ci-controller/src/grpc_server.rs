@@ -193,6 +193,7 @@ pub async fn dispatch_global_post_script(
         secret_env_keys: Vec::new(),
         pre_script_lock: post_lock,
         post_script_lock: None,
+        purge_group_files: None,
     };
     if sender.send(Ok(assignment)).await.is_err() {
         warn!(
@@ -226,6 +227,7 @@ fn build_job_assignment(job: Job) -> JobAssignment {
         secret_env_keys: Vec::new(),
         pre_script_lock: None,
         post_script_lock: None,
+        purge_group_files: None,
     }
 }
 
@@ -254,6 +256,7 @@ fn build_cancel_assignment(job_id: &str, reason: &str) -> JobAssignment {
         secret_env_keys: Vec::new(),
         pre_script_lock: None,
         post_script_lock: None,
+        purge_group_files: None,
     }
 }
 
@@ -1206,6 +1209,7 @@ async fn do_submit_stage(
                 secret_env_keys,
                 pre_script_lock: pre_lock,
                 post_script_lock: post_lock,
+                purge_group_files: None,
             };
             if sender.send(Ok(assignment)).await.is_err() {
                 warn!(

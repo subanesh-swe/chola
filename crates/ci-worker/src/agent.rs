@@ -557,6 +557,7 @@ async fn report_status(
             phase: report.phase,
             pre_exit_code: report.pre_exit_code,
             post_exit_code: report.post_exit_code,
+            purge_ack: false,
         })
         .await
 }

@@ -118,6 +118,14 @@ message JobStreamRequest {
   string worker_id = 1;
 }
 
+// Sent on the JobAssignment stream to tell a worker to remove all per-group
+// files for a given group_id. Issued by the controller as part of T1
+// retention. Worker replies via JobStatusUpdate with purge_ack=true and
+// the same job_group_id.
+message PurgeGroupFilesDirective {
+  string group_id = 1;
+}
+
 message JobAssignment {
   string job_id = 1;
   string command = 2;
@@ -142,6 +150,19 @@ message JobAssignment {
   // Script lock config — serialize concurrent script execution
   ScriptLockConfig pre_script_lock = 17;
   ScriptLockConfig post_script_lock = 18;
+  // Retention T1 directive: when set, the worker MUST recursively delete
+  // the per-group scratch subtree for `purge_group_files.group_id`
+  // (its <scratch_root>/<gid>/ directory) and reply with a
+  // JobStatusUpdate where `purge_ack = true` and `job_group_id` carries
+  // the same group_id. The worker MUST NOT touch repos_dir. When this
+  // directive is set the other JobAssignment fields are unused — the
+  // message is a purge-only delivery on the existing assignment stream
+  // (NOT sent inline with a real job). Optional field: workers that do
+  // not understand it simply ignore the unknown tag (proto3 forward
+  // compat); the controller treats absence of an ack as "stale worker"
+  // and eventually advances files_purged_at by the heartbeat-timeout
+  // path. See retention-implementation-plan.md §3.C and §4.
+  PurgeGroupFilesDirective purge_group_files = 19;
 }
 
 // Lock configuration for a script (pre or post)
@@ -197,6 +218,13 @@ message JobStatusUpdate {
   string phase = 10;  // "pre_script", "command", "post_script"
   int32 pre_exit_code = 11;
   int32 post_exit_code = 12;
+  // Set by worker when acknowledging a PurgeGroupFilesDirective.
+  // When true, job_group_id (field 8) names the purged group; job_id is empty.
+  // `state` is JOB_STATE_SUCCESS on a clean purge or JOB_STATE_FAILED if
+  // any rm path failed; `message` carries the OS error string when
+  // state == JOB_STATE_FAILED. All other fields are ignored by the
+  // controller's purge-ack handler.
+  bool purge_ack = 13;
 }
 
 enum JobState {
