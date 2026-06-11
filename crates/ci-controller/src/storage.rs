@@ -970,6 +970,11 @@ impl Storage {
                 "worker_priority_limits",
                 include_str!("../../../migrations/032_worker_priority_limits.sql"),
             ),
+            (
+                33,
+                "retention_archive",
+                include_str!("../../../migrations/033_retention_archive.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
