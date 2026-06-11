@@ -162,10 +162,19 @@ async fn run_tick(
 /// T1 — delete controller-side per-group scratch dirs for terminal
 /// groups whose `completed_at` is older than `t1_days`.
 ///
-/// When `enable_worker_fanout=false` (the default until T5b lands) the
-/// helper also stamps `files_purged_at` on the group so the controller
-/// side is self-consistent. T5b changes this branch to enqueue per-worker
-/// purge directives instead.
+/// When `enable_worker_fanout=false` (default until all workers are
+/// upgraded), the helper stamps `files_purged_at` immediately so the
+/// controller side is self-consistent.
+///
+/// When `enable_worker_fanout=true` (T5b path), for each group:
+///   1. Run controller-side delete.
+///   2. Look up the set of worker_ids that ran any stage in the group.
+///   3. Filter to "live" workers (heartbeat newer than timeout).
+///   4. If no live workers remain, stamp `files_purged_at` immediately
+///      (offline/dead workers cannot ack — treated as unreachable).
+///   5. Otherwise enqueue a per-worker purge via Redis and defer the
+///      stamp until every live worker has acked (handled in
+///      `grpc_server::report_job_status`).
 async fn run_t1(
     state: &ControllerState,
     storage: &crate::storage::Storage,
@@ -198,8 +207,6 @@ async fn run_t1(
         "T1: purged controller-side files"
     );
 
-    // Worker fanout lands in T5b. When disabled, stamp files_purged_at
-    // immediately so the next tick doesn't re-find these groups.
     if !enable_worker_fanout {
         let stamped = storage
             .mark_files_purged(&candidates, chrono::Utc::now())
@@ -207,11 +214,89 @@ async fn run_t1(
         if stamped > 0 {
             info!(count = stamped, "T1: stamped files_purged_at");
         }
+        return Ok(());
     }
-    // The `else` branch (fanout enabled) is intentionally a no-op here —
-    // T5b adds the per-worker enqueue + deferred mark logic.
+
+    // Fanout path: enqueue per-worker directives via Redis.
+    let redis = match &state.redis_store {
+        Some(r) => r.clone(),
+        None => {
+            warn!(
+                "T1: enable_worker_fanout=true but no redis_store; \
+                 falling back to immediate stamp"
+            );
+            let stamped = storage
+                .mark_files_purged(&candidates, chrono::Utc::now())
+                .await?;
+            if stamped > 0 {
+                info!(count = stamped, "T1: stamped files_purged_at (no redis)");
+            }
+            return Ok(());
+        }
+    };
+
+    let heartbeat_timeout_secs = state.config.workers.heartbeat_timeout_secs as i64;
+    let mut stamp_immediately: Vec<uuid::Uuid> = Vec::new();
+
+    for gid in &candidates {
+        let owners = storage.workers_for_group(*gid).await.unwrap_or_default();
+        let live = filter_live_workers(state, &owners, heartbeat_timeout_secs).await;
+
+        if live.is_empty() {
+            stamp_immediately.push(*gid);
+            continue;
+        }
+
+        for wid in &live {
+            if let Err(e) = redis.enqueue_purge(wid, &gid.to_string()).await {
+                warn!(
+                    worker_id = %wid,
+                    group_id = %gid,
+                    error = %e,
+                    "T1: failed to enqueue purge; will retry next tick"
+                );
+            }
+        }
+    }
+
+    if !stamp_immediately.is_empty() {
+        let stamped = storage
+            .mark_files_purged(&stamp_immediately, chrono::Utc::now())
+            .await?;
+        if stamped > 0 {
+            info!(
+                count = stamped,
+                "T1: stamped files_purged_at for groups with no live workers"
+            );
+        }
+    }
 
     Ok(())
+}
+
+/// Return the subset of `owners` whose last heartbeat is within
+/// `heartbeat_timeout_secs`. Workers absent from the registry or stale
+/// past the timeout are treated as unreachable (caller stamps
+/// `files_purged_at` immediately without waiting for an ack that will
+/// never come).
+async fn filter_live_workers(
+    state: &ControllerState,
+    owners: &[String],
+    heartbeat_timeout_secs: i64,
+) -> Vec<String> {
+    let registry = state.worker_registry.read().await;
+    let now = chrono::Utc::now();
+    owners
+        .iter()
+        .filter(|wid| {
+            registry
+                .get(wid)
+                .and_then(|w| w.last_heartbeat.as_ref())
+                .map(|hb| (now - hb.timestamp).num_seconds() < heartbeat_timeout_secs)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
 }
 
 /// T2 — archive terminal groups whose `completed_at` is older than `t2_days`.

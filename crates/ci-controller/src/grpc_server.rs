@@ -12,10 +12,10 @@ use ci_core::proto::orchestrator::{
     AcquireLockRequest, AcquireLockResponse, CancelDirective, CancelJobRequest, CancelJobResponse,
     GetJobGroupStatusRequest, GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse,
     HeartbeatAck, HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest,
-    LogAck, LogChunk, LogResumeDirective, ReconnectRequest, ReconnectResponse, RegisterRequest,
-    RegisterResponse, ReleaseLockRequest, ReleaseLockResponse, ReserveWorkerRequest,
-    ReserveWorkerResponse, ScriptLockConfig, SubmitJobRequest, SubmitJobResponse,
-    SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
+    LogAck, LogChunk, LogResumeDirective, PurgeGroupFilesDirective, ReconnectRequest,
+    ReconnectResponse, RegisterRequest, RegisterResponse, ReleaseLockRequest, ReleaseLockResponse,
+    ReserveWorkerRequest, ReserveWorkerResponse, ScriptLockConfig, SubmitJobRequest,
+    SubmitJobResponse, SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
 };
 
 use crate::dag;
@@ -257,6 +257,261 @@ fn build_cancel_assignment(job_id: &str, reason: &str) -> JobAssignment {
         pre_script_lock: None,
         post_script_lock: None,
         purge_group_files: None,
+    }
+}
+
+/// Build a purge-only `JobAssignment` carrying just a
+/// `PurgeGroupFilesDirective`. All other fields are zeroed/empty —
+/// workers identify the message by the directive being set.
+fn build_purge_assignment(group_id: &str) -> JobAssignment {
+    JobAssignment {
+        job_id: String::new(),
+        command: String::new(),
+        job_type: String::new(),
+        required_cpu: 0,
+        required_memory_mb: 0,
+        required_disk_mb: 0,
+        isolation_required: false,
+        branch_id: String::new(),
+        environment: std::collections::HashMap::new(),
+        cancel: None,
+        job_group_id: group_id.to_string(),
+        stage_name: String::new(),
+        pre_script: String::new(),
+        post_script: String::new(),
+        max_duration_secs: 0,
+        secret_env_keys: Vec::new(),
+        pre_script_lock: None,
+        post_script_lock: None,
+        purge_group_files: Some(PurgeGroupFilesDirective {
+            group_id: group_id.to_string(),
+        }),
+    }
+}
+
+/// Drain any pending retention T1 purge directives queued for
+/// `worker_id` in Redis and push each as a `JobAssignment` carrying
+/// `purge_group_files`. Called once at `job_stream` open right after
+/// the sender is registered.
+///
+/// On error (Redis unavailable, send failure) the queue entry is
+/// preserved — the next stream open re-drives the drain. The inflight
+/// key (1h TTL) is the controller-side safety net against a worker
+/// receiving the directive but never acking.
+async fn drain_pending_purges(
+    state: &Arc<ControllerState>,
+    worker_id: &str,
+    tx: &tokio::sync::mpsc::Sender<Result<JobAssignment, Status>>,
+) {
+    let redis = match &state.redis_store {
+        Some(r) => r,
+        None => return,
+    };
+    let queued = match redis.dequeue_purges(worker_id).await {
+        Ok(q) => q,
+        Err(e) => {
+            warn!(
+                worker_id,
+                error = %e,
+                "purge-drain: failed to read queue from Redis"
+            );
+            return;
+        }
+    };
+    if queued.is_empty() {
+        return;
+    }
+    info!(
+        worker_id,
+        count = queued.len(),
+        "purge-drain: pushing queued purge directives"
+    );
+    for gid_str in queued {
+        // Validate the queue entry parses as a UUID before sending. A
+        // bad entry can't be acked anyway — log + leave it for an
+        // operator to clean up via redis-cli.
+        if uuid::Uuid::parse_str(&gid_str).is_err() {
+            warn!(
+                worker_id,
+                group_id = %gid_str,
+                "purge-drain: queue entry is not a valid UUID; skipping"
+            );
+            continue;
+        }
+        let assignment = build_purge_assignment(&gid_str);
+        if let Err(e) = tx.send(Ok(assignment)).await {
+            warn!(
+                worker_id,
+                group_id = %gid_str,
+                error = %e,
+                "purge-drain: failed to send (channel closed); will retry on next stream open"
+            );
+            return;
+        }
+    }
+}
+
+/// Handle a `JobStatusUpdate` carrying `purge_ack=true`.
+///
+/// Drops the (worker_id, group_id) entry from the Redis purge queue.
+/// Then checks whether any other live owning worker still has a queued
+/// purge for the same group; if none do, stamps `files_purged_at` on
+/// the group so the next T1 tick stops finding it.
+async fn handle_purge_ack(
+    state: &Arc<ControllerState>,
+    req: &JobStatusUpdate,
+) -> Result<Response<JobStatusAck>, Status> {
+    let worker_id = &req.worker_id;
+    let group_id_str = &req.job_group_id;
+
+    let group_id = match uuid::Uuid::parse_str(group_id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!(
+                worker = %worker_id,
+                group = %group_id_str,
+                "purge ack: invalid group_id"
+            );
+            return Ok(Response::new(JobStatusAck {
+                ok: false,
+                message: "invalid group_id".into(),
+            }));
+        }
+    };
+
+    let failed = req.state == ci_core::proto::orchestrator::JobState::Failed as i32;
+    if failed {
+        // Leave the queue entry alone so the next stream open re-pushes
+        // and the worker can retry the rm. Inflight TTL still bounds
+        // how long we sit on a stuck purge.
+        warn!(
+            worker = %worker_id,
+            group = %group_id,
+            error = %req.message,
+            "purge ack: worker reported FAILED; will retry on next stream open"
+        );
+        return Ok(Response::new(JobStatusAck {
+            ok: true,
+            message: "purge ack (failed; queued for retry)".into(),
+        }));
+    }
+
+    info!(
+        worker = %worker_id,
+        group = %group_id,
+        "purge ack: success"
+    );
+
+    let redis = match &state.redis_store {
+        Some(r) => r.clone(),
+        None => {
+            // No Redis means no fanout was possible — drop straight to
+            // the stamp path. Shouldn't normally happen because the
+            // directive itself was a Redis-only construct.
+            stamp_files_purged_if_pending(state, &[group_id]).await;
+            return Ok(Response::new(JobStatusAck {
+                ok: true,
+                message: "purge ack (no redis)".into(),
+            }));
+        }
+    };
+
+    if let Err(e) = redis.ack_purge(worker_id, group_id_str).await {
+        warn!(
+            worker = %worker_id,
+            group = %group_id,
+            error = %e,
+            "purge ack: failed to clear Redis state"
+        );
+        // Don't return an error — the ack itself is logically processed;
+        // the next T1 tick can retry.
+    }
+
+    // Check if every owning worker has now acked. We treat:
+    //   - "live worker with pending queue entry" → still waiting
+    //   - everything else (dead worker, acked worker, never-enqueued
+    //     worker) → done.
+    // The owners come from workers_for_group() which UNIONs jobs +
+    // jobs_archive, so it works post-T2 too.
+    if all_workers_acked(state, &redis, group_id).await {
+        stamp_files_purged_if_pending(state, &[group_id]).await;
+    }
+
+    Ok(Response::new(JobStatusAck {
+        ok: true,
+        message: "purge ack".into(),
+    }))
+}
+
+/// True when no live worker that ran any stage in `group_id` still has
+/// a queued purge for it. Workers that are dead/unregistered are
+/// counted as acked (we can't wait forever for a worker that's gone).
+async fn all_workers_acked(
+    state: &Arc<ControllerState>,
+    redis: &Arc<crate::redis_store::RedisStore>,
+    group_id: uuid::Uuid,
+) -> bool {
+    let storage = match &state.storage {
+        Some(s) => s,
+        None => return true, // can't check; assume done
+    };
+    let owners = match storage.workers_for_group(group_id).await {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(
+                group = %group_id,
+                error = %e,
+                "purge ack: failed to read workers_for_group; deferring stamp"
+            );
+            return false;
+        }
+    };
+    let heartbeat_timeout_secs = state.config.workers.heartbeat_timeout_secs as i64;
+    let registry = state.worker_registry.read().await;
+    let now = chrono::Utc::now();
+    for wid in &owners {
+        let is_live = registry
+            .get(wid)
+            .and_then(|w| w.last_heartbeat.as_ref())
+            .map(|hb| (now - hb.timestamp).num_seconds() < heartbeat_timeout_secs)
+            .unwrap_or(false);
+        if !is_live {
+            continue;
+        }
+        match redis.is_purge_pending(wid, &group_id.to_string()).await {
+            Ok(true) => return false,
+            Ok(false) => continue,
+            Err(e) => {
+                warn!(
+                    worker = %wid,
+                    group = %group_id,
+                    error = %e,
+                    "purge ack: Redis check failed; deferring stamp"
+                );
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Stamp `files_purged_at` on the given groups, no-op if storage is
+/// unavailable. Logs at info on success.
+async fn stamp_files_purged_if_pending(state: &Arc<ControllerState>, group_ids: &[uuid::Uuid]) {
+    let storage = match &state.storage {
+        Some(s) => s,
+        None => return,
+    };
+    match storage
+        .mark_files_purged(group_ids, chrono::Utc::now())
+        .await
+    {
+        Ok(n) if n > 0 => info!(
+            count = n,
+            "purge ack: all workers acked, stamped files_purged_at"
+        ),
+        Ok(_) => {} // already stamped
+        Err(e) => warn!(error = %e, "purge ack: failed to stamp files_purged_at"),
     }
 }
 
@@ -1582,6 +1837,16 @@ impl Orchestrator for OrchestratorService {
             info!("Registered job stream channel for worker {}", worker_id);
         }
 
+        // Drain pending retention T1 purge directives from Redis. Each
+        // drained group_id becomes a JobAssignment whose only set field
+        // is `purge_group_files` — see proto §3.C and
+        // retention-implementation-plan.md §3.C.
+        //
+        // The drain is fire-and-forget on the same channel; failures
+        // get logged and the queue entry stays (re-pushed on next stream
+        // open, or via the inflight TTL expiry sweep).
+        drain_pending_purges(&self.state, &worker_id, &tx).await;
+
         // Clone tx for the job assignment loop
         let job_tx = tx.clone();
 
@@ -1620,6 +1885,16 @@ impl Orchestrator for OrchestratorService {
         request: Request<JobStatusUpdate>,
     ) -> Result<Response<JobStatusAck>, Status> {
         let req = request.into_inner();
+
+        // Retention T1 purge ack — handled before the normal job
+        // pipeline. Per the proto, `job_group_id` (field 8) carries the
+        // purged group, `state` is SUCCESS or FAILED, and `message`
+        // carries the OS error on FAILED. No job/registry/metrics
+        // updates here — this isn't a real job.
+        if req.purge_ack {
+            return handle_purge_ack(&self.state, &req).await;
+        }
+
         info!(
             "Job status update: job={} worker={} state={:?}",
             req.job_id, req.worker_id, req.state

@@ -379,6 +379,68 @@ impl RedisStore {
     pub fn prefix(&self) -> &str {
         &self.prefix
     }
+
+    // ── Retention T1 purge queue (issue #20, T5b) ──
+    //
+    // Key layout:
+    //   <prefix>purge:queue:<worker_id>             SET   members: group_id
+    //   <prefix>purge:inflight:<worker_id>:<gid>    STRING TTL 3600s
+    //
+    // SADD is idempotent so the same (wid, gid) re-enqueue is a no-op.
+    // The inflight key is only set on the FIRST enqueue (SET NX EX) so
+    // its TTL is not bumped on retries; expiry implicitly re-enables a
+    // push on the next job_stream open.
+
+    /// Enqueue a purge directive for `worker_id`. Idempotent.
+    pub async fn enqueue_purge(&self, worker_id: &str, group_id: &str) -> anyhow::Result<()> {
+        let mut conn = self.get_conn().await?;
+        let queue_key = self.key(&["purge", "queue", worker_id]);
+        let inflight_key = self.key(&["purge", "inflight", worker_id, group_id]);
+        let _: i64 = conn.sadd(&queue_key, group_id).await?;
+        // SET NX EX so the TTL is only applied on first enqueue. If a
+        // previous inflight is still alive we don't reset its clock.
+        let _: Option<String> = redis::cmd("SET")
+            .arg(&inflight_key)
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(3600_i64)
+            .query_async(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Read all queued group_ids for `worker_id`. Used at job_stream open.
+    pub async fn dequeue_purges(&self, worker_id: &str) -> anyhow::Result<Vec<String>> {
+        let mut conn = self.get_conn().await?;
+        let queue_key = self.key(&["purge", "queue", worker_id]);
+        let members: Vec<String> = conn.smembers(&queue_key).await?;
+        Ok(members)
+    }
+
+    /// Ack a purge: SREM the queue entry + DEL the inflight key.
+    pub async fn ack_purge(&self, worker_id: &str, group_id: &str) -> anyhow::Result<()> {
+        let mut conn = self.get_conn().await?;
+        let queue_key = self.key(&["purge", "queue", worker_id]);
+        let inflight_key = self.key(&["purge", "inflight", worker_id, group_id]);
+        let _: i64 = conn.srem(&queue_key, group_id).await?;
+        let _: i64 = conn.del(&inflight_key).await?;
+        Ok(())
+    }
+
+    /// Return true if `worker_id` still has a queued (or inflight) purge
+    /// for `group_id`. Used by the controller's "all workers acked?"
+    /// check before stamping files_purged_at.
+    pub async fn is_purge_pending(
+        &self,
+        worker_id: &str,
+        group_id: &str,
+    ) -> anyhow::Result<bool> {
+        let mut conn = self.get_conn().await?;
+        let queue_key = self.key(&["purge", "queue", worker_id]);
+        let in_queue: bool = conn.sismember(&queue_key, group_id).await?;
+        Ok(in_queue)
+    }
 }
 
 // ── Keyspace notification helpers (outside RedisStore, use raw client) ──
