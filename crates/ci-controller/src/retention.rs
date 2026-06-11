@@ -202,10 +202,7 @@ async fn run_t1(
             }
         }
     }
-    info!(
-        count = candidates.len(),
-        "T1: purged controller-side files"
-    );
+    info!(count = candidates.len(), "T1: purged controller-side files");
 
     if !enable_worker_fanout {
         let stamped = storage

@@ -478,14 +478,21 @@ async fn handle_job_assignment(
 
     // Per-build workspace + log path. The new layout
     // (`<scratch_root>/<gid>/...`) kicks in when the group was created
-    // at-or-after this worker process booted. Until the proto carries
-    // `group_created_at` on JobAssignment (currently absent — flagged
-    // as a follow-up blocker), every group resolves to legacy paths.
+    // at-or-after this worker process booted. The controller populates
+    // `assignment.group_created_at` as RFC3339; empty string means
+    // "unknown" → resolver falls through to legacy paths.
+    let group_created_at = if assignment.group_created_at.is_empty() {
+        None
+    } else {
+        chrono::DateTime::parse_from_rfc3339(&assignment.group_created_at)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    };
     let resolved = StageRunner::resolve_paths(
         &config.execution.scratch_root,
         &config.execution.log_dir,
         &config.execution.work_dir,
-        None, // TODO: JobAssignment.group_created_at — needs proto add
+        group_created_at,
         worker_startup_ts(),
         &assignment.job_group_id,
         &assignment.stage_name,

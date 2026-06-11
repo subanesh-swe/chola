@@ -3833,11 +3833,9 @@ impl Storage {
                 (SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) \
                    FROM {s}.worker_reservations_archive t WHERE job_group_id = $1) AS worker_reservations"
         );
-        let row = sqlx::query(&q)
-            .bind(group_id)
-            .fetch_one(&self.pool)
-            .await?;
-        let artifacts: serde_json::Value = row.try_get("artifacts").unwrap_or(serde_json::json!([]));
+        let row = sqlx::query(&q).bind(group_id).fetch_one(&self.pool).await?;
+        let artifacts: serde_json::Value =
+            row.try_get("artifacts").unwrap_or(serde_json::json!([]));
         let test_results: serde_json::Value =
             row.try_get("test_results").unwrap_or(serde_json::json!([]));
         let approval_gates: serde_json::Value = row
@@ -5436,7 +5434,9 @@ mod retention_storage_tests {
         // No filters — just confirm both rows surface and the archived
         // flag is correct.
         let (rows, total) = s
-            .list_job_groups_paginated_with_archive(500, 0, None, None, None, None, None, None, None)
+            .list_job_groups_paginated_with_archive(
+                500, 0, None, None, None, None, None, None, None,
+            )
             .await
             .expect("list with archive");
 
@@ -5448,10 +5448,7 @@ mod retention_storage_tests {
         let row_arch = rows.iter().find(|(g, _)| g.id == gid_arch);
         assert!(row_live.is_some(), "missing live row {gid_live}");
         assert!(row_arch.is_some(), "missing archived row {gid_arch}");
-        assert!(
-            !row_live.unwrap().1,
-            "live row should have archived=false"
-        );
+        assert!(!row_live.unwrap().1, "live row should have archived=false");
         assert!(
             row_arch.unwrap().1,
             "archived row should have archived=true"
