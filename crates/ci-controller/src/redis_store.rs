@@ -431,11 +431,7 @@ impl RedisStore {
     /// Return true if `worker_id` still has a queued (or inflight) purge
     /// for `group_id`. Used by the controller's "all workers acked?"
     /// check before stamping files_purged_at.
-    pub async fn is_purge_pending(
-        &self,
-        worker_id: &str,
-        group_id: &str,
-    ) -> anyhow::Result<bool> {
+    pub async fn is_purge_pending(&self, worker_id: &str, group_id: &str) -> anyhow::Result<bool> {
         let mut conn = self.get_conn().await?;
         let queue_key = self.key(&["purge", "queue", worker_id]);
         let in_queue: bool = conn.sismember(&queue_key, group_id).await?;

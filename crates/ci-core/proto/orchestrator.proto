@@ -163,6 +163,15 @@ message JobAssignment {
   // and eventually advances files_purged_at by the heartbeat-timeout
   // path. See retention-implementation-plan.md §3.C and §4.
   PurgeGroupFilesDirective purge_group_files = 19;
+
+  // RFC3339 timestamp of the job_group's `created_at`. Used by the
+  // worker's path resolver to choose between the new unified scratch
+  // root (`<scratch_root>/<gid>/{logs,workspace,artifacts}/`) for
+  // groups created at-or-after the worker's startup timestamp, and the
+  // legacy `<log_dir>/<gid>/` + `<work_dir>/<gid>/<stage>/` paths for
+  // pre-upgrade groups. Empty string is treated as "unknown — use
+  // legacy paths".
+  string group_created_at = 20;
 }
 
 // Lock configuration for a script (pre or post)

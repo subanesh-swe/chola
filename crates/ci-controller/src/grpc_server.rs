@@ -194,6 +194,7 @@ pub async fn dispatch_global_post_script(
         pre_script_lock: post_lock,
         post_script_lock: None,
         purge_group_files: None,
+        group_created_at: String::new(),
     };
     if sender.send(Ok(assignment)).await.is_err() {
         warn!(
@@ -203,8 +204,11 @@ pub async fn dispatch_global_post_script(
     }
 }
 
-/// Build a `JobAssignment` proto from a domain `Job`.
-fn build_job_assignment(job: Job) -> JobAssignment {
+/// Build a `JobAssignment` proto from a domain `Job`. `group_created_at`
+/// is the parent group's RFC3339 creation timestamp, used by the worker
+/// to pick between the new unified scratch root and the legacy paths.
+/// Empty string means "unknown — fall through to legacy".
+fn build_job_assignment(job: Job, group_created_at: String) -> JobAssignment {
     JobAssignment {
         job_id: job.job_id,
         command: job.command,
@@ -228,6 +232,7 @@ fn build_job_assignment(job: Job) -> JobAssignment {
         pre_script_lock: None,
         post_script_lock: None,
         purge_group_files: None,
+        group_created_at,
     }
 }
 
@@ -257,6 +262,7 @@ fn build_cancel_assignment(job_id: &str, reason: &str) -> JobAssignment {
         pre_script_lock: None,
         post_script_lock: None,
         purge_group_files: None,
+        group_created_at: String::new(),
     }
 }
 
@@ -286,6 +292,7 @@ fn build_purge_assignment(group_id: &str) -> JobAssignment {
         purge_group_files: Some(PurgeGroupFilesDirective {
             group_id: group_id.to_string(),
         }),
+        group_created_at: String::new(),
     }
 }
 
@@ -612,7 +619,18 @@ async fn dispatch_job_for_worker(
     // Assign the specific job the scheduler selected (not an arbitrary queued job)
     if let Some(job_id) = job_id_to_assign {
         if let Some(job) = job_registry.assign_job(&job_id, worker_id) {
-            let assignment = build_job_assignment(job);
+            // Look up the parent group's created_at so the worker's path
+            // resolver can choose between the unified scratch root and
+            // the legacy layout.
+            let group_created_at = if let Some(gid) = job.job_group_id {
+                let jgr = state.job_group_registry.read().await;
+                jgr.get(&gid)
+                    .map(|g| g.created_at.to_rfc3339())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let assignment = build_job_assignment(job, group_created_at);
             drop(job_registry); // Release before async send
             if job_tx.send(Ok(assignment)).await.is_err() {
                 return false;
@@ -1441,6 +1459,14 @@ async fn do_submit_stage(
     // Wake all waiting job_stream tasks to check for new work
     state.scheduler_notify.notify_waiters();
 
+    // Look up the parent group's created_at for the worker's path resolver.
+    let group_created_at = {
+        let jgr = state.job_group_registry.read().await;
+        jgr.get(&group_id)
+            .map(|g| g.created_at.to_rfc3339())
+            .unwrap_or_default()
+    };
+
     // Dispatch the job to the reserved worker via job stream
     {
         let senders = state.job_stream_senders.read().await;
@@ -1465,6 +1491,7 @@ async fn do_submit_stage(
                 pre_script_lock: pre_lock,
                 post_script_lock: post_lock,
                 purge_group_files: None,
+                group_created_at,
             };
             if sender.send(Ok(assignment)).await.is_err() {
                 warn!(

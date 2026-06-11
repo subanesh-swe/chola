@@ -370,9 +370,7 @@ impl StageRunner {
                 Self::sanitize_path_component(stage_name)
             };
             let group_root = PathBuf::from(scratch_root).join(&safe_group);
-            let log_path = group_root
-                .join("logs")
-                .join(format!("{}.log", &safe_stage));
+            let log_path = group_root.join("logs").join(format!("{}.log", &safe_stage));
             let workspace = group_root.join("workspace").join(&safe_stage);
             ResolvedStagePaths {
                 log_path,
