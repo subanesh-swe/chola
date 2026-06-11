@@ -982,11 +982,15 @@ impl Storage {
 
             if !already_applied {
                 info!("Running migration {}: {}", version, name);
-                // NOTE: SQL is split by ';' — migration files must not contain
-                // semicolons inside string literals, dollar-quoting, or PL/pgSQL bodies.
+                // Dollar-quote-aware splitter: walks the SQL, ignores `;` inside
+                // single-quoted strings, dollar-quoted blocks (e.g. PL/pgSQL
+                // function bodies), line comments, and block comments.
                 let mut tx = conn.begin().await?;
-                for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-                    sqlx::query(stmt).execute(&mut *tx).await?;
+                for stmt in split_sql_statements(sql) {
+                    let trimmed = stmt.trim();
+                    if !trimmed.is_empty() {
+                        sqlx::query(trimmed).execute(&mut *tx).await?;
+                    }
                 }
                 sqlx::query("INSERT INTO schema_migrations (version, name) VALUES ($1, $2)")
                     .bind(version)
@@ -4305,5 +4309,159 @@ impl Storage {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+}
+
+/// Split a SQL string into individual statements, respecting:
+/// - single-quoted strings (`'…'`)
+/// - dollar-quoted blocks (`$tag$ … $tag$`) including empty-tag (`$$ … $$`),
+///   used by PL/pgSQL function bodies in migration 033 and later
+/// - line comments (`-- … \n`)
+/// - block comments (`/* … */`)
+///
+/// Anything between unescaped semicolons is one statement; statements are
+/// returned as `&str` slices into the input.
+fn split_sql_statements(sql: &str) -> Vec<&str> {
+    let bytes = sql.as_bytes();
+    let mut statements = Vec::new();
+    let mut stmt_start = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        // Line comment
+        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Block comment
+        if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        // Single-quoted string — handles `''` escape
+        if b == b'\'' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\'' {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                        i += 2; // doubled-up escape
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // Dollar-quoted block: $tag$…$tag$ or $$…$$
+        if b == b'$' {
+            // Find the closing $ of the opening tag
+            let tag_start = i + 1;
+            let mut tag_end = tag_start;
+            while tag_end < bytes.len() && bytes[tag_end] != b'$' {
+                let c = bytes[tag_end];
+                // Tags are ident-like: letters, digits, underscore; first must be letter or _
+                let ok = c.is_ascii_alphanumeric() || c == b'_';
+                if !ok {
+                    break;
+                }
+                tag_end += 1;
+            }
+            if tag_end < bytes.len() && bytes[tag_end] == b'$' {
+                let tag = &bytes[tag_start..tag_end];
+                let closer = {
+                    let mut v = Vec::with_capacity(tag.len() + 2);
+                    v.push(b'$');
+                    v.extend_from_slice(tag);
+                    v.push(b'$');
+                    v
+                };
+                i = tag_end + 1;
+                while i + closer.len() <= bytes.len() {
+                    if bytes[i..i + closer.len()] == closer[..] {
+                        i += closer.len();
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            // Not a dollar-quote tag — fall through.
+        }
+
+        if b == b';' {
+            statements.push(&sql[stmt_start..i]);
+            stmt_start = i + 1;
+        }
+        i += 1;
+    }
+    if stmt_start < bytes.len() {
+        statements.push(&sql[stmt_start..]);
+    }
+    statements
+}
+
+#[cfg(test)]
+mod sql_split_tests {
+    use super::split_sql_statements;
+
+    #[test]
+    fn splits_simple_statements() {
+        let parts = split_sql_statements("SELECT 1; SELECT 2;");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].trim(), "SELECT 1");
+        assert_eq!(parts[1].trim(), "SELECT 2");
+    }
+
+    #[test]
+    fn ignores_semicolons_inside_single_quotes() {
+        let parts = split_sql_statements("INSERT INTO t VALUES ('a;b'); SELECT 1;");
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("'a;b'"));
+    }
+
+    #[test]
+    fn ignores_semicolons_inside_dollar_quoted_block() {
+        let sql = "CREATE FUNCTION f() RETURNS void AS $fn$ BEGIN PERFORM 1; PERFORM 2; END; $fn$ LANGUAGE plpgsql; SELECT 1;";
+        let parts = split_sql_statements(sql);
+        assert_eq!(parts.len(), 2, "expected 2 statements, got {parts:?}");
+        assert!(parts[0].contains("PERFORM 1"));
+        assert!(parts[0].contains("PERFORM 2"));
+        assert_eq!(parts[1].trim(), "SELECT 1");
+    }
+
+    #[test]
+    fn ignores_semicolons_inside_empty_tag_dollar_quote() {
+        let sql = "DO $$ BEGIN PERFORM 1; PERFORM 2; END $$; SELECT 1;";
+        let parts = split_sql_statements(sql);
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn ignores_doubled_single_quote_escape() {
+        let parts = split_sql_statements("SELECT 'it''s ok'; SELECT 2;");
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("it''s ok"));
+    }
+
+    #[test]
+    fn ignores_semicolons_in_line_comments() {
+        let parts = split_sql_statements("-- one; two;\nSELECT 1;\nSELECT 2;");
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn ignores_semicolons_in_block_comments() {
+        let parts = split_sql_statements("/* a; b; */ SELECT 1; /* c; */ SELECT 2;");
+        assert_eq!(parts.len(), 2);
     }
 }

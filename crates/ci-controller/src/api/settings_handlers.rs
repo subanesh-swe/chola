@@ -357,9 +357,9 @@ async fn validate_retention_tier_ordering(
 
     let current = |k: &str, default: u32| -> Result<u64, ApiError> {
         match db.get(k) {
-            Some(v) => v.parse::<u64>().map_err(|_| {
-                ApiError::Internal(format!("stored {} is not an integer: {}", k, v))
-            }),
+            Some(v) => v
+                .parse::<u64>()
+                .map_err(|_| ApiError::Internal(format!("stored {} is not an integer: {}", k, v))),
             None => Ok(default as u64),
         }
     };
