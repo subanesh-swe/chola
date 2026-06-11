@@ -23,9 +23,6 @@ const EDITABLE_KEYS: &[&str] = &[
     "workers.stall_timeout_secs",
     "logging.level",
     "logging.log_dir",
-    // Legacy single-rule retention. Retired by T5a (Wave 3); kept editable so
-    // existing tooling can clear stale overrides during the rollout window.
-    "retention.max_age_days",
     "retention.max_builds_per_repo",
     "retention.t1_purge_files_after_days",
     "retention.t2_archive_after_days",
@@ -293,10 +290,6 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), ApiError> {
                     "level must be one of: trace, debug, info, warn, error".into(),
                 ));
             }
-        }
-        // Legacy single-rule knob — kept editable until T5a (Wave 3) removes it.
-        "retention.max_age_days" => {
-            validate_int_range(key, value, 0, 3650)?;
         }
         "retention.max_builds_per_repo"
         | "retention.t1_purge_files_after_days"

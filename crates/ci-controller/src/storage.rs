@@ -3257,21 +3257,6 @@ impl Storage {
     // Retention / Cleanup
     // ========================================================================
 
-    pub async fn find_expired_groups(&self, max_age_days: i32) -> anyhow::Result<Vec<Uuid>> {
-        let q = format!(
-            "SELECT id FROM {s}.job_groups \
-             WHERE completed_at < NOW() - make_interval(days => $1) \
-             AND state IN ('success', 'failed', 'cancelled') \
-             ORDER BY completed_at ASC LIMIT 1000",
-            s = self.schema
-        );
-        let rows = sqlx::query(&q)
-            .bind(max_age_days)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
-    }
-
     pub async fn find_excess_groups_per_repo(
         &self,
         max_per_repo: i32,
@@ -3289,18 +3274,6 @@ impl Storage {
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
-    }
-
-    pub async fn delete_job_groups_batch(&self, ids: &[Uuid]) -> anyhow::Result<u64> {
-        if ids.is_empty() {
-            return Ok(0);
-        }
-        let q = format!(
-            "DELETE FROM {s}.job_groups WHERE id = ANY($1)",
-            s = self.schema
-        );
-        let result = sqlx::query(&q).bind(ids).execute(&self.pool).await?;
-        Ok(result.rows_affected())
     }
 
     // ========================================================================

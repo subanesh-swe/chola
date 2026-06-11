@@ -33,11 +33,6 @@ fn default_controller_http_port() -> u16 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetentionConfig {
-    /// Legacy single-rule retention. Retired by the three-tier T1/T2/T3 model;
-    /// T5a (Wave 3) removes the remaining reader in `retention.rs`.
-    #[deprecated(note = "retired in T5a — replaced by t2/t3")]
-    #[serde(default = "default_legacy_max_age_days")]
-    pub max_age_days: u32,
     #[serde(default = "default_max_builds_per_repo")]
     pub max_builds_per_repo: u32,
     /// T1 — delete on-disk files (logs, workspace, artifacts) for terminal groups older than this.
@@ -56,9 +51,6 @@ pub struct RetentionConfig {
     pub enable_worker_fanout: bool,
 }
 
-fn default_legacy_max_age_days() -> u32 {
-    90
-}
 fn default_max_builds_per_repo() -> u32 {
     5000
 }
@@ -78,11 +70,9 @@ fn default_enable_worker_fanout() -> bool {
     false
 }
 
-#[allow(deprecated)]
 impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
-            max_age_days: default_legacy_max_age_days(),
             max_builds_per_repo: default_max_builds_per_repo(),
             t1_purge_files_after_days: default_t1_purge_files_after_days(),
             t2_archive_after_days: default_t2_archive_after_days(),
