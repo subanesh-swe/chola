@@ -14,6 +14,7 @@ export interface BuildFilters {
   page: number;
   sortKey: string;
   sortDir: SortDir;
+  includeArchived: boolean;
 }
 
 const DEFAULTS: BuildFilters = {
@@ -27,6 +28,7 @@ const DEFAULTS: BuildFilters = {
   page: 1,
   sortKey: '',
   sortDir: 'desc',
+  includeArchived: false,
 };
 
 function parseStates(raw: string | null): string[] {
@@ -46,6 +48,7 @@ function parseFilters(p: URLSearchParams): BuildFilters {
     page: Number(p.get('page') ?? '1') || 1,
     sortKey: p.get('sortKey') ?? '',
     sortDir: (p.get('sortDir') as SortDir) ?? 'desc',
+    includeArchived: p.get('includeArchived') === 'true',
   };
 }
 
@@ -85,6 +88,9 @@ export function useUrlFilters() {
         else next.delete('sortKey');
 
         next.set('sortDir', merged.sortDir);
+
+        if (merged.includeArchived) next.set('includeArchived', 'true');
+        else next.delete('includeArchived');
 
         const pageVal = 'page' in patch ? patch.page! : 1;
         if (pageVal > 1) next.set('page', String(pageVal));
