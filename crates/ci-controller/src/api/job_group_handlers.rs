@@ -33,6 +33,10 @@ pub struct ListParams {
     pub date_to: Option<String>,
     pub stage_name: Option<String>,
     pub exit_code: Option<i32>,
+    /// When true, the UNION-ALL listing variant is used so the response
+    /// includes rows from `*_archive` tables. Defaults to false; the
+    /// fast path query is unchanged when omitted.
+    pub include_archived: Option<bool>,
 }
 
 fn parse_rfc3339(field: &str, value: &str) -> Result<DateTime<Utc>, ApiError> {
@@ -98,25 +102,50 @@ pub async fn list(
         .map(|v| parse_rfc3339("date_to", v))
         .transpose()?;
 
-    let (groups, total) = storage
-        .list_job_groups_paginated(
-            limit,
-            offset,
-            params.state.as_deref(),
-            params.repo_id,
-            params.branch.as_deref(),
-            date_from,
-            date_to,
-            params.stage_name.as_deref(),
-            params.exit_code,
-        )
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    // Caller opts in to archive UNION via ?include_archived=true. The
+    // fast path remains the existing live-only query so unchanged
+    // callers don't take a perf hit.
+    let include_archived = params.include_archived.unwrap_or(false);
+    let (groups, total): (Vec<(ci_core::models::job_group::JobGroup, bool)>, i64) =
+        if include_archived {
+            storage
+                .list_job_groups_paginated_with_archive(
+                    limit,
+                    offset,
+                    params.state.as_deref(),
+                    params.repo_id,
+                    params.branch.as_deref(),
+                    date_from,
+                    date_to,
+                    params.stage_name.as_deref(),
+                    params.exit_code,
+                )
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+        } else {
+            let (gs, t) = storage
+                .list_job_groups_paginated(
+                    limit,
+                    offset,
+                    params.state.as_deref(),
+                    params.repo_id,
+                    params.branch.as_deref(),
+                    date_from,
+                    date_to,
+                    params.stage_name.as_deref(),
+                    params.exit_code,
+                )
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            // Tag every live row with archived=false so the row builder
+            // below can stay generic.
+            (gs.into_iter().map(|g| (g, false)).collect(), t)
+        };
 
     // Build repo_id -> repo_name lookup
     let repo_ids: Vec<Uuid> = groups
         .iter()
-        .filter_map(|g| g.repo_id)
+        .filter_map(|(g, _)| g.repo_id)
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -129,7 +158,7 @@ pub async fn list(
 
     let list: Vec<Value> = groups
         .iter()
-        .map(|g| {
+        .map(|(g, archived)| {
             json!({
                 "id": g.id.to_string(),
                 "repo_id": g.repo_id.map(|r| r.to_string()),
@@ -143,6 +172,7 @@ pub async fn list(
                 "created_at": g.created_at.to_rfc3339(),
                 "updated_at": g.updated_at.to_rfc3339(),
                 "completed_at": g.completed_at.map(|t| t.to_rfc3339()),
+                "archived": *archived,
             })
         })
         .collect();
@@ -161,8 +191,10 @@ pub async fn get_one(
 ) -> Result<Json<Value>, ApiError> {
     let storage = state.storage.as_ref().ok_or(ApiError::StorageUnavailable)?;
 
-    let (group, jobs) = storage
-        .get_job_group_with_jobs(id)
+    // Fall back to the archive tables when the live row isn't found,
+    // so an archived group still GETs 200 instead of 404.
+    let (group, jobs, is_archived) = storage
+        .get_job_group_with_jobs_or_archive(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("Job group not found".into()))?;
@@ -287,8 +319,13 @@ pub async fn get_one(
         )
         .await;
 
-    // Compute per-timer status from in-memory state
-    let (last_activity_at, timers) = {
+    // Compute per-timer status from in-memory state. Archived groups
+    // have no in-memory registry entry by definition (T2 ran past
+    // completion), so skip the lookup and return a null timers block —
+    // the frontend renders the "Archived" badge in place of timers.
+    let (last_activity_at, timers) = if is_archived {
+        (None, json!(null))
+    } else {
         let jg = state.job_group_registry.read().await;
         if let Some(g) = jg.get(&id) {
             let idle_secs = (chrono::Utc::now() - g.last_activity_at)
@@ -374,6 +411,32 @@ pub async fn get_one(
         }
     };
 
+    // Surface archive metadata (archived_at + files_purged_at) so the
+    // detail page can render "Archived on …" / "Files purged on …"
+    // banners.
+    let (archived_at, files_purged_at) = if is_archived {
+        match storage.get_archive_timestamps(id).await {
+            Ok(Some((archived_at, files_purged_at))) => (
+                Some(archived_at.to_rfc3339()),
+                files_purged_at.map(|t| t.to_rfc3339()),
+            ),
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
+    // Children blob — only populated for archived rows, where the live
+    // detail panels won't find their normal source tables.
+    let children = if is_archived {
+        storage
+            .get_archived_children_json(id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+    } else {
+        json!(null)
+    };
+
     // Reservation TTL from Redis
     let reservation_ttl =
         if let (Some(redis), Some(ref wid)) = (&state.redis_store, &group.reserved_worker_id) {
@@ -406,6 +469,10 @@ pub async fn get_one(
         "reservation_expires_in_secs": reservation_ttl,
         "idle_timeout_secs": idle_cfg,
         "stall_timeout_secs": stall_cfg,
+        "archived": is_archived,
+        "archived_at": archived_at,
+        "files_purged_at": files_purged_at,
+        "children": children,
     })))
 }
 
