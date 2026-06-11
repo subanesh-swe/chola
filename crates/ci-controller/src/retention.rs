@@ -1,23 +1,20 @@
-//! Three-tier retention loop (issue #20, T5a).
+//! Three-tier retention loop (issue #20, T5a/T8).
 //!
 //! Replaces the single-rule `max_age_days` task. On every tick the loop
 //! re-resolves t1/t2/t3/max_builds_per_repo via
 //! `state.resolve_setting_u64()` so Settings PUTs take effect on the
-//! next tick without a controller restart — mirrors the reservation
-//! reaper pattern in `main.rs:495-540`.
+//! next tick without a controller restart.
 //!
 //! Tier semantics:
 //! - T1 deletes controller-side per-group scratch dirs and (when fanout
-//!   is enabled in T5b) pushes purge directives to owning workers.
+//!   is enabled) pushes purge directives to owning workers.
 //! - T2 archives terminal groups via `storage::archive_groups_batch`.
 //! - T3 hard-deletes from `*_archive` via `storage::delete_archive_batch`.
-//! - `max_builds_per_repo` runs after T3 and pushes surplus groups
-//!   through T2 (archive, not delete) so the operator still has 1×
-//!   `t3` window to recover.
+//! - `max_builds_per_repo` runs after T2 and pushes surplus groups
+//!   through T2 (archive, not delete).
 //!
-//! `cleanup_interval_secs` is read once at startup. Changing the value
-//! mid-run logs a warning but does not retune the interval — that would
-//! require restarting the `tokio::time::interval`.
+//! `run_once` is the core sweep logic, called by both the periodic loop
+//! and the `ForceRetentionTick` admin RPC.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,21 +25,46 @@ use tracing::{info, warn};
 use crate::state::ControllerState;
 use ci_core::models::config::RetentionConfig;
 
+/// Options for a single retention sweep (used by `run_once`).
+pub struct RunOnceOpts {
+    /// Run T1 (file purge). If all three are false, all tiers run.
+    pub run_t1: bool,
+    /// Run T2 (archive). If all three are false, all tiers run.
+    pub run_t2: bool,
+    /// Run T3 (delete archive). If all three are false, all tiers run.
+    pub run_t3: bool,
+}
+
+impl RunOnceOpts {
+    /// Run all three tiers.
+    pub fn all() -> Self {
+        Self {
+            run_t1: true,
+            run_t2: true,
+            run_t3: true,
+        }
+    }
+}
+
+/// Counts returned by a single retention sweep.
+pub struct RunOnceResult {
+    pub t1_purged: i64,
+    pub t2_archived: i64,
+    pub t3_deleted: i64,
+}
+
 /// Spawn the retention background loop.
 ///
 /// `fallback` is the YAML default; per-tick values come from
-/// `state.resolve_setting_u64()`. The `RetentionConfig` value is NOT
-/// stored inside the spawned task — only `fallback` is captured by move
-/// for use as the `resolve_setting_*` default argument.
+/// `state.resolve_setting_u64()`.
 pub fn spawn_cleanup_task(
     state: Arc<ControllerState>,
     fallback: RetentionConfig,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Read interval once at startup. Changing this value at runtime
-        // is detected each tick and logged; the actual interval is fixed
-        // until the next controller restart.
+        // Read interval once at startup. Runtime changes are detected and
+        // logged; the actual interval is fixed until controller restart.
         let initial_interval_secs = state
             .resolve_setting_u64(
                 "retention.cleanup_interval_secs",
@@ -69,7 +91,7 @@ pub fn spawn_cleanup_task(
                     break;
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = run_tick(&state, &fallback, initial_interval_secs).await {
+                    if let Err(e) = tick_once(&state, &fallback, initial_interval_secs).await {
                         warn!(error = %e, "Retention cleanup tick failed");
                     }
                 }
@@ -78,17 +100,84 @@ pub fn spawn_cleanup_task(
     })
 }
 
-async fn run_tick(
-    state: &ControllerState,
+/// Single-tick wrapper: re-validates settings and calls `run_once(all)`.
+async fn tick_once(
+    state: &Arc<ControllerState>,
     fallback: &RetentionConfig,
     initial_interval_secs: u64,
 ) -> anyhow::Result<()> {
+    // Validate tier ordering before running anything.
+    let t1 = state
+        .resolve_setting_u64(
+            "retention.t1_purge_files_after_days",
+            fallback.t1_purge_files_after_days as u64,
+        )
+        .await as i32;
+    let t2 = state
+        .resolve_setting_u64(
+            "retention.t2_archive_after_days",
+            fallback.t2_archive_after_days as u64,
+        )
+        .await as i32;
+    let t3 = state
+        .resolve_setting_u64(
+            "retention.t3_delete_archive_after_days",
+            fallback.t3_delete_archive_after_days as u64,
+        )
+        .await as i32;
+
+    let live_interval_secs = state
+        .resolve_setting_u64(
+            "retention.cleanup_interval_secs",
+            fallback.cleanup_interval_secs,
+        )
+        .await
+        .max(60);
+    if live_interval_secs != initial_interval_secs {
+        warn!(
+            startup = initial_interval_secs,
+            current = live_interval_secs,
+            "retention.cleanup_interval_secs changed; restart required to take effect"
+        );
+    }
+
+    if t1 <= 0 || t2 <= 0 || t3 <= 0 {
+        warn!(t1, t2, t3, "retention tiers must be > 0; skipping tick");
+        return Ok(());
+    }
+    if t1 >= t2 || t2 >= t3 {
+        warn!(
+            t1,
+            t2, t3, "retention tier ordering invalid (need t1 < t2 < t3); skipping tick"
+        );
+        return Ok(());
+    }
+
+    run_once(state, fallback, RunOnceOpts::all()).await?;
+    Ok(())
+}
+
+/// Run one retention sweep with the given opts.
+///
+/// This is the core logic used by both the periodic loop (via `tick_once`)
+/// and the `ForceRetentionTick` admin RPC. The `fallback` is the YAML
+/// default; per-call values are re-resolved from the DB via
+/// `state.resolve_setting_u64()`.
+///
+/// When all three `run_*` fields are false, all three tiers are run
+/// (equivalent to passing `RunOnceOpts::all()`).
+pub async fn run_once(
+    state: &Arc<ControllerState>,
+    fallback: &RetentionConfig,
+    opts: RunOnceOpts,
+) -> anyhow::Result<RunOnceResult> {
     let storage = state
         .storage
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("No storage"))?;
 
-    // Re-resolve every knob from DB-with-fallback.
+    let run_all = !opts.run_t1 && !opts.run_t2 && !opts.run_t3;
+
     let t1 = state
         .resolve_setting_u64(
             "retention.t1_purge_files_after_days",
@@ -120,70 +209,42 @@ async fn run_tick(
         )
         .await;
 
-    // Detect interval drift: changing this value at runtime won't retune
-    // the tokio interval — operators need to restart the controller.
-    let live_interval_secs = state
-        .resolve_setting_u64(
-            "retention.cleanup_interval_secs",
-            fallback.cleanup_interval_secs,
-        )
-        .await
-        .max(60);
-    if live_interval_secs != initial_interval_secs {
-        warn!(
-            startup = initial_interval_secs,
-            current = live_interval_secs,
-            "retention.cleanup_interval_secs changed at runtime; restart required to take effect"
-        );
+    let mut result = RunOnceResult {
+        t1_purged: 0,
+        t2_archived: 0,
+        t3_deleted: 0,
+    };
+
+    if opts.run_t1 || run_all {
+        result.t1_purged = run_t1(state, storage, t1, enable_worker_fanout).await? as i64;
+    }
+    if opts.run_t2 || run_all {
+        result.t2_archived = run_t2(storage, t2, max_per_repo).await? as i64;
+    }
+    if opts.run_t3 || run_all {
+        result.t3_deleted = run_t3(storage, t3).await? as i64;
     }
 
-    // Validate tier ordering. Bail without touching anything if invalid.
-    if t1 <= 0 || t2 <= 0 || t3 <= 0 {
-        warn!(t1, t2, t3, "retention tiers must be > 0; skipping tick");
-        return Ok(());
-    }
-    if t1 >= t2 || t2 >= t3 {
-        warn!(
-            t1,
-            t2, t3, "retention tier ordering invalid (need t1 < t2 < t3); skipping tick"
-        );
-        return Ok(());
-    }
-
-    // Run T1 -> T2 -> T3 -> max-per-repo cap.
-    run_t1(state, storage, t1, enable_worker_fanout).await?;
-    run_t2(state, storage, t2).await?;
-    run_t3(state, storage, t3).await?;
-    run_max_per_repo(state, storage, max_per_repo).await?;
-
-    Ok(())
+    Ok(result)
 }
 
 /// T1 — delete controller-side per-group scratch dirs for terminal
 /// groups whose `completed_at` is older than `t1_days`.
 ///
-/// When `enable_worker_fanout=false` (default until all workers are
-/// upgraded), the helper stamps `files_purged_at` immediately so the
-/// controller side is self-consistent.
+/// When `enable_worker_fanout=false`, stamps `files_purged_at` immediately.
+/// When `enable_worker_fanout=true`, enqueues per-worker Redis directives
+/// and stamps only for groups with no live workers.
 ///
-/// When `enable_worker_fanout=true` (T5b path), for each group:
-///   1. Run controller-side delete.
-///   2. Look up the set of worker_ids that ran any stage in the group.
-///   3. Filter to "live" workers (heartbeat newer than timeout).
-///   4. If no live workers remain, stamp `files_purged_at` immediately
-///      (offline/dead workers cannot ack — treated as unreachable).
-///   5. Otherwise enqueue a per-worker purge via Redis and defer the
-///      stamp until every live worker has acked (handled in
-///      `grpc_server::report_job_status`).
+/// Returns the number of groups stamped.
 async fn run_t1(
     state: &ControllerState,
     storage: &crate::storage::Storage,
     t1_days: i32,
     enable_worker_fanout: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u64> {
     let candidates = storage.find_groups_for_t1(t1_days, 100).await?;
     if candidates.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
 
     // Delete controller-side scratch dirs (best-effort).
@@ -211,7 +272,7 @@ async fn run_t1(
         if stamped > 0 {
             info!(count = stamped, "T1: stamped files_purged_at");
         }
-        return Ok(());
+        return Ok(stamped);
     }
 
     // Fanout path: enqueue per-worker directives via Redis.
@@ -228,7 +289,7 @@ async fn run_t1(
             if stamped > 0 {
                 info!(count = stamped, "T1: stamped files_purged_at (no redis)");
             }
-            return Ok(());
+            return Ok(stamped);
         }
     };
 
@@ -256,8 +317,9 @@ async fn run_t1(
         }
     }
 
+    let mut stamped = 0u64;
     if !stamp_immediately.is_empty() {
-        let stamped = storage
+        stamped = storage
             .mark_files_purged(&stamp_immediately, chrono::Utc::now())
             .await?;
         if stamped > 0 {
@@ -267,15 +329,12 @@ async fn run_t1(
             );
         }
     }
-
-    Ok(())
+    Ok(stamped)
 }
 
 /// Return the subset of `owners` whose last heartbeat is within
-/// `heartbeat_timeout_secs`. Workers absent from the registry or stale
-/// past the timeout are treated as unreachable (caller stamps
-/// `files_purged_at` immediately without waiting for an ack that will
-/// never come).
+/// `heartbeat_timeout_secs`. Workers absent from the registry or past the
+/// timeout are treated as unreachable.
 async fn filter_live_workers(
     state: &ControllerState,
     owners: &[String],
@@ -296,57 +355,44 @@ async fn filter_live_workers(
         .collect()
 }
 
-/// T2 — archive terminal groups whose `completed_at` is older than `t2_days`.
+/// T2 — archive terminal groups older than `t2_days` and enforce per-repo cap.
+/// Returns total groups archived.
 async fn run_t2(
-    _state: &ControllerState,
     storage: &crate::storage::Storage,
     t2_days: i32,
-) -> anyhow::Result<()> {
+    max_per_repo: i32,
+) -> anyhow::Result<u64> {
     let candidates = storage.find_groups_for_t2(t2_days, 100).await?;
-    if candidates.is_empty() {
-        return Ok(());
+    let mut total_archived = 0u64;
+    if !candidates.is_empty() {
+        total_archived += storage.archive_groups_batch(&candidates).await?;
+        info!(count = total_archived, "T2: archived");
     }
-    let archived = storage.archive_groups_batch(&candidates).await?;
-    info!(count = archived, "T2: archived");
-    Ok(())
+
+    if max_per_repo > 0 {
+        let excess = storage.find_excess_groups_per_repo(max_per_repo).await?;
+        if !excess.is_empty() {
+            for batch in excess.chunks(100) {
+                let archived = storage.archive_groups_batch(batch).await?;
+                if archived > 0 {
+                    total_archived += archived;
+                    info!(count = archived, "max_builds_per_repo: archived surplus");
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+    Ok(total_archived)
 }
 
 /// T3 — hard-delete archive rows whose `archived_at` is older than `t3_days`.
-async fn run_t3(
-    _state: &ControllerState,
-    storage: &crate::storage::Storage,
-    t3_days: i32,
-) -> anyhow::Result<()> {
+/// Returns groups deleted.
+async fn run_t3(storage: &crate::storage::Storage, t3_days: i32) -> anyhow::Result<u64> {
     let candidates = storage.find_archive_for_t3(t3_days, 100).await?;
     if candidates.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let deleted = storage.delete_archive_batch(&candidates).await?;
     info!(count = deleted, "T3: hard-deleted archive");
-    Ok(())
-}
-
-/// `max_builds_per_repo` cap — push surplus groups through T2 (archive,
-/// not delete). The archive copy still survives `t3` days, so operators
-/// can recover before the row is gone for good.
-async fn run_max_per_repo(
-    _state: &ControllerState,
-    storage: &crate::storage::Storage,
-    max_per_repo: i32,
-) -> anyhow::Result<()> {
-    if max_per_repo <= 0 {
-        return Ok(());
-    }
-    let excess = storage.find_excess_groups_per_repo(max_per_repo).await?;
-    if excess.is_empty() {
-        return Ok(());
-    }
-    for batch in excess.chunks(100) {
-        let archived = storage.archive_groups_batch(batch).await?;
-        if archived > 0 {
-            info!(count = archived, "max_builds_per_repo: archived surplus");
-        }
-        tokio::task::yield_now().await;
-    }
-    Ok(())
+    Ok(deleted)
 }
