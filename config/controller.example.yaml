@@ -47,9 +47,12 @@ auth:
   # encryption_key: "change-me-32-char-secret-key-here"
 
 retention:
-  max_age_days: 90
-  max_builds_per_repo: 500
+  max_builds_per_repo: 5000
+  t1_purge_files_after_days: 7
+  t2_archive_after_days: 30
+  t3_delete_archive_after_days: 365
   cleanup_interval_secs: 3600
+  enable_worker_fanout: false
 
 # Path resolution: $CHOLA_HOME > $XDG_DATA_HOME/chola > ~/.local/share/chola
 # For production systemd: set Environment=CHOLA_HOME=/var/lib/chola
