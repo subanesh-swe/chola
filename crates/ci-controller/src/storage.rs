@@ -3298,6 +3298,258 @@ impl Storage {
         Ok(result.rows_affected())
     }
 
+    // ========================================================================
+    // Retention — three-tier lifecycle (issue #20)
+    //
+    // T1 = on-disk file purge (driven by `find_groups_for_t1` +
+    //      `mark_files_purged` once every owning worker has acked).
+    // T2 = row archive: live tables -> *_archive (driven by
+    //      `find_groups_for_t2` + `archive_groups_batch`).
+    // T3 = hard delete of archive rows (driven by `find_archive_for_t3` +
+    //      `delete_archive_batch`).
+    //
+    // `workers_for_group` powers the T1 fan-out and MUST keep working
+    // after T2 (i.e. fall through to `jobs_archive` when the live row
+    // has been moved). `unarchive_groups_batch` powers the operator
+    // rollback runbook (§6i of retention-implementation-plan.md).
+    // ========================================================================
+
+    /// T1 candidates: terminal groups whose `completed_at` is older than
+    /// `t1_days`, that have NOT yet been file-purged.
+    ///
+    /// Returns a batch of at most `limit` group ids ordered by
+    /// `completed_at` ascending (oldest first), so we drain the backlog
+    /// deterministically across ticks. The retention loop drives one
+    /// tier per tick and re-queries on the next tick.
+    pub async fn find_groups_for_t1(&self, t1_days: i32, limit: i64) -> anyhow::Result<Vec<Uuid>> {
+        let q = format!(
+            "SELECT id FROM {s}.job_groups \
+             WHERE state IN ('success', 'failed', 'cancelled', 'expired') \
+               AND completed_at IS NOT NULL \
+               AND completed_at < NOW() - make_interval(days => $1) \
+               AND files_purged_at IS NULL \
+             ORDER BY completed_at \
+             LIMIT $2",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(t1_days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
+    }
+
+    /// T2 candidates: terminal groups whose `completed_at` is older than
+    /// `t2_days`.
+    ///
+    /// Deliberately does NOT filter on `files_purged_at` — T2 archives
+    /// regardless of whether the on-disk purge has succeeded yet. The
+    /// archive copy preserves `files_purged_at` so a post-archive
+    /// observer can still distinguish "files gone" from "files maybe
+    /// still around." Returns at most `limit` ids, oldest first.
+    pub async fn find_groups_for_t2(&self, t2_days: i32, limit: i64) -> anyhow::Result<Vec<Uuid>> {
+        let q = format!(
+            "SELECT id FROM {s}.job_groups \
+             WHERE state IN ('success', 'failed', 'cancelled', 'expired') \
+               AND completed_at IS NOT NULL \
+               AND completed_at < NOW() - make_interval(days => $1) \
+             ORDER BY completed_at \
+             LIMIT $2",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(t2_days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
+    }
+
+    /// T3 candidates: archived groups whose `archived_at` is older than
+    /// `t3_days`. Reads from `job_groups_archive` only — live groups are
+    /// untouched by T3. Returns at most `limit` ids, oldest first.
+    pub async fn find_archive_for_t3(&self, t3_days: i32, limit: i64) -> anyhow::Result<Vec<Uuid>> {
+        let q = format!(
+            "SELECT id FROM {s}.job_groups_archive \
+             WHERE archived_at < NOW() - make_interval(days => $1) \
+             ORDER BY archived_at \
+             LIMIT $2",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q)
+            .bind(t3_days)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
+    }
+
+    /// Move a batch of groups from live -> archive in one transaction.
+    /// Thin wrapper over `chola.archive_group_ids` (migration 033) which
+    /// handles cascade ordering (children inserted before parent, deleted
+    /// after) so live FKs are satisfied throughout.
+    ///
+    /// Returns the number of `job_groups` rows actually archived, which
+    /// may be smaller than `group_ids.len()` if some ids did not exist
+    /// in the live table.
+    pub async fn archive_groups_batch(&self, group_ids: &[Uuid]) -> anyhow::Result<u64> {
+        if group_ids.is_empty() {
+            return Ok(0);
+        }
+        let q = format!(
+            "SELECT {s}.archive_group_ids($1) AS affected",
+            s = self.schema
+        );
+        let row = sqlx::query(&q)
+            .bind(group_ids)
+            .fetch_one(&self.pool)
+            .await?;
+        let affected: i64 = row.get("affected");
+        Ok(affected.max(0) as u64)
+    }
+
+    /// Move a batch of groups from archive -> live. Thin wrapper over
+    /// `chola.unarchive_group_ids` (migration 033). Used by the
+    /// retention rollback runbook (§6i) and by these integration tests
+    /// to verify the round-trip is symmetric.
+    ///
+    /// Returns the number of `job_groups_archive` rows actually
+    /// unarchived.
+    pub async fn unarchive_groups_batch(&self, group_ids: &[Uuid]) -> anyhow::Result<u64> {
+        if group_ids.is_empty() {
+            return Ok(0);
+        }
+        let q = format!(
+            "SELECT {s}.unarchive_group_ids($1) AS affected",
+            s = self.schema
+        );
+        let row = sqlx::query(&q)
+            .bind(group_ids)
+            .fetch_one(&self.pool)
+            .await?;
+        let affected: i64 = row.get("affected");
+        Ok(affected.max(0) as u64)
+    }
+
+    /// T3 hard-delete: remove archive rows for `group_ids` from all six
+    /// `*_archive` tables in a single transaction. Children are deleted
+    /// before the parent for clarity and future-proofing, even though
+    /// the archive tables intentionally have no FKs.
+    ///
+    /// Returns the number of `job_groups_archive` rows removed (the
+    /// "canonical" count callers care about).
+    pub async fn delete_archive_batch(&self, group_ids: &[Uuid]) -> anyhow::Result<u64> {
+        if group_ids.is_empty() {
+            return Ok(0);
+        }
+        let s = &self.schema;
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(&format!(
+            "DELETE FROM {s}.approval_gates_archive WHERE job_group_id = ANY($1)"
+        ))
+        .bind(group_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            "DELETE FROM {s}.test_results_archive WHERE job_group_id = ANY($1)"
+        ))
+        .bind(group_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            "DELETE FROM {s}.artifacts_archive WHERE job_group_id = ANY($1)"
+        ))
+        .bind(group_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            "DELETE FROM {s}.worker_reservations_archive WHERE job_group_id = ANY($1)"
+        ))
+        .bind(group_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            "DELETE FROM {s}.jobs_archive WHERE job_group_id = ANY($1)"
+        ))
+        .bind(group_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        let result = sqlx::query(&format!(
+            "DELETE FROM {s}.job_groups_archive WHERE id = ANY($1)"
+        ))
+        .bind(group_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Stamp `files_purged_at` on a batch of LIVE groups. Used by the
+    /// controller once the master-side T1 deletion has run AND every
+    /// owning worker has acked (or is gone past heartbeat timeout).
+    ///
+    /// Only rows where `files_purged_at IS NULL` are touched, so the
+    /// call is idempotent across retries. Returns rows affected.
+    pub async fn mark_files_purged(
+        &self,
+        group_ids: &[Uuid],
+        purged_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<u64> {
+        if group_ids.is_empty() {
+            return Ok(0);
+        }
+        let q = format!(
+            "UPDATE {s}.job_groups \
+             SET files_purged_at = $2, updated_at = NOW() \
+             WHERE id = ANY($1) AND files_purged_at IS NULL",
+            s = self.schema
+        );
+        let result = sqlx::query(&q)
+            .bind(group_ids)
+            .bind(purged_at)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Distinct worker ids that ran any stage in `group_id`. Must keep
+    /// working AFTER T2 has run — the controller may restart between
+    /// T1 fan-out and worker ack, then need to re-derive the worker
+    /// list for a group whose live `jobs` rows have since been
+    /// archived.
+    ///
+    /// UNIONs live + archive and filters out empty worker_ids.
+    /// Returns hyphenated worker_id strings, deduped.
+    pub async fn workers_for_group(&self, group_id: Uuid) -> anyhow::Result<Vec<String>> {
+        let q = format!(
+            "WITH live AS ( \
+                SELECT DISTINCT worker_id FROM {s}.jobs \
+                WHERE job_group_id = $1 AND worker_id IS NOT NULL \
+             ), arch AS ( \
+                SELECT DISTINCT worker_id FROM {s}.jobs_archive \
+                WHERE job_group_id = $1 AND worker_id IS NOT NULL \
+             ) \
+             SELECT worker_id FROM live \
+             UNION \
+             SELECT worker_id FROM arch",
+            s = self.schema
+        );
+        let rows = sqlx::query(&q).bind(group_id).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| r.get::<String, _>("worker_id"))
+            .filter(|w| !w.is_empty())
+            .collect())
+    }
+
     /// List recent resource history entries for a stage.
     pub async fn list_resource_history(
         &self,
@@ -4463,5 +4715,389 @@ mod sql_split_tests {
     fn ignores_semicolons_in_block_comments() {
         let parts = split_sql_statements("/* a; b; */ SELECT 1; /* c; */ SELECT 2;");
         assert_eq!(parts.len(), 2);
+    }
+}
+// ============================================================================
+// Retention storage integration tests (issue #20, T3)
+// ============================================================================
+//
+// These hit a real Postgres at
+// postgres://chola_app:chola_app_secret@localhost:5432/choladb
+// and assume migration 033_retention_archive.sql is applied (i.e. the
+// chola.archive_group_ids / chola.unarchive_group_ids functions and the
+// six *_archive tables exist, plus files_purged_at on job_groups).
+//
+// They are gated behind the CHOLA_TEST_DB env var so `cargo test` on a
+// machine without the dev DB silently skips them.
+//
+// Each test uses fresh Uuids per run and cleans up rows it inserted so
+// running twice in a row stays green.
+
+#[cfg(test)]
+mod retention_storage_tests {
+    use super::Storage;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    const TEST_DB_URL: &str = "postgres://chola_app:chola_app_secret@localhost:5432/choladb";
+
+    /// Returns Some(Storage) if CHOLA_TEST_DB is set and the connection
+    /// works; None otherwise (in which case the caller should `return`
+    /// to skip).
+    async fn maybe_storage() -> Option<Storage> {
+        if std::env::var("CHOLA_TEST_DB").is_err() {
+            return None;
+        }
+        match Storage::new(TEST_DB_URL, 4, "chola").await {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("retention_storage_tests: skipping (DB unreachable: {e})");
+                None
+            }
+        }
+    }
+
+    /// Insert a job_groups row with a terminal state and a controllable
+    /// `completed_at`. `repo_id` is NULL (migration 022 made the column
+    /// nullable) so we don't need to seed `chola.repos`.
+    async fn seed_group(
+        s: &Storage,
+        gid: Uuid,
+        state: &str,
+        completed_at: chrono::DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO chola.job_groups \
+             (id, repo_id, branch, commit_sha, trigger_source, state, \
+              created_at, updated_at, completed_at) \
+             VALUES ($1, NULL, 'test', 'deadbeef', 'test', $2, \
+                     $3, $3, $3)",
+        )
+        .bind(gid)
+        .bind(state)
+        .bind(completed_at)
+        .execute(s.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn seed_job(
+        s: &Storage,
+        job_id: Uuid,
+        gid: Uuid,
+        worker_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO chola.jobs \
+             (id, job_group_id, stage_name, command, worker_id, state, \
+              created_at, updated_at) \
+             VALUES ($1, $2, 'unit', 'echo hi', $3, 'success', \
+                     NOW(), NOW())",
+        )
+        .bind(job_id)
+        .bind(gid)
+        .bind(worker_id)
+        .execute(s.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Remove every trace of a group from live + archive tables. Safe
+    /// to call against ids the test never inserted (DELETE … WHERE id =
+    /// $1 returns 0 rows).
+    async fn cleanup_group(s: &Storage, gid: Uuid) -> anyhow::Result<()> {
+        // Children first in both worlds.
+        for tbl in [
+            "approval_gates",
+            "test_results",
+            "artifacts",
+            "worker_reservations",
+            "jobs",
+        ] {
+            let q = format!("DELETE FROM chola.{tbl} WHERE job_group_id = $1");
+            sqlx::query(&q).bind(gid).execute(s.pool()).await?;
+            let qa = format!("DELETE FROM chola.{tbl}_archive WHERE job_group_id = $1");
+            sqlx::query(&qa).bind(gid).execute(s.pool()).await?;
+        }
+        sqlx::query("DELETE FROM chola.job_groups WHERE id = $1")
+            .bind(gid)
+            .execute(s.pool())
+            .await?;
+        sqlx::query("DELETE FROM chola.job_groups_archive WHERE id = $1")
+            .bind(gid)
+            .execute(s.pool())
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn t1_finds_terminal_group_older_than_threshold() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(10))
+            .await
+            .expect("seed");
+
+        let found = s.find_groups_for_t1(7, 1000).await.expect("t1");
+        assert!(
+            found.contains(&gid),
+            "expected {gid} in t1 result, got {found:?}"
+        );
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn t1_skips_groups_with_files_already_purged() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(10))
+            .await
+            .expect("seed");
+        // Pre-mark as purged.
+        s.mark_files_purged(&[gid], Utc::now())
+            .await
+            .expect("mark purged");
+
+        let found = s.find_groups_for_t1(7, 1000).await.expect("t1");
+        assert!(
+            !found.contains(&gid),
+            "expected {gid} NOT in t1 result (already purged), got {found:?}"
+        );
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn t1_skips_recent_groups() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+
+        // Completed 1h ago — way below any reasonable t1.
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::hours(1))
+            .await
+            .expect("seed");
+
+        let found = s.find_groups_for_t1(7, 1000).await.expect("t1");
+        assert!(
+            !found.contains(&gid),
+            "expected {gid} NOT in t1 result (too recent), got {found:?}"
+        );
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn archive_and_unarchive_roundtrip() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(40))
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some("worker-roundtrip"))
+            .await
+            .expect("seed job");
+
+        // Archive.
+        let archived = s.archive_groups_batch(&[gid]).await.expect("archive");
+        assert_eq!(archived, 1, "expected 1 group archived");
+
+        // Live tables empty for this id.
+        let live_groups: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups WHERE id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count live");
+        assert_eq!(live_groups, 0);
+        let live_jobs: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.jobs WHERE job_group_id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count live jobs");
+        assert_eq!(live_jobs, 0);
+
+        // Archive tables populated.
+        let arch_groups: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups_archive WHERE id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count arch");
+        assert_eq!(arch_groups, 1);
+        let arch_jobs: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.jobs_archive WHERE job_group_id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count arch jobs");
+        assert_eq!(arch_jobs, 1);
+
+        // Unarchive — round-trip back to live.
+        let unarchived = s.unarchive_groups_batch(&[gid]).await.expect("unarchive");
+        assert_eq!(unarchived, 1, "expected 1 group unarchived");
+
+        let live_groups_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups WHERE id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count live after");
+        assert_eq!(live_groups_after, 1);
+        let arch_groups_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups_archive WHERE id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count arch after");
+        assert_eq!(arch_groups_after, 0);
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn delete_archive_removes_all_six_tables() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(40))
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some("worker-del"))
+            .await
+            .expect("seed job");
+
+        // Push to archive.
+        s.archive_groups_batch(&[gid]).await.expect("archive");
+
+        // Hard delete.
+        let deleted = s.delete_archive_batch(&[gid]).await.expect("delete");
+        assert_eq!(deleted, 1, "expected 1 job_groups_archive row deleted");
+
+        // All six archive tables empty for this id.
+        for tbl in [
+            "job_groups_archive",
+            "jobs_archive",
+            "worker_reservations_archive",
+            "artifacts_archive",
+            "test_results_archive",
+            "approval_gates_archive",
+        ] {
+            let col = if tbl == "job_groups_archive" {
+                "id"
+            } else {
+                "job_group_id"
+            };
+            let q = format!("SELECT COUNT(*) FROM chola.{tbl} WHERE {col} = $1");
+            let n: i64 = sqlx::query_scalar(&q)
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("count");
+            assert_eq!(n, 0, "expected 0 rows in {tbl} after delete");
+        }
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn mark_files_purged_only_sets_null_rows() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid_unpurged = Uuid::new_v4();
+        let gid_already = Uuid::new_v4();
+
+        seed_group(
+            &s,
+            gid_unpurged,
+            "success",
+            Utc::now() - chrono::Duration::days(10),
+        )
+        .await
+        .expect("seed unpurged");
+        seed_group(
+            &s,
+            gid_already,
+            "success",
+            Utc::now() - chrono::Duration::days(10),
+        )
+        .await
+        .expect("seed already");
+
+        // Pre-stamp one of them.
+        s.mark_files_purged(&[gid_already], Utc::now())
+            .await
+            .expect("pre-stamp");
+
+        let affected = s
+            .mark_files_purged(&[gid_unpurged, gid_already], Utc::now())
+            .await
+            .expect("mark batch");
+        assert_eq!(affected, 1, "only the unpurged row should flip");
+
+        // Confirm both are now purged.
+        for gid in [gid_unpurged, gid_already] {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM chola.job_groups \
+                 WHERE id = $1 AND files_purged_at IS NOT NULL",
+            )
+            .bind(gid)
+            .fetch_one(s.pool())
+            .await
+            .expect("count");
+            assert_eq!(n, 1, "{gid} should be purged");
+        }
+
+        cleanup_group(&s, gid_unpurged).await.expect("cleanup 1");
+        cleanup_group(&s, gid_already).await.expect("cleanup 2");
+    }
+
+    #[tokio::test]
+    async fn workers_for_group_reads_live_and_archive() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let worker = "worker-X-retention-test";
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(40))
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some(worker))
+            .await
+            .expect("seed job");
+
+        // Live path.
+        let live = s.workers_for_group(gid).await.expect("workers live");
+        assert_eq!(live, vec![worker.to_string()]);
+
+        // Archive path: T2 moves the job row out of `jobs` into `jobs_archive`.
+        s.archive_groups_batch(&[gid]).await.expect("archive");
+        let archived = s.workers_for_group(gid).await.expect("workers archive");
+        assert_eq!(
+            archived,
+            vec![worker.to_string()],
+            "must still see worker via jobs_archive fallback after T2"
+        );
+
+        cleanup_group(&s, gid).await.expect("cleanup");
     }
 }
