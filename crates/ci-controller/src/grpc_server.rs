@@ -10,13 +10,16 @@ use ci_core::models::job::{Job, JobType};
 use ci_core::proto::orchestrator::{
     orchestrator_server::{Orchestrator, OrchestratorServer},
     AcquireLockRequest, AcquireLockResponse, CancelDirective, CancelJobRequest, CancelJobResponse,
-    GetJobGroupStatusRequest, GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse,
-    HeartbeatAck, HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest,
-    LogAck, LogChunk, LogResumeDirective, PurgeGroupFilesDirective, ReconnectRequest,
-    ReconnectResponse, RegisterRequest, RegisterResponse, ReleaseLockRequest, ReleaseLockResponse,
+    ForceRetentionTickRequest, ForceRetentionTickResponse, GetJobGroupStatusRequest,
+    GetJobGroupStatusResponse, GetJobStatusRequest, GetJobStatusResponse, HeartbeatAck,
+    HeartbeatMessage, JobAssignment, JobStatusAck, JobStatusUpdate, JobStreamRequest, LogAck,
+    LogChunk, LogResumeDirective, PurgeGroupFilesDirective, ReconnectRequest, ReconnectResponse,
+    RegisterRequest, RegisterResponse, ReleaseLockRequest, ReleaseLockResponse,
     ReserveWorkerRequest, ReserveWorkerResponse, ScriptLockConfig, SubmitJobRequest,
     SubmitJobResponse, SubmitStageRequest, SubmitStageResponse, WatchJobLogsRequest,
 };
+
+use crate::retention::{run_once, RunOnceOpts};
 
 use crate::dag;
 use crate::reservation::ReservationManager;
@@ -2937,6 +2940,49 @@ impl Orchestrator for OrchestratorService {
             .map_err(|e| Status::internal(format!("Redis error: {}", e)))?;
 
         Ok(Response::new(ReleaseLockResponse { released }))
+    }
+
+    /// Admin RPC: force an immediate retention sweep on demand.
+    ///
+    /// Accepts any valid bearer token (the auth interceptor already rejects
+    /// anonymous callers). When all three run_* fields are false, all three
+    /// tiers are executed.
+    async fn force_retention_tick(
+        &self,
+        request: Request<ForceRetentionTickRequest>,
+    ) -> Result<Response<ForceRetentionTickResponse>, Status> {
+        let req = request.into_inner();
+
+        // Require storage — meaningless without a DB.
+        if self.state.storage.is_none() {
+            return Err(Status::unavailable("Storage not configured"));
+        }
+
+        // Use default config as the fallback; DB overrides win via resolve_setting_u64.
+        let fallback = ci_core::models::config::RetentionConfig::default();
+
+        let opts = RunOnceOpts {
+            run_t1: req.run_t1,
+            run_t2: req.run_t2,
+            run_t3: req.run_t3,
+        };
+
+        let result = run_once(&self.state, &fallback, opts)
+            .await
+            .map_err(|e| Status::internal(format!("Retention sweep failed: {e}")))?;
+
+        let message = format!(
+            "T1 purged={} T2 archived={} T3 deleted={}",
+            result.t1_purged, result.t2_archived, result.t3_deleted
+        );
+        info!("{}", message);
+
+        Ok(Response::new(ForceRetentionTickResponse {
+            t1_purged: result.t1_purged,
+            t2_archived: result.t2_archived,
+            t3_deleted: result.t3_deleted,
+            message,
+        }))
     }
 }
 

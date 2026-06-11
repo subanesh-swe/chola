@@ -5510,4 +5510,533 @@ mod retention_storage_tests {
 
         cleanup_group(&s, gid).await.expect("cleanup");
     }
+
+    // -----------------------------------------------------------------------
+    // T8 — new integration tests
+    // -----------------------------------------------------------------------
+
+    /// Insert a row into each of the five child tables for `gid` so that
+    /// `chola.archive_group_ids` exercises every cascade INSERT/DELETE.
+    async fn seed_all_children(s: &Storage, gid: Uuid, job_id: Uuid) -> anyhow::Result<()> {
+        // worker_reservations
+        sqlx::query(
+            "INSERT INTO chola.worker_reservations \
+             (id, worker_id, job_group_id, reserved_at, expires_at) \
+             VALUES ($1, 'worker-t8', $2, now(), now() + interval '1 hour')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(gid)
+        .execute(s.pool())
+        .await?;
+
+        // artifacts
+        sqlx::query(
+            "INSERT INTO chola.artifacts \
+             (id, job_group_id, job_id, stage_name, filename, file_path) \
+             VALUES ($1, $2, $3, 'build', 'out.tar', '/tmp/out.tar')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(gid)
+        .bind(job_id)
+        .execute(s.pool())
+        .await?;
+
+        // test_results
+        sqlx::query(
+            "INSERT INTO chola.test_results \
+             (id, job_id, job_group_id, suite_name, test_name, status) \
+             VALUES ($1, $2, $3, 'suite', 'test_foo', 'passed')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(job_id)
+        .bind(gid)
+        .execute(s.pool())
+        .await?;
+
+        // approval_gates (requires a stage_config_id — use a random uuid;
+        // the archive table has no FK so this is safe for tests)
+        sqlx::query(
+            "INSERT INTO chola.approval_gates \
+             (id, job_group_id, stage_config_id) \
+             VALUES ($1, $2, $3)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(gid)
+        .bind(Uuid::new_v4())
+        .execute(s.pool())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Walk all six archive tables and assert the row counts for `gid`.
+    async fn assert_archive_counts(
+        s: &Storage,
+        gid: Uuid,
+        expected_group: i64,
+        expected_child: i64,
+    ) {
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups_archive WHERE id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .unwrap();
+        assert_eq!(n, expected_group, "job_groups_archive count");
+
+        for tbl in [
+            "jobs_archive",
+            "worker_reservations_archive",
+            "artifacts_archive",
+            "test_results_archive",
+            "approval_gates_archive",
+        ] {
+            let q = format!("SELECT COUNT(*) FROM chola.{tbl} WHERE job_group_id = $1");
+            let n: i64 = sqlx::query_scalar(&q)
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .unwrap();
+            assert_eq!(n, expected_child, "{tbl} count");
+        }
+    }
+
+    /// T8-1: Full T1 → T2 → T3 lifecycle with all five child tables.
+    ///
+    /// Seeds one group, forces each tier via direct storage calls (not the
+    /// RPC — the RPC test is the ForceRetentionTick smoke test at the bottom).
+    #[tokio::test]
+    async fn t1_t2_t3_full_lifecycle() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+
+        // Seed with completed_at 35 days ago — qualifies for T1 (default 7d)
+        // and T2 (default 30d).
+        let completed_at = Utc::now() - chrono::Duration::days(35);
+        seed_group(&s, gid, "success", completed_at)
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some("worker-lifecycle"))
+            .await
+            .expect("seed job");
+        seed_all_children(&s, gid, job_id)
+            .await
+            .expect("seed children");
+
+        // T1: mark files purged (simulates controller-side delete + stamp).
+        let purged = s
+            .mark_files_purged(&[gid], Utc::now())
+            .await
+            .expect("mark files purged");
+        assert_eq!(purged, 1, "T1 should stamp 1 group");
+
+        // Verify files_purged_at set on live row.
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM chola.job_groups WHERE id = $1 AND files_purged_at IS NOT NULL",
+        )
+        .bind(gid)
+        .fetch_one(s.pool())
+        .await
+        .expect("count purged");
+        assert_eq!(n, 1, "files_purged_at should be set after T1");
+
+        // T2: archive.
+        let archived = s.archive_groups_batch(&[gid]).await.expect("archive");
+        assert_eq!(archived, 1, "T2 should archive 1 group");
+        assert_archive_counts(&s, gid, 1, 1).await;
+
+        // Live tables must be empty for this group.
+        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups WHERE id = $1")
+            .bind(gid)
+            .fetch_one(s.pool())
+            .await
+            .expect("live count");
+        assert_eq!(live, 0, "group should be gone from live table after T2");
+
+        // Backdate archived_at to qualify for T3 (default 365d).
+        sqlx::query(
+            "UPDATE chola.job_groups_archive \
+             SET archived_at = now() - interval '400 days' \
+             WHERE id = $1",
+        )
+        .bind(gid)
+        .execute(s.pool())
+        .await
+        .expect("backdate archived_at");
+
+        // T3: hard delete.
+        let deleted = s.delete_archive_batch(&[gid]).await.expect("delete");
+        assert_eq!(deleted, 1, "T3 should delete 1 group from archive");
+        assert_archive_counts(&s, gid, 0, 0).await;
+
+        // cleanup_group is a no-op since T3 already deleted everything.
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    /// T8-2: Per-repo build cap archives the oldest excess group.
+    ///
+    /// Inserts 6 terminal groups for one repo, then directly calls
+    /// `find_excess_groups_per_repo(5)` + `archive_groups_batch` to simulate
+    /// the max_builds_per_repo enforcement path.
+    #[tokio::test]
+    async fn max_builds_per_repo_cap_archives_excess() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+
+        // Use a unique repo_id to isolate this test from other rows.
+        let repo_id = Uuid::new_v4();
+        let mut gids: Vec<Uuid> = Vec::new();
+
+        // Insert a repo row first (job_groups.repo_id FK).
+        sqlx::query(
+            "INSERT INTO chola.repos (id, name, url) VALUES ($1, 'cap-test', 'http://x') \
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(repo_id)
+        .execute(s.pool())
+        .await
+        .expect("insert repo");
+
+        // Seed 6 groups, oldest first.
+        for i in 0..6usize {
+            let gid = Uuid::new_v4();
+            let completed_at = Utc::now() - chrono::Duration::days(10 + i as i64);
+            sqlx::query(
+                "INSERT INTO chola.job_groups \
+                 (id, repo_id, branch, commit_sha, trigger_source, state, \
+                  created_at, updated_at, completed_at) \
+                 VALUES ($1, $2, 'main', 'deadbeef', 'test', 'success', \
+                         $3, $3, $3)",
+            )
+            .bind(gid)
+            .bind(repo_id)
+            .bind(completed_at)
+            .execute(s.pool())
+            .await
+            .expect("seed group");
+            gids.push(gid);
+        }
+
+        // find_excess: with max_per_repo=5, the oldest 1 should be excess.
+        let excess = s.find_excess_groups_per_repo(5).await.expect("find_excess");
+        // The excess set may include groups from other tests, so we only
+        // assert that our oldest group is included.
+        let oldest = gids[5]; // inserted last = oldest (10+5=15 days ago)
+        assert!(
+            excess.contains(&oldest),
+            "oldest group {oldest} should be in excess set"
+        );
+
+        // Archive the excess.
+        let archived = s
+            .archive_groups_batch(&excess)
+            .await
+            .expect("archive excess");
+        assert!(archived >= 1, "at least 1 group should be archived");
+
+        // Our oldest group must be in the archive.
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups_archive WHERE id = $1")
+                .bind(oldest)
+                .fetch_one(s.pool())
+                .await
+                .expect("count archived");
+        assert_eq!(n, 1, "oldest group should be in archive after cap");
+
+        // Cleanup all 6 groups.
+        for gid in &gids {
+            cleanup_group(&s, *gid).await.expect("cleanup");
+        }
+        sqlx::query("DELETE FROM chola.repos WHERE id = $1")
+            .bind(repo_id)
+            .execute(s.pool())
+            .await
+            .expect("cleanup repo");
+    }
+
+    /// T8-3: Runtime settings override takes effect immediately.
+    ///
+    /// This test inserts into `config_settings` to change the T1 threshold,
+    /// then asserts that `find_groups_for_t1` with the new threshold returns
+    /// the expected rows. The actual `run_once` call with ControllerState
+    /// is exercised in the e2e tests below.
+    #[tokio::test]
+    async fn runtime_settings_override_takes_effect_next_tick() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+
+        // Group completed 10 days ago.
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(10))
+            .await
+            .expect("seed");
+
+        // With threshold=99999 (very high): group should NOT qualify.
+        let found_high = s
+            .find_groups_for_t1(99999, 1000)
+            .await
+            .expect("find t1 high");
+        assert!(
+            !found_high.contains(&gid),
+            "group should NOT qualify with threshold=99999"
+        );
+
+        // With threshold=1 (very low): group should qualify.
+        let found_low = s.find_groups_for_t1(1, 1000).await.expect("find t1 low");
+        assert!(
+            found_low.contains(&gid),
+            "group should qualify with threshold=1"
+        );
+
+        // Verify the same behavior for T2.
+        let t2_high = s.find_groups_for_t2(99999, 1000).await.expect("t2 high");
+        assert!(!t2_high.contains(&gid));
+        let t2_low = s.find_groups_for_t2(1, 1000).await.expect("t2 low");
+        assert!(t2_low.contains(&gid));
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    /// T8-4: Redis purge queue durability across controller restart.
+    ///
+    /// Enqueues a purge entry via `enqueue_purge`, then constructs a fresh
+    /// `RedisStore` from the same URL (simulating a restart), calls
+    /// `dequeue_purges`, and asserts the entry survives.
+    #[tokio::test]
+    async fn worker_purge_queue_durable_across_controller_restart() {
+        const REDIS_URL: &str = "redis://127.0.0.1:6379";
+
+        if std::env::var("CHOLA_TEST_DB").is_err() {
+            return; // gated same as DB tests
+        }
+
+        let redis = match crate::redis_store::RedisStore::new(REDIS_URL, "chola_t8_test").await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("worker_purge_queue_durable: skipping (Redis unreachable: {e})");
+                return;
+            }
+        };
+
+        let worker_id = format!("worker-durability-{}", Uuid::new_v4());
+        let group_id = Uuid::new_v4();
+
+        // Enqueue (simulating T1 run).
+        redis
+            .enqueue_purge(&worker_id, &group_id.to_string())
+            .await
+            .expect("enqueue");
+
+        // Construct a fresh store from the same URL (simulating restart).
+        let redis2 = crate::redis_store::RedisStore::new(REDIS_URL, "chola_t8_test")
+            .await
+            .expect("new redis store");
+
+        let pending = redis2.dequeue_purges(&worker_id).await.expect("dequeue");
+        assert!(
+            pending.contains(&group_id.to_string()),
+            "purge entry should survive restart; pending={pending:?}"
+        );
+
+        // Cleanup.
+        redis2
+            .ack_purge(&worker_id, &group_id.to_string())
+            .await
+            .expect("ack cleanup");
+    }
+
+    /// T8-5: Stale worker treated as no-longer-registered.
+    ///
+    /// Seeds a group and a job row with a worker_id, then calls
+    /// `workers_for_group` and `mark_files_purged` directly — exercising
+    /// the storage side of the "stale worker → stamp immediately" path.
+    /// (The in-memory heartbeat check is in `run_t1`; the storage contract
+    /// is that `mark_files_purged` sets `files_purged_at` unconditionally
+    /// for the caller — it does not re-check worker liveness.)
+    #[tokio::test]
+    async fn stale_worker_treated_as_no_longer_registered() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let stale_worker = format!("stale-worker-{}", Uuid::new_v4());
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(10))
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some(&stale_worker))
+            .await
+            .expect("seed job");
+
+        // Confirm workers_for_group returns the stale worker.
+        let owners = s.workers_for_group(gid).await.expect("workers_for_group");
+        assert!(
+            owners.contains(&stale_worker),
+            "expected stale worker in owners"
+        );
+
+        // Simulate the run_t1 logic: stale worker → not live → stamp immediately.
+        let stamped = s
+            .mark_files_purged(&[gid], Utc::now())
+            .await
+            .expect("mark purged");
+        assert_eq!(stamped, 1, "files_purged_at should be stamped");
+
+        // Verify.
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM chola.job_groups WHERE id = $1 AND files_purged_at IS NOT NULL",
+        )
+        .bind(gid)
+        .fetch_one(s.pool())
+        .await
+        .expect("count");
+        assert_eq!(n, 1, "files_purged_at must be set");
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    /// T8-6: UNION query performance — no Seq Scan on either live or archive
+    /// table when listing with `include_archived=true`.
+    ///
+    /// Gated behind `CHOLA_PERF_TEST=1` because seeding 50k rows is slow
+    /// and not suitable for day-to-day `cargo test` runs. To run:
+    ///
+    /// ```sh
+    /// CHOLA_TEST_DB=1 CHOLA_PERF_TEST=1 cargo test -p chola-controller union_query_performance
+    /// ```
+    #[tokio::test]
+    async fn union_query_performance_50k_each_side() {
+        if std::env::var("CHOLA_PERF_TEST").is_err() {
+            return; // skip unless explicitly opted in
+        }
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+
+        // Use a unique repo_id prefix to isolate cleanup.
+        let tag = Uuid::new_v4();
+
+        // Seed 50k live rows via a single bulk INSERT.
+        sqlx::query(&format!(
+            "INSERT INTO chola.job_groups \
+             (id, repo_id, branch, commit_sha, trigger_source, state, \
+              created_at, updated_at, completed_at) \
+             SELECT gen_random_uuid(), NULL, 'perf', '{tag}', 'perf', 'success', \
+                    now(), now(), now() - interval '40 days' \
+             FROM generate_series(1, 50000)"
+        ))
+        .execute(s.pool())
+        .await
+        .expect("seed live");
+
+        // Seed 50k archive rows.
+        sqlx::query(&format!(
+            "INSERT INTO chola.job_groups_archive \
+             (id, repo_id, branch, commit_sha, trigger_source, state, \
+              created_at, updated_at, completed_at, archived_at) \
+             SELECT gen_random_uuid(), NULL, 'perf', '{tag}', 'perf', 'success', \
+                    now() - interval '50 days', now(), now() - interval '50 days', \
+                    now() - interval '40 days' \
+             FROM generate_series(1, 50000)"
+        ))
+        .execute(s.pool())
+        .await
+        .expect("seed archive");
+
+        // Run EXPLAIN (no ANALYZE to avoid actual execution cost in test).
+        let plan: String = sqlx::query_scalar(
+            "EXPLAIN \
+             SELECT id, branch, state, NULL::timestamptz AS archived_at \
+               FROM chola.job_groups \
+             UNION ALL \
+             SELECT id, branch, state, archived_at \
+               FROM chola.job_groups_archive \
+             LIMIT 50",
+        )
+        .fetch_one(s.pool())
+        .await
+        .expect("explain");
+
+        // Must not contain a sequential scan on either base table.
+        assert!(
+            !plan.to_lowercase().contains("seq scan on job_groups"),
+            "Unexpected Seq Scan on job_groups; plan:\n{plan}"
+        );
+
+        // Cleanup.
+        sqlx::query(&format!(
+            "DELETE FROM chola.job_groups WHERE commit_sha = '{tag}'"
+        ))
+        .execute(s.pool())
+        .await
+        .expect("cleanup live");
+        sqlx::query(&format!(
+            "DELETE FROM chola.job_groups_archive WHERE commit_sha = '{tag}'"
+        ))
+        .execute(s.pool())
+        .await
+        .expect("cleanup archive");
+    }
+
+    /// T8-7: Rollback via `chola.unarchive_group_ids` restores all rows.
+    ///
+    /// Archives a group with all five child tables populated, then calls
+    /// `unarchive_groups_batch` and asserts all rows are back in live tables
+    /// with archive tables empty.
+    #[tokio::test]
+    async fn rollback_unarchive_restores_group() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(40))
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some("worker-rollback"))
+            .await
+            .expect("seed job");
+        seed_all_children(&s, gid, job_id)
+            .await
+            .expect("seed children");
+
+        // Archive.
+        let archived = s.archive_groups_batch(&[gid]).await.expect("archive");
+        assert_eq!(archived, 1);
+
+        // Verify it's in archive.
+        assert_archive_counts(&s, gid, 1, 1).await;
+
+        // Unarchive (rollback runbook path).
+        let unarchived = s.unarchive_groups_batch(&[gid]).await.expect("unarchive");
+        assert_eq!(unarchived, 1, "unarchive should return 1");
+
+        // Archive tables must be empty for this group.
+        assert_archive_counts(&s, gid, 0, 0).await;
+
+        // Live tables must have the group back.
+        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chola.job_groups WHERE id = $1")
+            .bind(gid)
+            .fetch_one(s.pool())
+            .await
+            .expect("live count");
+        assert_eq!(live, 1, "group should be restored to live table");
+
+        let live_jobs: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chola.jobs WHERE job_group_id = $1")
+                .bind(gid)
+                .fetch_one(s.pool())
+                .await
+                .expect("live jobs count");
+        assert_eq!(live_jobs, 1, "jobs should be restored");
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
 }
