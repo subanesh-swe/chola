@@ -289,6 +289,14 @@ pub enum StageState {
     Cancelled,
 }
 
+/// Resolved on-disk paths for a stage: where to stream logs and where to
+/// run the command. Returned by [`StageRunner::resolve_paths`].
+#[derive(Debug, Clone)]
+pub struct ResolvedStagePaths {
+    pub log_path: PathBuf,
+    pub workspace: PathBuf,
+}
+
 /// Runs a complete stage: pre_script -> command -> post_script
 pub struct StageRunner {
     executor: Executor,
@@ -306,7 +314,11 @@ impl StageRunner {
         s.replace("..", "").replace(['/', '\\'], "_")
     }
 
-    /// Determine the log path for a stage
+    /// Determine the log path for a stage (LEGACY layout).
+    ///
+    /// Returns `<log_dir>/<gid>/<stage>.log` for grouped stages, or
+    /// `<log_dir>/<job>.log` for ad-hoc jobs. Use [`Self::resolve_paths`]
+    /// for the new layout that keys off the group's `created_at`.
     pub fn log_path(log_dir: &str, job_group_id: &str, stage_name: &str, job_id: &str) -> PathBuf {
         if !job_group_id.is_empty() && !stage_name.is_empty() {
             let safe_group = Self::sanitize_path_component(job_group_id);
@@ -317,6 +329,67 @@ impl StageRunner {
         } else {
             let safe_job = Self::sanitize_path_component(job_id);
             PathBuf::from(log_dir).join(format!("{}.log", safe_job))
+        }
+    }
+
+    /// Resolve the log + workspace paths for a stage, picking between the
+    /// new unified scratch layout and the legacy layout based on the
+    /// group's `created_at` vs the worker's startup timestamp.
+    ///
+    /// New layout (group created at-or-after worker boot):
+    /// - log:       `<scratch_root>/<gid>/logs/<stage>.log`
+    /// - workspace: `<scratch_root>/<gid>/workspace/<stage>/`
+    ///
+    /// Legacy layout (group from before the upgrade, or unknown
+    /// `created_at`):
+    /// - log:       `<log_dir>/<gid>/<stage>.log`
+    /// - workspace: `<work_dir>/<gid>/`
+    ///
+    /// See `local/docs/retention-implementation-plan.md` §3.D + §4.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_paths(
+        scratch_root: &str,
+        log_dir: &str,
+        work_dir: &str,
+        group_created_at: Option<chrono::DateTime<chrono::Utc>>,
+        worker_startup_ts: Option<chrono::DateTime<chrono::Utc>>,
+        job_group_id: &str,
+        stage_name: &str,
+        job_id: &str,
+    ) -> ResolvedStagePaths {
+        let use_new_layout = matches!(
+            (group_created_at, worker_startup_ts),
+            (Some(created), Some(startup)) if created >= startup,
+        );
+
+        if use_new_layout && !job_group_id.is_empty() {
+            let safe_group = Self::sanitize_path_component(job_group_id);
+            let safe_stage = if stage_name.is_empty() {
+                Self::sanitize_path_component(job_id)
+            } else {
+                Self::sanitize_path_component(stage_name)
+            };
+            let group_root = PathBuf::from(scratch_root).join(&safe_group);
+            let log_path = group_root
+                .join("logs")
+                .join(format!("{}.log", &safe_stage));
+            let workspace = group_root.join("workspace").join(&safe_stage);
+            ResolvedStagePaths {
+                log_path,
+                workspace,
+            }
+        } else {
+            let log_path = Self::log_path(log_dir, job_group_id, stage_name, job_id);
+            let workspace = if !job_group_id.is_empty() {
+                let safe_group = Self::sanitize_path_component(job_group_id);
+                PathBuf::from(work_dir).join(safe_group)
+            } else {
+                PathBuf::from(work_dir)
+            };
+            ResolvedStagePaths {
+                log_path,
+                workspace,
+            }
         }
     }
 

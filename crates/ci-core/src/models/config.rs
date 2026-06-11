@@ -450,6 +450,13 @@ pub struct ExecutionConfig {
     pub log_dir: String,
     #[serde(default = "default_repos_dir")]
     pub repos_dir: String,
+    /// Unified per-group scratch root for the new retention layout
+    /// (`<scratch_root>/<gid>/{logs,workspace,artifacts}/`). Groups created
+    /// at-or-after `WORKER_STARTUP_TS` use this layout; older groups stay
+    /// on the legacy `work_dir` / `log_dir` paths. See
+    /// `local/docs/retention-implementation-plan.md` §3.D / §4.
+    #[serde(default = "default_scratch_root")]
+    pub scratch_root: String,
 }
 
 /// Resolve default config file path for a service.
@@ -499,12 +506,16 @@ fn default_log_dir() -> String {
 fn default_repos_dir() -> String {
     chola_data_dir("worker/repos")
 }
+fn default_scratch_root() -> String {
+    chola_data_dir("worker/scratch")
+}
 impl Default for ExecutionConfig {
     fn default() -> Self {
         Self {
             work_dir: default_work_dir(),
             log_dir: default_log_dir(),
             repos_dir: default_repos_dir(),
+            scratch_root: default_scratch_root(),
         }
     }
 }

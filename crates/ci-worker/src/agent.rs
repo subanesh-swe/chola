@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -15,13 +16,30 @@ use crate::log_streamer::LogStreamer;
 use crate::reconnect::ReconnectHandler;
 use crate::stage_runner::{StageResult, StageRunner, StageState};
 
+/// Timestamp captured once at agent startup. Used by the stage path
+/// resolver to decide between the new `<scratch_root>/<gid>/...` layout
+/// (groups created at-or-after this instant) and the legacy
+/// `<log_dir>/<gid>/` + `<work_dir>/<gid>/<stage>/` layout
+/// (pre-upgrade groups). See `retention-implementation-plan.md` §3.D.
+pub static WORKER_STARTUP_TS: OnceLock<chrono::DateTime<chrono::Utc>> = OnceLock::new();
+
+/// Read the worker startup timestamp captured by [`run`]. Returns `None`
+/// before `run` initializes it (e.g. inside unit tests that don't boot
+/// the agent), in which case path resolvers should fall back to the
+/// legacy layout.
+pub fn worker_startup_ts() -> Option<chrono::DateTime<chrono::Utc>> {
+    WORKER_STARTUP_TS.get().copied()
+}
+
 /// Context for a job execution, grouping related parameters.
 struct JobContext {
     worker_id: String,
     job_id: String,
     command: String,
     work_dir: String,
-    log_dir: String,
+    /// Pre-resolved per-stage log path (new vs legacy layout decided up
+    /// front in `handle_job_assignment`).
+    log_path: String,
     pre_script: String,
     post_script: String,
     max_duration_secs: i32,
@@ -51,9 +69,16 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     info!("Worker agent starting");
 
+    // Capture process-boot timestamp once. Used as the discriminator for
+    // the new vs legacy on-disk layout (retention §3.D / §4). It's
+    // idempotent — `set` returns an error if already initialized (e.g. a
+    // test forced it earlier in the same process), which we ignore.
+    let _ = WORKER_STARTUP_TS.set(chrono::Utc::now());
+
     tokio::fs::create_dir_all(&config.execution.work_dir).await?;
     tokio::fs::create_dir_all(&config.execution.log_dir).await?;
     tokio::fs::create_dir_all(&config.execution.repos_dir).await?;
+    tokio::fs::create_dir_all(&config.execution.scratch_root).await?;
 
     let reconnect_handler = ReconnectHandler::with_config(crate::reconnect::ReconnectConfig {
         initial_backoff: std::time::Duration::from_millis(config.reconnect.initial_delay_ms),
@@ -354,6 +379,48 @@ async fn handle_job_assignment(
 ) {
     let job_id = assignment.job_id.clone();
 
+    // Check for purge directive (retention T1). When set, this
+    // JobAssignment is purge-only — every other field is ignored. The
+    // worker rm -rf's three per-group dirs (new scratch + legacy
+    // log/work) best-effort and acks via report_job_status with
+    // purge_ack=true. repos_dir is NEVER touched.
+    if let Some(purge) = &assignment.purge_group_files {
+        let gid = purge.group_id.clone();
+        info!(group_id = %gid, "Received purge directive");
+
+        let outcome = purge_group_dirs(
+            &gid,
+            Path::new(&config.execution.scratch_root),
+            Path::new(&config.execution.log_dir),
+            Path::new(&config.execution.work_dir),
+        )
+        .await;
+
+        let (state, message) = match outcome {
+            Ok(()) => (JobState::Success, String::new()),
+            Err(msg) => (JobState::Failed, msg),
+        };
+
+        let ack = JobStatusUpdate {
+            worker_id: config.worker_id.clone(),
+            job_id: String::new(),
+            state: state as i32,
+            message,
+            exit_code: 0,
+            timestamp_unix: chrono::Utc::now().timestamp(),
+            job_group_id: gid.clone(),
+            stage_name: String::new(),
+            phase: String::new(),
+            pre_exit_code: 0,
+            post_exit_code: 0,
+            purge_ack: true,
+        };
+        if let Err(e) = client.report_job_status(ack).await {
+            warn!(group_id = %gid, error = %e, "Failed to send purge_ack");
+        }
+        return;
+    }
+
     // Check for cancel directive
     if let Some(cancel) = &assignment.cancel {
         info!(
@@ -409,23 +476,23 @@ async fn handle_job_assignment(
         .cloned()
         .collect();
 
-    // Per-build workspace: {work_dir}/{job_group_id}/ for grouped jobs
-    let work_dir = if !assignment.job_group_id.is_empty() {
-        let sanitized: String = assignment
-            .job_group_id
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        format!("{}/{}", config.execution.work_dir, sanitized)
-    } else {
-        config.execution.work_dir.clone()
-    };
+    // Per-build workspace + log path. The new layout
+    // (`<scratch_root>/<gid>/...`) kicks in when the group was created
+    // at-or-after this worker process booted. Until the proto carries
+    // `group_created_at` on JobAssignment (currently absent — flagged
+    // as a follow-up blocker), every group resolves to legacy paths.
+    let resolved = StageRunner::resolve_paths(
+        &config.execution.scratch_root,
+        &config.execution.log_dir,
+        &config.execution.work_dir,
+        None, // TODO: JobAssignment.group_created_at — needs proto add
+        worker_startup_ts(),
+        &assignment.job_group_id,
+        &assignment.stage_name,
+        &job_id,
+    );
+    let work_dir = resolved.workspace.to_string_lossy().to_string();
+    let stage_log_path = resolved.log_path.to_string_lossy().to_string();
 
     // Build environment: assignment env + worker-local paths
     let mut environment: HashMap<String, String> =
@@ -439,7 +506,7 @@ async fn handle_job_assignment(
         job_id: job_id.clone(),
         command: assignment.command.clone(),
         work_dir,
-        log_dir: config.execution.log_dir.clone(),
+        log_path: stage_log_path,
         pre_script: assignment.pre_script.clone(),
         post_script: assignment.post_script.clone(),
         max_duration_secs: assignment.max_duration_secs,
@@ -710,14 +777,9 @@ async fn run_job_with_streaming(
     // Set up: Executor -> mpsc -> LogStreamer -> gRPC StreamLogs -> Controller
     let (log_tx, log_rx) = mpsc::channel(256);
 
-    // Determine log path based on whether this is a grouped stage or a legacy job
-    let log_path_buf = StageRunner::log_path(
-        &ctx.log_dir,
-        &ctx.job_group_id,
-        &ctx.stage_name,
-        &ctx.job_id,
-    );
-    let log_path = log_path_buf.to_string_lossy().to_string();
+    // Log path was pre-resolved in `handle_job_assignment` (new vs
+    // legacy layout). Just use it.
+    let log_path = ctx.log_path.clone();
 
     info!(
         "Starting log streamer for job {} at {}",
@@ -984,5 +1046,148 @@ async fn report_system_metadata(config: &WorkerConfig) {
         Err(e) => {
             warn!("Failed to send system metadata: {e}");
         }
+    }
+}
+
+/// Best-effort `rm -rf` of the three per-group directories owned by this
+/// worker for a given `group_id`. Returns `Ok(())` if every removal
+/// either succeeded or returned `NotFound`; otherwise returns an
+/// `Err(joined_error_messages)`.
+///
+/// Critically: only the new-layout scratch subtree, the legacy
+/// `<log_dir>/<gid>/`, and the legacy `<work_dir>/<gid>/` are touched.
+/// `repos_dir` is NEVER touched, and no path outside these three
+/// per-group dirs is ever walked. Dependency-injected so the unit test
+/// can exercise it against a tmpdir.
+pub(crate) async fn purge_group_dirs(
+    group_id: &str,
+    scratch_root: &Path,
+    log_dir: &Path,
+    work_dir: &Path,
+) -> Result<(), String> {
+    let targets = [
+        scratch_root.join(group_id),
+        log_dir.join(group_id),
+        work_dir.join(group_id),
+    ];
+
+    let mut failures: Vec<String> = Vec::new();
+    for path in &targets {
+        match tokio::fs::remove_dir_all(path).await {
+            Ok(()) => {
+                info!(path = %path.display(), "Purged per-group dir");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Expected for groups that never ran on the new layout,
+                // or that never wrote a workspace, etc.
+            }
+            Err(e) => {
+                let msg = format!("{}: {}", path.display(), e);
+                warn!(error = %msg, "Failed to purge per-group dir");
+                failures.push(msg);
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a unique tmpdir for a test. We avoid the `tempfile` crate
+    /// (not in the dep tree) and roll a simple uuid-named dir under
+    /// `std::env::temp_dir()`.
+    fn make_tmpdir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "chola-purge-test-{}-{}",
+            label,
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create tmpdir");
+        dir
+    }
+
+    /// Helper: seed a per-group directory with a file inside, so
+    /// `remove_dir_all` has something to actually delete.
+    fn seed_group_dir(root: &Path, gid: &str) {
+        let dir = root.join(gid);
+        std::fs::create_dir_all(&dir).expect("mkdir group dir");
+        std::fs::write(dir.join("sentinel"), b"x").expect("write sentinel");
+    }
+
+    #[tokio::test]
+    async fn purge_removes_new_and_legacy_layouts_keeps_repos() {
+        let root = make_tmpdir("happy");
+        let scratch = root.join("scratch");
+        let log_dir = root.join("logs");
+        let work_dir = root.join("work");
+        let repos_dir = root.join("repos");
+        let gid = "11111111-1111-1111-1111-111111111111";
+
+        // New-layout: <scratch>/<gid>/{logs,workspace,artifacts}/
+        let new_group = scratch.join(gid);
+        std::fs::create_dir_all(new_group.join("logs")).unwrap();
+        std::fs::create_dir_all(new_group.join("workspace/build")).unwrap();
+        std::fs::create_dir_all(new_group.join("artifacts")).unwrap();
+        std::fs::write(new_group.join("logs/build.log"), b"hello").unwrap();
+
+        // Legacy layouts.
+        seed_group_dir(&log_dir, gid);
+        seed_group_dir(&work_dir, gid);
+
+        // Sibling we must NOT touch — same name under repos_dir, plus an
+        // unrelated subdir.
+        seed_group_dir(&repos_dir, gid);
+        seed_group_dir(&repos_dir, "foo");
+
+        let res = purge_group_dirs(gid, &scratch, &log_dir, &work_dir).await;
+        assert!(res.is_ok(), "purge failed: {:?}", res);
+
+        // Three group dirs are gone.
+        assert!(!scratch.join(gid).exists(), "scratch group dir still there");
+        assert!(!log_dir.join(gid).exists(), "legacy log dir still there");
+        assert!(!work_dir.join(gid).exists(), "legacy work dir still there");
+
+        // repos_dir is untouched (both the same-gid and the sibling).
+        assert!(repos_dir.join(gid).exists(), "repos_dir/<gid> was deleted");
+        assert!(repos_dir.join("foo").exists(), "repos_dir/foo was deleted");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn purge_missing_paths_is_noop() {
+        let root = make_tmpdir("missing");
+        let scratch = root.join("scratch");
+        let log_dir = root.join("logs");
+        let work_dir = root.join("work");
+        // Parent dirs exist, but no per-group subdir under any of them.
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::create_dir_all(&log_dir).unwrap();
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        let gid = "22222222-2222-2222-2222-222222222222";
+        let res = purge_group_dirs(gid, &scratch, &log_dir, &work_dir).await;
+        assert!(res.is_ok(), "missing-path purge errored: {:?}", res);
+
+        // Even fully-absent parent dirs (NotFound on the parent itself)
+        // must be tolerated.
+        let absent_root = root.join("does-not-exist");
+        let res2 = purge_group_dirs(
+            gid,
+            &absent_root.join("scratch"),
+            &absent_root.join("logs"),
+            &absent_root.join("work"),
+        )
+        .await;
+        assert!(res2.is_ok(), "absent-parent purge errored: {:?}", res2);
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }
