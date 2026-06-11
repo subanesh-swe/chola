@@ -8,6 +8,8 @@ type Status =
   | 'cancelled'
   | 'expired'
   | 'unknown'
+  | 'archived'
+  | 'files-purged'
   | 'Connected' | 'Disconnected' | 'Draining';
 
 const statusStyles: Record<string, string> = {
@@ -21,6 +23,8 @@ const statusStyles: Record<string, string> = {
   cancelled: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
   expired: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
   unknown: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  archived: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
+  'files-purged': 'bg-slate-600/20 text-slate-500 border-slate-600/30',
   Connected: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   Disconnected: 'bg-red-500/20 text-red-400 border-red-500/30',
   Draining: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
@@ -31,9 +35,11 @@ const pulseStatuses = new Set(['running', 'assigned']);
 interface Props {
   status: Status | string;
   size?: 'sm' | 'md';
+  /** Optional tooltip text shown on hover. */
+  title?: string;
 }
 
-export function StatusBadge({ status, size = 'sm' }: Props) {
+export function StatusBadge({ status, size = 'sm', title }: Props) {
   const style = statusStyles[status] ?? 'bg-gray-500/20 text-gray-400 border-gray-500/30';
   const pulse = pulseStatuses.has(status);
 
@@ -45,6 +51,7 @@ export function StatusBadge({ status, size = 'sm' }: Props) {
         size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm',
       )}
       aria-label={`Status: ${status}`}
+      title={title}
     >
       {pulse && (
         <span className="relative flex h-2 w-2" aria-hidden="true">

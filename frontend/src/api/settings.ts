@@ -5,10 +5,12 @@ export interface SettingItem {
   value: string | number | boolean;
   source: 'database' | 'config' | 'default';
   editable: boolean;
-  type?: 'bool' | 'int';
+  type?: 'bool' | 'int' | 'path';
   options?: string[];
   min?: number;
   max?: number;
+  /** Human-readable description from the backend. Shown as inline help. */
+  description?: string;
 }
 
 export interface SettingsResponse {

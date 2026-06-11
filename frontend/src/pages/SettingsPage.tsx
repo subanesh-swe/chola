@@ -20,7 +20,13 @@ interface MutationError {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORY_ORDER = ['Scheduling', 'Workers', 'Logging', 'Retention', 'Server / Auth'];
+const CATEGORY_ORDER = ['Scheduling', 'Workers', 'Logging', 'Retention', 'Execution', 'Server / Auth'];
+
+const RETENTION_TIER_KEYS = new Set([
+  'retention.t1_purge_files_after_days',
+  'retention.t2_archive_after_days',
+  'retention.t3_delete_archive_after_days',
+]);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -29,6 +35,7 @@ function categoryOf(key: string): string {
   if (key.startsWith('workers.')) return 'Workers';
   if (key.startsWith('logging.')) return 'Logging';
   if (key.startsWith('retention.')) return 'Retention';
+  if (key.startsWith('execution.')) return 'Execution';
   return 'Server / Auth';
 }
 
@@ -70,23 +77,49 @@ function ValueDisplay({ setting }: { setting: SettingItem }) {
   return <span className="text-sm text-white font-mono">{String(setting.value)}</span>;
 }
 
+// Inline hints for specific retention keys shown in both view and edit modes.
+function RetentionHint({ settingKey }: { settingKey: string }) {
+  if (RETENTION_TIER_KEYS.has(settingKey)) {
+    return (
+      <span className="block text-[11px] text-amber-500/70 mt-0.5">
+        Values must satisfy: T1 &lt; T2 &lt; T3
+      </span>
+    );
+  }
+  if (settingKey === 'retention.enable_worker_fanout') {
+    return (
+      <span className="block text-[11px] text-yellow-500/70 mt-0.5 max-w-xs">
+        Only enable this once all workers have been upgraded to a version that handles purge
+        directives. Leave OFF during rolling upgrades.
+      </span>
+    );
+  }
+  return null;
+}
+
 // ─── View mode rows ───────────────────────────────────────────────────────────
 
 function ViewRow({ setting }: { setting: SettingItem }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-slate-800 last:border-0 gap-3">
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="text-sm text-slate-300 capitalize">{labelOf(setting.key)}</span>
-        <SourceBadge source={setting.source} />
-        {!setting.editable && (
-          <span className="text-slate-600" title="Read-only — requires restart">
-            &#128274;
-          </span>
-        )}
+    <div className="py-2 border-b border-slate-800 last:border-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-sm text-slate-300 capitalize">{labelOf(setting.key)}</span>
+          <SourceBadge source={setting.source} />
+          {!setting.editable && (
+            <span className="text-slate-600" title="Read-only — requires restart">
+              &#128274;
+            </span>
+          )}
+        </div>
+        <div className="flex-shrink-0">
+          <ValueDisplay setting={setting} />
+        </div>
       </div>
-      <div className="flex-shrink-0">
-        <ValueDisplay setting={setting} />
-      </div>
+      {setting.description && (
+        <p className="text-[11px] text-slate-500 mt-0.5">{setting.description}</p>
+      )}
+      <RetentionHint settingKey={setting.key} />
     </div>
   );
 }
@@ -132,6 +165,18 @@ function EditField({ setting, draftValue, onChange, changed }: EditFieldProps) {
     );
   }
 
+  if (setting.type === 'path') {
+    return (
+      <input
+        type="text"
+        value={draftValue}
+        onChange={(e) => onChange(setting.key, e.target.value)}
+        className={`bg-slate-800 border rounded px-2 py-1 text-sm text-white w-64 font-mono ${ringClass}`}
+        placeholder="/absolute/path"
+      />
+    );
+  }
+
   return (
     <input
       type="number"
@@ -154,35 +199,43 @@ interface EditRowProps {
 function EditRow({ setting, draftValue, onChange, changed }: EditRowProps) {
   if (!setting.editable) {
     return (
-      <div className="flex items-center justify-between py-2 border-b border-slate-800 last:border-0 gap-3 opacity-60">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="text-sm text-slate-400 capitalize">{labelOf(setting.key)}</span>
-          <SourceBadge source={setting.source} />
-          <span className="text-slate-600" title="Read-only — requires restart">
-            &#128274;
-          </span>
-        </div>
-        <div className="flex-shrink-0">
-          <ValueDisplay setting={setting} />
+      <div className="py-2 border-b border-slate-800 last:border-0 opacity-60">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-sm text-slate-400 capitalize">{labelOf(setting.key)}</span>
+            <SourceBadge source={setting.source} />
+            <span className="text-slate-600" title="Read-only — requires restart">
+              &#128274;
+            </span>
+          </div>
+          <div className="flex-shrink-0">
+            <ValueDisplay setting={setting} />
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between py-2 border-b border-slate-800 last:border-0 gap-3">
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="text-sm text-slate-300 capitalize">{labelOf(setting.key)}</span>
-        <SourceBadge source={setting.source} />
+    <div className="py-2 border-b border-slate-800 last:border-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0 pt-0.5">
+          <span className="text-sm text-slate-300 capitalize">{labelOf(setting.key)}</span>
+          <SourceBadge source={setting.source} />
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <EditField
+            setting={setting}
+            draftValue={draftValue}
+            onChange={onChange}
+            changed={changed}
+          />
+        </div>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <EditField
-          setting={setting}
-          draftValue={draftValue}
-          onChange={onChange}
-          changed={changed}
-        />
-      </div>
+      {setting.description && (
+        <p className="text-[11px] text-slate-500 mt-0.5">{setting.description}</p>
+      )}
+      <RetentionHint settingKey={setting.key} />
     </div>
   );
 }
@@ -320,7 +373,7 @@ function ResultModal({ results, onDone }: ResultModalProps) {
             >
               <div className="flex items-center gap-2">
                 <span className="text-base leading-none">
-                  {r.status === 'accepted' ? '✅' : '❌'}
+                  {r.status === 'accepted' ? '✓' : '✕'}
                 </span>
                 <span className="text-sm font-mono text-slate-200">{r.key}</span>
                 <span

@@ -37,6 +37,17 @@ export default function BuildsPage() {
 
       <FilterBar filters={filters} repos={repos} onChange={setFilters} onReset={resetFilters} />
 
+      {/* Show archived toggle */}
+      <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={filters.includeArchived}
+          onChange={(e) => setFilters({ includeArchived: e.target.checked, page: 1 })}
+          className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
+        />
+        <span className="text-sm text-slate-400">Show archived builds</span>
+      </label>
+
       {isError && (
         <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
           Failed to load builds. Please try again.
@@ -68,10 +79,13 @@ export default function BuildsPage() {
                       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') nav(`/builds/${b.job_group_id}`); }}
                       tabIndex={0}
                       role="row"
-                      className="cursor-pointer hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+                      className={`cursor-pointer hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset${b.archived ? ' opacity-60' : ''}`}
                     >
                       <td className="px-4 py-3">
-                        <StatusBadge status={b.state} />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <StatusBadge status={b.state} />
+                          {b.archived && <StatusBadge status="archived" />}
+                        </div>
                         {b.status_reason && (
                           <span className="block text-[10px] text-slate-500 truncate max-w-xs">{b.status_reason}</span>
                         )}
@@ -96,10 +110,13 @@ export default function BuildsPage() {
                 <button
                   key={b.job_group_id}
                   onClick={() => nav(`/builds/${b.job_group_id}`)}
-                  className="w-full text-left px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+                  className={`w-full text-left px-4 py-3 hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset${b.archived ? ' opacity-60' : ''}`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <StatusBadge status={b.state} />
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={b.state} />
+                      {b.archived && <StatusBadge status="archived" />}
+                    </div>
                     <TimeAgo date={b.created_at} className="text-xs text-slate-500" />
                   </div>
                   {b.status_reason && (

@@ -6,6 +6,14 @@ export interface AllocatedResources {
   disk_mb: number;
 }
 
+/** Archived child records returned by GET /api/v1/job-groups/:id for archived groups. */
+export interface ArchivedChildren {
+  artifacts: unknown[];
+  test_results: unknown[];
+  approval_gates: unknown[];
+  worker_reservations: unknown[];
+}
+
 export interface JobGroup {
   id: string;
   job_group_id: string;
@@ -25,4 +33,12 @@ export interface JobGroup {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /** Present in list responses when include_archived=true. */
+  archived?: boolean;
+  /** RFC3339 — set when the group has been moved to the archive table (T2). */
+  archived_at?: string | null;
+  /** RFC3339 — set when on-disk logs/workspace were purged by T1. */
+  files_purged_at?: string | null;
+  /** Only populated for archived groups in the detail endpoint. */
+  children?: ArchivedChildren | null;
 }

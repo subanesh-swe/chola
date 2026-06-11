@@ -13,10 +13,76 @@ import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
 import { toast } from 'sonner';
-import type { Job, JobGroup, MutationError } from '../types';
+import type { Job, JobGroup, ArchivedChildren, MutationError } from '../types';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+}
+
+// ── Archived children panel ───────────────────────────────────────────────────
+
+function ChildTable({ title, rows }: { title: string; rows: unknown[] }) {
+  if (!rows.length) {
+    return (
+      <div className="mb-3">
+        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">{title}</p>
+        <p className="text-xs text-slate-600 italic">(none)</p>
+      </div>
+    );
+  }
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-semibold text-slate-500 uppercase mb-1">
+        {title} ({rows.length})
+      </p>
+      <div className="overflow-x-auto">
+        <pre className="text-[11px] text-slate-400 bg-slate-800/60 rounded p-2 overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+          {JSON.stringify(rows, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function ArchivedChildrenPanel({ children }: { children: ArchivedChildren }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl"
+        aria-expanded={open}
+      >
+        <span className="text-sm font-semibold text-slate-400">Archived child records</span>
+        <svg
+          className={`w-4 h-4 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-slate-800 pt-3">
+          <ChildTable title="Artifacts" rows={children.artifacts ?? []} />
+          <ChildTable title="Test results" rows={children.test_results ?? []} />
+          <ChildTable title="Approval gates" rows={children.approval_gates ?? []} />
+          <ChildTable title="Worker reservations" rows={children.worker_reservations ?? []} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Job log panel ─────────────────────────────────────────────────────────────
 
 interface JobLogPanelProps {
   job: Job;
+  filesPurgedAt: string | null | undefined;
   onRetry?: () => void;
 }
 
@@ -57,15 +123,15 @@ function StageTimer({ job }: { job: Job }) {
   );
 }
 
-function JobLogPanel({ job, onRetry }: JobLogPanelProps) {
+function JobLogPanel({ job, filesPurgedAt, onRetry }: JobLogPanelProps) {
   const isRunning = job.state === 'running' || job.state === 'assigned';
-  const { chunks } = useLiveLog(job.id, isRunning);
+  const { chunks } = useLiveLog(job.id, isRunning && !filesPurgedAt);
 
-  // For completed jobs, fetch logs via GET
+  // For completed jobs, fetch logs via GET — but skip if files are gone.
   const { data: logData } = useQuery({
     queryKey: ['job-logs', job.id],
     queryFn: () => apiClient.get(`/jobs/${job.id}/logs`).then((r) => r.data),
-    enabled: !isRunning && !!job.id,
+    enabled: !isRunning && !!job.id && !filesPurgedAt,
   });
 
   const completedLogs = logData?.data || '';
@@ -96,12 +162,15 @@ function JobLogPanel({ job, onRetry }: JobLogPanelProps) {
         <LogViewer
           content={isRunning ? undefined : completedLogs || `Stage: ${job.stage_name}\nState: ${job.state}\n`}
           liveChunks={isRunning ? chunks : undefined}
+          filesPurgedAt={filesPurgedAt}
           className="h-80"
         />
       </div>
     </div>
   );
 }
+
+// ── Timer helpers ─────────────────────────────────────────────────────────────
 
 function fmtSecs(s: number): string {
   const h = Math.floor(s / 3600);
@@ -130,7 +199,6 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
     status === 'deactivated' ? 'Deactivated' : '—'
   );
 
-  // Live tick for active stage timer
   const isLiveStage = status === 'active' && job?.started_at;
   useEffect(() => {
     if (!isLiveStage) return;
@@ -144,7 +212,6 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
 
   let timeDisplay: string;
   if (status === 'active' && job?.started_at && maxSecs > 0) {
-    // Live computation from job.started_at (same as StageTimer)
     const elapsed = Math.floor((now - new Date(job.started_at).getTime()) / 1000);
     const remaining = Math.max(0, maxSecs - elapsed);
     timeDisplay = `${fmtSecs(remaining)} / ${maxLabel}`;
@@ -174,7 +241,6 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
 
   const runningJob = jobs.find(j => j.state === 'running') ?? null;
 
-  // Use backend timers if available, else compute from frontend data
   if (group.timers) {
     return (
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
@@ -188,7 +254,6 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
     );
   }
 
-  // Fallback: compute from group state + job data (for older API responses)
   const hasRunning = jobs.some(j => j.state === 'running' || j.state === 'assigned');
   const idleMax = group.idle_timeout_secs ?? 300;
   const stallMax = group.stall_timeout_secs ?? 1800;
@@ -219,7 +284,12 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
   );
 }
 
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 type DialogKind = 'cancel' | 'retry-build' | 'retry-job' | null;
+
+// Silence unused-import linter for formatDuration (kept for potential callers).
+void formatDuration;
 
 export default function BuildDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -236,7 +306,6 @@ export default function BuildDetailPage() {
     enabled: !!id,
     refetchInterval: (query) => {
       const state = query.state.data?.job_group?.state;
-      // Stop polling for terminal states
       if (state === 'success' || state === 'failed' || state === 'cancelled') return false;
       return 3000;
     },
@@ -308,6 +377,23 @@ export default function BuildDetailPage() {
         </button>
         <h2 className="text-2xl font-bold text-white font-mono">{group.job_group_id.slice(0, 8)}</h2>
         <StatusBadge status={group.state} size="md" />
+
+        {/* Archived / files-purged badges */}
+        {group.archived && (
+          <StatusBadge
+            status="archived"
+            size="md"
+            title={group.archived_at ? `DB row in archive table since ${fmtDate(group.archived_at)}` : 'Archived'}
+          />
+        )}
+        {group.files_purged_at && (
+          <StatusBadge
+            status="files-purged"
+            size="md"
+            title={`Logs and workspace removed on ${fmtDate(group.files_purged_at)}`}
+          />
+        )}
+
         {group.status_reason && (
           <p className="text-xs text-slate-400 mt-1">{group.status_reason}</p>
         )}
@@ -393,8 +479,14 @@ export default function BuildDetailPage() {
         <JobLogPanel
           key={activeSelectedJob.id}
           job={activeSelectedJob}
+          filesPurgedAt={group.files_purged_at}
           onRetry={canCancelJobs ? () => openRetryJob(activeSelectedJob) : undefined}
         />
+      )}
+
+      {/* Archived child records (collapsed by default) */}
+      {group.archived && group.children && (
+        <ArchivedChildrenPanel children={group.children} />
       )}
 
       <ConfirmDialog
