@@ -3528,6 +3528,332 @@ impl Storage {
             .collect())
     }
 
+    // ========================================================================
+    // Retention — archive read path (issue #20, T7a)
+    //
+    // These power the "Show archived" frontend toggle. They are
+    // deliberately additive: callers that don't opt in keep using the
+    // existing fast-path `list_job_groups_paginated` /
+    // `get_job_group_with_jobs`, which never touch the archive tables.
+    // ========================================================================
+
+    /// List job_groups across BOTH live and archive tables in a single
+    /// paginated response. Each row carries a synthetic `archived`
+    /// boolean so the API/frontend can render the "Archived" badge
+    /// without a second roundtrip.
+    ///
+    /// Mirrors the filters of `list_job_groups_paginated`; pagination /
+    /// ordering apply to the UNION ALL, not each side individually.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_job_groups_paginated_with_archive(
+        &self,
+        limit: i64,
+        offset: i64,
+        state_filter: Option<&str>,
+        repo_id_filter: Option<Uuid>,
+        branch_filter: Option<&str>,
+        date_from: Option<DateTime<Utc>>,
+        date_to: Option<DateTime<Utc>>,
+        stage_name_filter: Option<&str>,
+        exit_code_filter: Option<i32>,
+    ) -> anyhow::Result<(Vec<(JobGroup, bool)>, i64)> {
+        // Build the shared WHERE fragment. Bind indices are assigned in
+        // the order clauses are pushed; both legs of the UNION reuse
+        // the same bind list so `$N` placeholders are stable.
+        let mut clauses: Vec<String> = Vec::new();
+        let mut idx: usize = 0;
+        let mut next = || {
+            idx += 1;
+            idx
+        };
+
+        if state_filter.is_some() {
+            clauses.push(format!("state = ${}", next()));
+        }
+        if repo_id_filter.is_some() {
+            clauses.push(format!("repo_id = ${}", next()));
+        }
+        if branch_filter.is_some() {
+            clauses.push(format!("branch = ${}", next()));
+        }
+        if date_from.is_some() {
+            clauses.push(format!("created_at >= ${}", next()));
+        }
+        if date_to.is_some() {
+            clauses.push(format!("created_at <= ${}", next()));
+        }
+
+        // For stage_name / exit_code filters we need to reach into the
+        // matching jobs table — live filters against `jobs`, archive
+        // against `jobs_archive`. The two WHERE fragments differ only
+        // in the table reference; build them in lockstep so bind
+        // indices line up.
+        let mut live_clauses = clauses.clone();
+        let mut arch_clauses = clauses.clone();
+        if stage_name_filter.is_some() {
+            let i = next();
+            live_clauses.push(format!(
+                "EXISTS (SELECT 1 FROM {s}.jobs j WHERE j.job_group_id = jg.id AND j.stage_name = ${i})",
+                s = self.schema, i = i
+            ));
+            arch_clauses.push(format!(
+                "EXISTS (SELECT 1 FROM {s}.jobs_archive j WHERE j.job_group_id = jg.id AND j.stage_name = ${i})",
+                s = self.schema, i = i
+            ));
+        }
+        if let Some(code) = exit_code_filter {
+            if code == -1 {
+                live_clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM {s}.jobs j WHERE j.job_group_id = jg.id \
+                     AND j.exit_code IS NOT NULL AND j.exit_code != 0)",
+                    s = self.schema
+                ));
+                arch_clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM {s}.jobs_archive j WHERE j.job_group_id = jg.id \
+                     AND j.exit_code IS NOT NULL AND j.exit_code != 0)",
+                    s = self.schema
+                ));
+            } else {
+                let i = next();
+                live_clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM {s}.jobs j WHERE j.job_group_id = jg.id AND j.exit_code = ${i})",
+                    s = self.schema, i = i
+                ));
+                arch_clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM {s}.jobs_archive j WHERE j.job_group_id = jg.id AND j.exit_code = ${i})",
+                    s = self.schema, i = i
+                ));
+            }
+        }
+
+        let live_where = if live_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", live_clauses.join(" AND "))
+        };
+        let arch_where = if arch_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", arch_clauses.join(" AND "))
+        };
+
+        // Project the same column list from both tables in the same
+        // order so UNION ALL stays type-compatible. The synthetic
+        // `archived` boolean lets the caller tag each row without a
+        // second query.
+        let s = &self.schema;
+        let live_proj = format!(
+            "SELECT id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
+                    state, priority, pr_number, idempotency_key, \
+                    allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
+                    status_reason, created_at, updated_at, completed_at, \
+                    false AS archived \
+             FROM {s}.job_groups jg {live_where}"
+        );
+        let arch_proj = format!(
+            "SELECT id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
+                    state, priority, pr_number, idempotency_key, \
+                    allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
+                    status_reason, created_at, updated_at, completed_at, \
+                    true AS archived \
+             FROM {s}.job_groups_archive jg {arch_where}"
+        );
+
+        let data_q = format!(
+            "SELECT * FROM ( {live_proj} UNION ALL {arch_proj} ) u \
+             ORDER BY priority DESC, created_at DESC LIMIT ${} OFFSET ${}",
+            idx + 1,
+            idx + 2
+        );
+        let count_q = format!(
+            "SELECT (SELECT COUNT(*) FROM {s}.job_groups jg {live_where}) \
+                  + (SELECT COUNT(*) FROM {s}.job_groups_archive jg {arch_where}) AS total"
+        );
+
+        // Bind the shared filter list — count and data queries both
+        // reference the same `$N` placeholders, so order matters.
+        macro_rules! bind_filters {
+            ($q:expr) => {{
+                let mut q = $q;
+                if let Some(state) = state_filter {
+                    q = q.bind(state.to_string());
+                }
+                if let Some(repo_id) = repo_id_filter {
+                    q = q.bind(repo_id);
+                }
+                if let Some(branch) = branch_filter {
+                    q = q.bind(branch.to_string());
+                }
+                if let Some(from) = date_from {
+                    q = q.bind(from);
+                }
+                if let Some(to) = date_to {
+                    q = q.bind(to);
+                }
+                if let Some(stage) = stage_name_filter {
+                    q = q.bind(stage.to_string());
+                }
+                if let Some(code) = exit_code_filter {
+                    if code != -1 {
+                        q = q.bind(code);
+                    }
+                }
+                q
+            }};
+        }
+
+        let total: i64 = bind_filters!(sqlx::query_scalar::<_, i64>(&count_q))
+            .fetch_one(&self.pool)
+            .await?;
+
+        let rows = bind_filters!(sqlx::query(&data_q))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let groups: Vec<(JobGroup, bool)> = rows
+            .into_iter()
+            .map(|r| {
+                let archived: bool = r.try_get("archived").unwrap_or(false);
+                (map_job_group(r), archived)
+            })
+            .collect();
+
+        Ok((groups, total))
+    }
+
+    /// Single-group fetch with archive fallback. Tries the live tables
+    /// first; if nothing turns up, queries the matching archive tables.
+    /// The third tuple element is `true` only when the row came from
+    /// the archive, so callers can render an "archived" badge / skip
+    /// in-memory registry lookups.
+    pub async fn get_job_group_with_jobs_or_archive(
+        &self,
+        group_id: Uuid,
+    ) -> anyhow::Result<Option<(JobGroup, Vec<DbJob>, bool)>> {
+        if let Some((g, jobs)) = self.get_job_group_with_jobs(group_id).await? {
+            return Ok(Some((g, jobs, false)));
+        }
+
+        // Archive fallback: pull the group row from `job_groups_archive`
+        // and its jobs from `jobs_archive`. The archive tables have the
+        // same column shape as live (minus the `archived_at` /
+        // `files_purged_at` tail we don't need here), so the same row
+        // mappers work once we project the columns explicitly.
+        let s = &self.schema;
+        let group_q = format!(
+            "SELECT id, repo_id, branch, commit_sha, trigger_source, reserved_worker_id, \
+                    state, priority, pr_number, idempotency_key, \
+                    allocated_cpu, allocated_memory_mb, allocated_disk_mb, \
+                    status_reason, created_at, updated_at, completed_at \
+             FROM {s}.job_groups_archive WHERE id = $1"
+        );
+        let row = sqlx::query(&group_q)
+            .bind(group_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let group = map_job_group(row);
+
+        let jobs_q = format!(
+            "SELECT id, job_group_id, stage_config_id, stage_name, command, pre_script, \
+                    post_script, worker_id, state, exit_code, pre_exit_code, post_exit_code, \
+                    log_path, started_at, completed_at, retry_count, status_reason, \
+                    created_at, updated_at \
+             FROM {s}.jobs_archive \
+             WHERE job_group_id = $1 ORDER BY created_at"
+        );
+        let job_rows = sqlx::query(&jobs_q)
+            .bind(group_id)
+            .fetch_all(&self.pool)
+            .await?;
+        let jobs: Vec<DbJob> = job_rows.into_iter().map(DbJob::from).collect();
+
+        Ok(Some((group, jobs, true)))
+    }
+
+    /// Read `archived_at` + `files_purged_at` for an archived group.
+    /// Returns `None` if the id isn't in the archive (e.g. caller hit
+    /// the live fast path). Used by the single-group GET handler to
+    /// surface "archived on …" / "files purged on …" timestamps.
+    pub async fn get_archive_timestamps(
+        &self,
+        group_id: Uuid,
+    ) -> anyhow::Result<Option<(DateTime<Utc>, Option<DateTime<Utc>>)>> {
+        let q = format!(
+            "SELECT archived_at, files_purged_at FROM {s}.job_groups_archive WHERE id = $1",
+            s = self.schema
+        );
+        let row = sqlx::query(&q)
+            .bind(group_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| {
+            (
+                r.get::<DateTime<Utc>, _>("archived_at"),
+                r.try_get::<Option<DateTime<Utc>>, _>("files_purged_at")
+                    .ok()
+                    .flatten(),
+            )
+        }))
+    }
+
+    /// JSON dump of archived child rows for a single group. Powers the
+    /// build-detail page when the group has been T2-archived — gives
+    /// the frontend a generic blob to render instead of hand-shaping
+    /// each child table.
+    ///
+    /// Shape:
+    /// ```json
+    /// {
+    ///   "artifacts":            [ { ... }, ... ],
+    ///   "test_results":         [ { ... }, ... ],
+    ///   "approval_gates":       [ { ... }, ... ],
+    ///   "worker_reservations":  [ { ... }, ... ]
+    /// }
+    /// ```
+    pub async fn get_archived_children_json(
+        &self,
+        group_id: Uuid,
+    ) -> anyhow::Result<serde_json::Value> {
+        let s = &self.schema;
+        // `COALESCE(json_agg(row_to_json(t)), '[]')` keeps an empty
+        // table returning `[]` rather than `null`.
+        let q = format!(
+            "SELECT \
+                (SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) \
+                   FROM {s}.artifacts_archive t WHERE job_group_id = $1) AS artifacts, \
+                (SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) \
+                   FROM {s}.test_results_archive t WHERE job_group_id = $1) AS test_results, \
+                (SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) \
+                   FROM {s}.approval_gates_archive t WHERE job_group_id = $1) AS approval_gates, \
+                (SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) \
+                   FROM {s}.worker_reservations_archive t WHERE job_group_id = $1) AS worker_reservations"
+        );
+        let row = sqlx::query(&q)
+            .bind(group_id)
+            .fetch_one(&self.pool)
+            .await?;
+        let artifacts: serde_json::Value = row.try_get("artifacts").unwrap_or(serde_json::json!([]));
+        let test_results: serde_json::Value =
+            row.try_get("test_results").unwrap_or(serde_json::json!([]));
+        let approval_gates: serde_json::Value = row
+            .try_get("approval_gates")
+            .unwrap_or(serde_json::json!([]));
+        let worker_reservations: serde_json::Value = row
+            .try_get("worker_reservations")
+            .unwrap_or(serde_json::json!([]));
+        Ok(serde_json::json!({
+            "artifacts":           artifacts,
+            "test_results":        test_results,
+            "approval_gates":      approval_gates,
+            "worker_reservations": worker_reservations,
+        }))
+    }
+
     /// List recent resource history entries for a stage.
     pub async fn list_resource_history(
         &self,
@@ -5075,6 +5401,115 @@ mod retention_storage_tests {
             vec![worker.to_string()],
             "must still see worker via jobs_archive fallback after T2"
         );
+
+        cleanup_group(&s, gid).await.expect("cleanup");
+    }
+
+    /// T7a — UNION ALL listing returns rows from both live and archive
+    /// tables, each tagged with the correct `archived` boolean.
+    #[tokio::test]
+    async fn list_with_include_archived_unions_both_tables() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid_live = Uuid::new_v4();
+        let gid_arch = Uuid::new_v4();
+
+        seed_group(
+            &s,
+            gid_live,
+            "success",
+            Utc::now() - chrono::Duration::days(2),
+        )
+        .await
+        .expect("seed live");
+        seed_group(
+            &s,
+            gid_arch,
+            "success",
+            Utc::now() - chrono::Duration::days(40),
+        )
+        .await
+        .expect("seed arch-candidate");
+        s.archive_groups_batch(&[gid_arch]).await.expect("archive");
+
+        // No filters — just confirm both rows surface and the archived
+        // flag is correct.
+        let (rows, total) = s
+            .list_job_groups_paginated_with_archive(500, 0, None, None, None, None, None, None, None)
+            .await
+            .expect("list with archive");
+
+        // total counts the union across the seeded rows + whatever
+        // else lives in the DB, so just assert the bound.
+        assert!(total >= 2, "expected total >= 2, got {total}");
+
+        let row_live = rows.iter().find(|(g, _)| g.id == gid_live);
+        let row_arch = rows.iter().find(|(g, _)| g.id == gid_arch);
+        assert!(row_live.is_some(), "missing live row {gid_live}");
+        assert!(row_arch.is_some(), "missing archived row {gid_arch}");
+        assert!(
+            !row_live.unwrap().1,
+            "live row should have archived=false"
+        );
+        assert!(
+            row_arch.unwrap().1,
+            "archived row should have archived=true"
+        );
+
+        cleanup_group(&s, gid_live).await.expect("cleanup live");
+        cleanup_group(&s, gid_arch).await.expect("cleanup arch");
+    }
+
+    /// T7a — single-group GET transparently falls back to the archive
+    /// tables and reports `is_archived = true`.
+    #[tokio::test]
+    async fn get_or_archive_falls_back_to_archive() {
+        let Some(s) = maybe_storage().await else {
+            return;
+        };
+        let gid = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let worker = "worker-fallback-test";
+
+        seed_group(&s, gid, "success", Utc::now() - chrono::Duration::days(40))
+            .await
+            .expect("seed group");
+        seed_job(&s, job_id, gid, Some(worker))
+            .await
+            .expect("seed job");
+
+        // Snapshot the live row before archiving so we can compare.
+        let (live_group, _, _) = s
+            .get_job_group_with_jobs_or_archive(gid)
+            .await
+            .expect("live read")
+            .expect("group present");
+
+        // Push to archive — live row disappears.
+        s.archive_groups_batch(&[gid]).await.expect("archive");
+
+        let (arch_group, arch_jobs, is_archived) = s
+            .get_job_group_with_jobs_or_archive(gid)
+            .await
+            .expect("archive read")
+            .expect("group still discoverable after archive");
+        assert!(is_archived, "expected is_archived=true after T2");
+        assert_eq!(arch_group.id, live_group.id);
+        assert_eq!(arch_group.branch, live_group.branch);
+        assert_eq!(arch_group.commit_sha, live_group.commit_sha);
+        assert_eq!(arch_group.state, live_group.state);
+        assert_eq!(arch_jobs.len(), 1, "expected 1 archived job row");
+        assert_eq!(arch_jobs[0].id, job_id);
+        assert_eq!(arch_jobs[0].worker_id.as_deref(), Some(worker));
+
+        // Sanity: archive timestamps method also surfaces the row.
+        let (archived_at, files_purged_at) = s
+            .get_archive_timestamps(gid)
+            .await
+            .expect("archive timestamps")
+            .expect("row present in archive");
+        let _ = (archived_at, files_purged_at); // just confirm the call succeeded.
 
         cleanup_group(&s, gid).await.expect("cleanup");
     }
