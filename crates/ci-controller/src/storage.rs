@@ -5108,6 +5108,34 @@ mod retention_storage_tests {
     /// to call against ids the test never inserted (DELETE … WHERE id =
     /// $1 returns 0 rows).
     async fn cleanup_group(s: &Storage, gid: Uuid) -> anyhow::Result<()> {
+        // If seed_all_children stashed a "t8:<repo>:<stage_config>" marker on
+        // the branch column, recover those ids so we can delete the synthetic
+        // repo and stage_config rows too. Look in both live and archive.
+        let marker: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT branch, NULL::text \
+             FROM chola.job_groups WHERE id = $1 \
+             UNION ALL \
+             SELECT branch, NULL::text \
+             FROM chola.job_groups_archive WHERE id = $1 \
+             LIMIT 1",
+        )
+        .bind(gid)
+        .fetch_optional(s.pool())
+        .await?;
+        let synthetic_ids = marker
+            .and_then(|(b, _)| b)
+            .filter(|b| b.starts_with("t8:"))
+            .and_then(|b| {
+                let parts: Vec<&str> = b.split(':').collect();
+                if parts.len() == 3 {
+                    let repo = Uuid::parse_str(parts[1]).ok()?;
+                    let sc = Uuid::parse_str(parts[2]).ok()?;
+                    Some((repo, sc))
+                } else {
+                    None
+                }
+            });
+
         // Children first in both worlds.
         for tbl in [
             "approval_gates",
@@ -5129,6 +5157,18 @@ mod retention_storage_tests {
             .bind(gid)
             .execute(s.pool())
             .await?;
+        if let Some((repo_id, stage_config_id)) = synthetic_ids {
+            sqlx::query("DELETE FROM chola.stage_configs WHERE id = $1")
+                .bind(stage_config_id)
+                .execute(s.pool())
+                .await
+                .ok();
+            sqlx::query("DELETE FROM chola.repos WHERE id = $1")
+                .bind(repo_id)
+                .execute(s.pool())
+                .await
+                .ok();
+        }
         Ok(())
     }
 
@@ -5553,8 +5593,30 @@ mod retention_storage_tests {
         .execute(s.pool())
         .await?;
 
-        // approval_gates (requires a stage_config_id — use a random uuid;
-        // the archive table has no FK so this is safe for tests)
+        // approval_gates needs a real stage_config_id (FK to stage_configs,
+        // which itself needs a real repo_id). Build a minimal pair so the
+        // insert satisfies both FKs, and clean them up in cleanup_group.
+        let repo_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO chola.repos (id, repo_name, repo_url) \
+             VALUES ($1, $2, $3)",
+        )
+        .bind(repo_id)
+        .bind(format!("t8-test-{repo_id}"))
+        .bind(format!("https://example.test/t8/{repo_id}.git"))
+        .execute(s.pool())
+        .await?;
+        let stage_config_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO chola.stage_configs \
+             (id, repo_id, stage_name, command) \
+             VALUES ($1, $2, 'unit', 'echo hi')",
+        )
+        .bind(stage_config_id)
+        .bind(repo_id)
+        .execute(s.pool())
+        .await?;
+
         sqlx::query(
             "INSERT INTO chola.approval_gates \
              (id, job_group_id, stage_config_id) \
@@ -5562,9 +5624,18 @@ mod retention_storage_tests {
         )
         .bind(Uuid::new_v4())
         .bind(gid)
-        .bind(Uuid::new_v4())
+        .bind(stage_config_id)
         .execute(s.pool())
         .await?;
+
+        // Stash repo+stage_config ids on the group's branch field so
+        // cleanup_group can find and delete them. Cheap hack to avoid
+        // threading return values through every call site.
+        sqlx::query("UPDATE chola.job_groups SET branch = $2 WHERE id = $1")
+            .bind(gid)
+            .bind(format!("t8:{repo_id}:{stage_config_id}"))
+            .execute(s.pool())
+            .await?;
 
         Ok(())
     }
@@ -5693,10 +5764,12 @@ mod retention_storage_tests {
 
         // Insert a repo row first (job_groups.repo_id FK).
         sqlx::query(
-            "INSERT INTO chola.repos (id, name, url) VALUES ($1, 'cap-test', 'http://x') \
+            "INSERT INTO chola.repos (id, repo_name, repo_url) \
+             VALUES ($1, $2, 'http://x') \
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(repo_id)
+        .bind(format!("cap-test-{repo_id}"))
         .execute(s.pool())
         .await
         .expect("insert repo");
