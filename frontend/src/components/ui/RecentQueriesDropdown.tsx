@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-const MAX_DISPLAY_LEN = 60;
-
-function truncate(s: string): string {
-  return s.length <= MAX_DISPLAY_LEN ? s : s.slice(0, MAX_DISPLAY_LEN - 1) + '…';
-}
+const MIN_POPOVER_WIDTH = 320;
+const MAX_POPOVER_WIDTH = 720;
+const VIEWPORT_MARGIN   = 16;
 
 interface Props {
   history: string[];
@@ -32,14 +30,22 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
   const recompute = () => {
     if (!btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    const width = Math.max(r.width, 280);
-    const wouldOverflowRight = r.left + width > window.innerWidth - 8;
+    // Use as much viewport width as possible, capped at MAX_POPOVER_WIDTH.
+    const availableWidth = Math.max(
+      MIN_POPOVER_WIDTH,
+      Math.min(MAX_POPOVER_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2),
+    );
+    // Anchor: prefer right-aligned to button so the popover grows leftward
+    // (avoids it shooting off the right edge of the page).
+    let left = r.right + window.scrollX - availableWidth;
+    // Don't let it go off the left edge either.
+    if (left < window.scrollX + VIEWPORT_MARGIN) {
+      left = window.scrollX + VIEWPORT_MARGIN;
+    }
     setPos({
       top: r.bottom + window.scrollY + 4,
-      left: wouldOverflowRight
-        ? r.right + window.scrollX - width
-        : r.left + window.scrollX,
-      width,
+      left,
+      width: availableWidth,
     });
   };
 
@@ -140,10 +146,11 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
             position: 'absolute',
             top: pos.top,
             left: pos.left,
-            minWidth: pos.width,
+            width: pos.width,
+            maxWidth: `calc(100vw - ${VIEWPORT_MARGIN * 2}px)`,
             zIndex: 9999,
           }}
-          className="bg-surface border border-border rounded-xl shadow-lg py-1 max-h-72 overflow-y-auto"
+          className="bg-surface border border-border rounded-xl shadow-lg py-1 max-h-[60vh] overflow-y-auto"
         >
           {history.length === 0 ? (
             <p className="px-3 py-2 text-sm text-muted select-none">
@@ -160,20 +167,19 @@ export function RecentQueriesDropdown({ history, onPick, onClear, onRemove, clas
                   aria-selected={idx === activeIndex}
                   onClick={() => handlePick(q)}
                   onFocus={() => setActiveIndex(idx)}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left cursor-pointer hover:bg-surface-hover group focus:outline-none focus:bg-surface-hover"
+                  className="w-full flex items-start justify-between gap-2 px-3 py-1.5 text-left cursor-pointer hover:bg-surface-hover group focus:outline-none focus:bg-surface-hover"
                 >
                   <span
-                    className="text-sm text-primary truncate flex-1"
-                    title={q}
+                    className="text-sm text-primary font-mono flex-1 min-w-0 truncate group-hover:whitespace-pre-wrap group-hover:break-all group-focus:whitespace-pre-wrap group-focus:break-all"
                   >
-                    {truncate(q)}
+                    {q}
                   </span>
                   {onRemove && (
                     <button
                       type="button"
                       onClick={(e) => handleRemove(e, q)}
-                      aria-label={`Remove "${truncate(q)}" from history`}
-                      className="shrink-0 text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 focus:outline-none rounded"
+                      aria-label={`Remove query from history`}
+                      className="shrink-0 mt-0.5 text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 focus:outline-none rounded"
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
