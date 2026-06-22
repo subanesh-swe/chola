@@ -88,7 +88,7 @@ export function SearchDialog({ open, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Search"
-        className="relative w-full max-w-lg bg-surface border border-border rounded-xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-2xl mx-4 bg-surface border border-border rounded-xl shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">

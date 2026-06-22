@@ -63,14 +63,26 @@ export function SearchResult({ item, onClose }: Props) {
   return (
     <button
       onClick={handleClick}
-      className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-hover transition-colors rounded-lg"
+      className="group w-full flex items-start gap-3 px-4 py-2.5 text-left hover:bg-surface-hover transition-colors rounded-lg"
     >
-      <span className={colorMap[item.type]}><Icon /></span>
-      <div className="min-w-0">
-        <p className="text-sm text-primary truncate">{item.title}</p>
-        {item.subtitle && <p className="text-xs text-disabled truncate">{item.subtitle}</p>}
+      <span className={`${colorMap[item.type]} mt-0.5`}><Icon /></span>
+      <div className="min-w-0 flex-1">
+        <p
+          className="text-sm text-primary truncate group-hover:whitespace-pre-wrap group-hover:break-all group-focus:whitespace-pre-wrap group-focus:break-all"
+          title={item.title}
+        >
+          {item.title}
+        </p>
+        {item.subtitle && (
+          <p
+            className="text-xs text-disabled truncate group-hover:whitespace-pre-wrap group-hover:break-all group-focus:whitespace-pre-wrap group-focus:break-all"
+            title={item.subtitle}
+          >
+            {item.subtitle}
+          </p>
+        )}
       </div>
-      <span className="ml-auto text-[10px] text-disabled uppercase shrink-0">{item.type}</span>
+      <span className="ml-auto mt-0.5 text-[10px] text-disabled uppercase shrink-0">{item.type}</span>
     </button>
   );
 }

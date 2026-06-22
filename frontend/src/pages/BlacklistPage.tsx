@@ -247,9 +247,9 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
             <tbody className="divide-y divide-border">
               {entries.map((e) => (
                 <tr key={e.id}>
-                  <td className="px-4 py-3 text-sm text-secondary font-mono max-w-xs truncate">{e.pattern}</td>
+                  <td className="px-4 py-3 text-sm text-secondary font-mono max-w-xs truncate" title={e.pattern}>{e.pattern}</td>
                   <td className="px-4 py-3 text-sm text-muted">{scopeLabel(e)}</td>
-                  <td className="px-4 py-3 text-sm text-muted max-w-xs truncate">{e.description ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm text-muted max-w-xs truncate" title={e.description ?? undefined}>{e.description ?? '—'}</td>
                   <td className="px-4 py-3">
                     {canManage ? (
                       <button
@@ -522,9 +522,9 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
             <tbody className="divide-y divide-border">
               {entries.map((e) => (
                 <tr key={e.id}>
-                  <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs">{e.worker_id}</td>
-                  <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs">{e.pattern}</td>
-                  <td className="px-4 py-3 text-sm text-muted max-w-xs truncate">{e.description ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs" title={e.worker_id}>{e.worker_id}</td>
+                  <td className="px-4 py-3 text-sm text-secondary font-mono truncate max-w-xs" title={e.pattern}>{e.pattern}</td>
+                  <td className="px-4 py-3 text-sm text-muted max-w-xs truncate" title={e.description ?? undefined}>{e.description ?? '—'}</td>
                   <td className="px-4 py-3">
                     {canManage ? (
                       <button

@@ -193,7 +193,7 @@ export default function ReposPage() {
                           <Link to={href} aria-label={`Repository ${r.repo_name}`} className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent" />
                           <span className="relative z-10 text-sm text-accent-text">{r.repo_name}</span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-muted font-mono truncate max-w-xs relative z-10">{r.repo_url}</td>
+                        <td className="px-4 py-3 text-sm text-muted font-mono truncate max-w-xs relative z-10" title={r.repo_url}>{r.repo_url}</td>
                         <td className="px-4 py-3 text-sm text-secondary relative z-10">{r.default_branch}</td>
                         <td className="px-4 py-3 relative z-10">
                           <StatusBadge status={r.enabled ? 'Connected' : 'Disconnected'} />
