@@ -77,7 +77,7 @@ export default function BuildQueuePage() {
       />
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
           Failed to load build queue. Please try again.
         </div>
       )}

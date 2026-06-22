@@ -226,7 +226,7 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                       Cancel
                     </button>
                     <button onClick={() => updateMut.mutate(s.id)} disabled={!editContent || updateMut.isPending}
-                      className="px-2 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-green-500">
+                      className="px-2 py-1 text-xs bg-success text-white rounded hover:bg-success disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-success">
                       Save
                     </button>
                   </div>
@@ -239,14 +239,14 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                   <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                     s.script_type === 'pre'
                       ? 'bg-accent-soft text-accent-text border border-accent/30'
-                      : 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
+                      : 'bg-pending-soft text-pending border border-pending/30'
                   }`}>
                     {s.script_type.toUpperCase()}
                   </span>
                   <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                     s.script_scope === 'worker'
-                      ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
-                      : 'bg-amber-900/40 text-amber-300 border border-amber-700/50'
+                      ? 'bg-success-soft text-success border border-success/30'
+                      : 'bg-warning-soft text-warning border border-warning/30'
                   }`}>
                     {s.script_scope.toUpperCase()}
                   </span>
@@ -254,7 +254,7 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                     <span className="text-xs text-muted font-mono">worker: {s.worker_id}</span>
                   )}
                   {s.lock_enabled ? (
-                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-orange-900/40 text-orange-300 border border-orange-700/50">
+                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-warning-soft text-warning border border-warning/30">
                       LOCK {s.lock_key || '(default)'} — {s.lock_timeout_secs}s
                     </span>
                   ) : (
@@ -272,7 +272,7 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                       <button
                         onClick={() => setDeleteId(s.id)}
                         disabled={editingId !== null}
-                        className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                        className="text-xs text-danger hover:text-danger disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-danger rounded"
                       >
                         Delete
                       </button>
@@ -321,7 +321,7 @@ function ScriptsPanel({ repoId, stageId, canManage }: { repoId: string; stageId:
                   <span className="text-sm text-secondary">Enable Lock</span>
                 </label>
                 {lockEnabled && (
-                  <div className="mt-2 space-y-2 pl-1 border-l-2 border-orange-700/40 pl-3">
+                  <div className="mt-2 space-y-2 pl-1 border-l-2 border-warning/40 pl-3">
                     <div>
                       <label className="block text-sm text-secondary mb-1">Lock Key</label>
                       <input value={lockKey} onChange={(e) => setLockKey(e.target.value)} className={inputCls}
@@ -597,7 +597,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                         <button
                           onClick={() => updateStage.mutate(s.id)}
                           disabled={updateStage.isPending}
-                          className="text-xs text-green-400 hover:text-green-300 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-green-500 rounded"
+                          className="text-xs text-success hover:text-success disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-success rounded"
                         >
                           Save
                         </button>
@@ -651,7 +651,7 @@ function StageSection({ repoId, canManage }: { repoId: string; canManage: boolea
                           <button
                             onClick={() => delStage.mutate(s.id)}
                             disabled={editingStageId !== null}
-                            className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                            className="text-xs text-danger hover:text-danger disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-danger rounded"
                           >
                             Delete
                           </button>
@@ -764,7 +764,7 @@ function DeliveryPanel({ repoId, webhookId }: { repoId: string; webhookId: strin
             <td className="px-6 py-2 text-sm"><TimeAgo date={d.delivered_at} className="text-disabled" /></td>
             <td className="px-6 py-2 text-sm text-secondary">{d.event}</td>
             <td className="px-6 py-2 text-sm">
-              <span className={d.success ? 'text-green-400' : 'text-red-400'}>
+              <span className={d.success ? 'text-success' : 'text-danger'}>
                 {d.status_code}
               </span>
             </td>
@@ -805,11 +805,11 @@ function WebhookRow({ repoId, webhook, canManage, onDelete }: {
             <span key={e} className="text-xs px-1.5 py-0.5 bg-surface-2 text-secondary rounded">{e}</span>
           ))}
         </div>
-        <span className={`ml-auto text-xs px-2 py-0.5 rounded ${webhook.enabled ? 'text-green-400 bg-green-500/10' : 'text-disabled bg-surface-2'}`}>
+        <span className={`ml-auto text-xs px-2 py-0.5 rounded ${webhook.enabled ? 'text-success bg-success-soft' : 'text-disabled bg-surface-2'}`}>
           {webhook.enabled ? 'active' : 'disabled'}
         </span>
         {canManage && (
-          <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-1 focus:ring-red-500 rounded ml-2">
+          <button onClick={onDelete} className="text-xs text-danger hover:text-danger focus:outline-none focus:ring-1 focus:ring-danger rounded ml-2">
             Delete
           </button>
         )}
@@ -991,7 +991,7 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
                       onClick={() => toggleMut.mutate({ id: e.id, enabled: !e.enabled })}
                       className={`text-xs px-2 py-0.5 rounded border transition-colors focus:outline-none focus:ring-1 ${
                         e.enabled
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                          ? 'bg-success-soft text-success border-success/30 hover:bg-success-soft'
                           : 'bg-surface-2 text-muted border-border hover:bg-surface-hover'
                       }`}
                     >
@@ -1001,7 +1001,7 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
                     <span
                       className={`text-xs px-2 py-0.5 rounded border ${
                         e.enabled
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          ? 'bg-success-soft text-success border-success/30'
                           : 'bg-surface-2 text-muted border-border'
                       }`}
                     >
@@ -1013,7 +1013,7 @@ function RepoBlacklistSection({ repoId, canManage }: { repoId: string; canManage
                   <td className="px-4 py-3 text-center">
                     <button
                       onClick={() => setDeleteId(e.id)}
-                      className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                      className="text-xs text-danger hover:text-danger focus:outline-none focus:ring-1 focus:ring-danger rounded"
                     >
                       Delete
                     </button>
@@ -1194,12 +1194,12 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
                   {canManage ? (
                     <button
                       onClick={() => toggleMut.mutate({ id: s.id, enabled: !s.enabled })}
-                      className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-surface-2 text-muted'}`}
+                      className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'}`}
                     >
                       {s.enabled ? 'Enabled' : 'Disabled'}
                     </button>
                   ) : (
-                    <span className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-surface-2 text-muted'}`}>
+                    <span className={`px-2 py-0.5 text-xs rounded font-medium ${s.enabled ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'}`}>
                       {s.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   )}
@@ -1209,7 +1209,7 @@ function ScheduleSection({ repoId, canManage }: { repoId: string; canManage: boo
                 </td>
                 {canManage && (
                   <td className="px-4 py-3">
-                    <button onClick={() => setDeleteId(s.id)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
+                    <button onClick={() => setDeleteId(s.id)} className="text-xs text-danger hover:text-danger">Delete</button>
                   </td>
                 )}
               </tr>
@@ -1340,8 +1340,8 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
 
   const scopeBadge = (scope: string) => {
     const colors: Record<string, string> = {
-      worker: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-      master: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+      worker: 'bg-success-soft text-success border-success/30',
+      master: 'bg-warning-soft text-warning border-warning/30',
       both: 'bg-accent-soft text-accent-text border-accent/30',
     };
     return (
@@ -1388,7 +1388,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
             )}
             {!editing && (
               preLockEnabled ? (
-                <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30">
+                <span className="text-xs px-2 py-0.5 rounded border bg-info-soft text-warning border-warning/30">
                   LOCK {preLockKey || '(default key)'} — {preLockTimeoutSecs}s
                 </span>
               ) : (
@@ -1414,7 +1414,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                 placeholder="#!/bin/bash&#10;set -e&#10;# Workspace setup script..."
               />
               {preLockEnabled && (
-                <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-orange-700/40 pl-3">
+                <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-warning/40 pl-3">
                   <div className="flex-1 min-w-48">
                     <label className="block text-xs text-muted mb-1">Lock Key</label>
                     <input value={preLockKey} onChange={(e) => setPreLockKey(e.target.value)}
@@ -1442,7 +1442,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
         {/* Post-script */}
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs px-2 py-0.5 rounded border bg-purple-500/10 text-purple-400 border-purple-500/30">POST</span>
+            <span className="text-xs px-2 py-0.5 rounded border bg-pending-soft text-pending border-pending/30">POST</span>
             {editing ? (
               <select
                 value={postScope}
@@ -1458,7 +1458,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
             )}
             {!editing && (
               postLockEnabled ? (
-                <span className="text-xs px-2 py-0.5 rounded border bg-orange-500/10 text-orange-400 border-orange-500/30">
+                <span className="text-xs px-2 py-0.5 rounded border bg-info-soft text-warning border-warning/30">
                   LOCK {postLockKey || '(default key)'} — {postLockTimeoutSecs}s
                 </span>
               ) : (
@@ -1484,7 +1484,7 @@ function GlobalScriptsSection({ repoId, canManage }: { repoId: string; canManage
                 placeholder="#!/bin/bash&#10;# Cleanup, notifications..."
               />
               {postLockEnabled && (
-                <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-orange-700/40 pl-3">
+                <div className="mt-2 flex gap-3 flex-wrap border-l-2 border-warning/40 pl-3">
                   <div className="flex-1 min-w-48">
                     <label className="block text-xs text-muted mb-1">Lock Key</label>
                     <input value={postLockKey} onChange={(e) => setPostLockKey(e.target.value)}
@@ -1587,14 +1587,14 @@ export default function RepoDetailPage() {
                 disabled={toggleEnabled.isPending}
                 className={`mt-1 px-3 py-1 text-xs rounded-full font-medium transition-colors ${
                   repo.enabled
-                    ? 'bg-emerald-900/40 text-emerald-400 hover:bg-emerald-900/60'
-                    : 'bg-red-900/40 text-red-400 hover:bg-red-900/60'
+                    ? 'bg-success-soft text-success hover:opacity-80'
+                    : 'bg-danger-soft text-danger hover:opacity-80'
                 } disabled:opacity-50`}
               >
                 {repo.enabled ? 'Enabled' : 'Disabled'}
               </button>
             ) : (
-              <span className={`inline-block mt-1 px-3 py-1 text-xs rounded-full font-medium ${repo.enabled ? 'bg-emerald-900/40 text-emerald-400' : 'bg-red-900/40 text-red-400'}`}>
+              <span className={`inline-block mt-1 px-3 py-1 text-xs rounded-full font-medium ${repo.enabled ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'}`}>
                 {repo.enabled ? 'Enabled' : 'Disabled'}
               </span>
             )}

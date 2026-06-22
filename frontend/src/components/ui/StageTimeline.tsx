@@ -21,13 +21,13 @@ export function StageTimeline({ jobs, onSelectJob, selectedJobId }: Props) {
   const maxMs = sorted.reduce((max, j) => Math.max(max, durationMs(j.started_at, j.completed_at)), 1000);
 
   const stateColor: Record<string, string> = {
-    success: 'bg-emerald-500',
-    failed: 'bg-red-500',
+    success: 'bg-success',
+    failed: 'bg-danger',
     running: 'bg-accent',
-    cancelled: 'bg-yellow-500',
+    cancelled: 'bg-warning',
     queued: 'bg-surface-2',
     assigned: 'bg-accent/70',
-    unknown: 'bg-orange-500',
+    unknown: 'bg-warning',
   };
 
   return (

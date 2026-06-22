@@ -23,9 +23,9 @@ import type { MutationError } from '../types';
 function ScopeBadge({ scope }: { scope: string }) {
   const colors: Record<string, string> = {
     shared: 'bg-accent-soft text-accent-text border-accent/30',
-    project: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+    project: 'bg-pending-soft text-pending border-pending/30',
     team: 'bg-accent-soft text-accent-text border-accent/30',
-    runner: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    runner: 'bg-warning-soft text-warning border-warning/30',
   };
   const cls = colors[scope] ?? 'bg-surface-2 text-muted border-border';
   return (
@@ -55,13 +55,13 @@ function CreatedTokenModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-emerald-400 text-lg font-bold">Token created</span>
+          <span className="text-success text-lg font-bold">Token created</span>
         </div>
-        <p className="text-sm text-yellow-400 mb-4">
+        <p className="text-sm text-warning mb-4">
           Copy this token now — it will not be shown again.
         </p>
         <div className="bg-surface-2 border border-border rounded-lg p-3 mb-1 flex items-center gap-2">
-          <code className="text-emerald-300 font-mono text-xs break-all flex-1 select-all cursor-text">
+          <code className="text-success font-mono text-xs break-all flex-1 select-all cursor-text">
             {token.token}
           </code>
           <button
@@ -96,18 +96,18 @@ function CreatedTokenModal({
           {token.scope === 'runner' ? (
             <>
               <p className="text-secondary font-medium">Set environment variable for ci-job-runner:</p>
-              <code className="block text-emerald-300 font-mono">
+              <code className="block text-success font-mono">
                 export CHOLA_TOKEN={token.token}
               </code>
             </>
           ) : (
             <>
               <p className="text-secondary font-medium">Add to worker config file:</p>
-              <code className="block text-emerald-300 font-mono">
+              <code className="block text-success font-mono">
                 token: &quot;{token.token}&quot;
               </code>
               <p className="text-muted pt-1">Or set environment variable:</p>
-              <code className="block text-emerald-300 font-mono">
+              <code className="block text-success font-mono">
                 export CHOLA_TOKEN={token.token}
               </code>
             </>
@@ -340,7 +340,7 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
       </p>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
           Failed to load tokens. Please try again.
         </div>
       )}
@@ -407,7 +407,7 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
                       <span
                         className={`text-xs px-1.5 py-0.5 rounded border ${
                           t.active
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            ? 'bg-success-soft text-success border-success/30'
                             : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
@@ -429,14 +429,14 @@ export default function WorkerTokensPage({ filterScope, defaultScope }: WorkerTo
                             className={`px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 ${
                               t.active
                                 ? 'bg-surface-2 text-secondary border-border hover:bg-surface-hover focus:ring-border'
-                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 focus:ring-emerald-500'
+                                : 'bg-success-soft text-success border-success/30 hover:bg-success-soft focus:ring-success'
                             }`}
                           >
                             {t.active ? 'Deactivate' : 'Activate'}
                           </button>
                           <button
                             onClick={() => setDeleteId(t.id)}
-                            className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 focus:outline-none focus:ring-1 focus:ring-red-500"
+                            className="px-2 py-1 text-xs bg-danger-soft text-danger border border-danger/30 rounded hover:bg-danger-soft focus:outline-none focus:ring-1 focus:ring-danger"
                           >
                             Delete
                           </button>

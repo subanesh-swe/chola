@@ -83,7 +83,7 @@ function BoolDisplay({ value }: { value: string | number | boolean }) {
   const on = String(value) === 'true';
   return (
     <span
-      className={`px-2 py-0.5 rounded text-xs font-medium ${on ? 'bg-emerald-500/20 text-emerald-400' : 'bg-surface-2 text-muted'}`}
+      className={`px-2 py-0.5 rounded text-xs font-medium ${on ? 'bg-success-soft text-success' : 'bg-surface-2 text-muted'}`}
     >
       {on ? 'enabled' : 'disabled'}
     </span>
@@ -382,7 +382,7 @@ function ResultModal({ results, onDone }: ResultModalProps) {
         <p className="text-sm text-muted mb-5">
           {accepted} accepted
           {rejected > 0 && (
-            <span className="text-red-400 ml-1">/ {rejected} rejected</span>
+            <span className="text-danger ml-1">/ {rejected} rejected</span>
           )}
         </p>
 
@@ -390,21 +390,21 @@ function ResultModal({ results, onDone }: ResultModalProps) {
           {results.map((r) => (
             <div
               key={r.key}
-              className={`rounded-lg px-4 py-3 ${r.status === 'accepted' ? 'bg-emerald-900/20 border border-emerald-700/30' : 'bg-red-900/20 border border-red-700/30'}`}
+              className={`rounded-lg px-4 py-3 ${r.status === 'accepted' ? 'bg-success-soft border border-success/30' : 'bg-danger-soft border border-danger/30'}`}
             >
               <div className="flex items-center gap-2">
                 {r.status === 'accepted'
-                  ? <CheckCircleIcon className="w-4 h-4 text-emerald-400 shrink-0" />
-                  : <XCircleIcon className="w-4 h-4 text-red-400 shrink-0" />}
+                  ? <CheckCircleIcon className="w-4 h-4 text-success shrink-0" />
+                  : <XCircleIcon className="w-4 h-4 text-danger shrink-0" />}
                 <span className="text-sm font-mono text-secondary">{r.key}</span>
                 <span
-                  className={`text-xs ${r.status === 'accepted' ? 'text-emerald-400' : 'text-red-400'}`}
+                  className={`text-xs ${r.status === 'accepted' ? 'text-success' : 'text-danger'}`}
                 >
                   {r.status}
                 </span>
               </div>
               {r.message && (
-                <p className="text-xs text-red-300 mt-1 ml-6">{r.message}</p>
+                <p className="text-xs text-danger mt-1 ml-6">{r.message}</p>
               )}
             </div>
           ))}
@@ -514,7 +514,7 @@ export default function SettingsPage() {
   if (isLoading) return <LoadingSkeleton />;
   if (isError || !data)
     return (
-      <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
+      <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger text-sm">
         <p className="font-semibold">Failed to load settings.</p>
         <p className="text-sm mt-1">Please try again.</p>
       </div>

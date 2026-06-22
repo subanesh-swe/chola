@@ -98,7 +98,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
         </h3>
 
         {mutation.isSuccess ? (
-          <p className="text-sm text-emerald-400 mb-4">Password changed successfully.</p>
+          <p className="text-sm text-success mb-4">Password changed successfully.</p>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -145,7 +145,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
             </div>
 
             {(validationError || mutation.isError) && (
-              <p className="text-sm text-red-400" role="alert">
+              <p className="text-sm text-danger" role="alert">
                 {validationError || 'Failed to change password. Check your current password.'}
               </p>
             )}

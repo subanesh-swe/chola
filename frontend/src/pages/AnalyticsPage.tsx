@@ -199,12 +199,12 @@ export default function AnalyticsPage() {
 
   if (isError) {
     return (
-      <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+      <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
         <h3 className="font-semibold">Failed to load analytics</h3>
         <p className="text-sm mt-1">An error occurred. Please try again.</p>
         <button
           onClick={() => void refetchRef.current()}
-          className="mt-3 px-3 py-1 bg-red-800 hover:bg-red-700 rounded text-sm text-white"
+          className="mt-3 px-3 py-1 bg-danger hover:opacity-90 rounded text-sm text-on-accent"
         >
           Retry
         </button>
@@ -313,7 +313,7 @@ export default function AnalyticsPage() {
           label="Success Rate"
           value={`${summary.success_rate}%`}
           sub={`${summary.total_builds > 0 ? Math.round(summary.total_builds * summary.success_rate / 100) : 0} succeeded`}
-          color={summary.success_rate >= 80 ? 'border-emerald-500/30' : 'border-yellow-500/30'}
+          color={summary.success_rate >= 80 ? 'border-success/30' : 'border-warning/30'}
         />
         <StatCard
           label="Avg Duration"

@@ -152,7 +152,7 @@ export default function ReposPage() {
       </div>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
           Failed to load repositories. Please try again.
         </div>
       )}
@@ -206,7 +206,7 @@ export default function ReposPage() {
                             <button
                               onClick={(e) => { e.stopPropagation(); setDelId(r.id); }}
                               aria-label={`Delete repository ${r.repo_name}`}
-                              className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
+                              className="text-xs text-danger hover:text-danger focus:outline-none focus:ring-2 focus:ring-danger rounded"
                             >
                               Delete
                             </button>

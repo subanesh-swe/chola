@@ -77,7 +77,7 @@ function SystemStatusPanel({
         {items.map((item) => (
           <div key={item.label} className="px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${item.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <span className={`w-2 h-2 rounded-full ${item.ok ? 'bg-success' : 'bg-danger'}`} />
               <span className="text-sm text-secondary">{item.label}</span>
             </div>
             {item.detail !== undefined && (
@@ -129,10 +129,10 @@ export default function DashboardPage() {
   if (isLoading) return <DashboardSkeleton />;
   if (isError) return (
     <div className="p-6">
-      <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+      <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
         <h3 className="font-semibold">Failed to load dashboard</h3>
         <p className="text-sm mt-1">An error occurred. Please try again.</p>
-        <button onClick={() => window.location.reload()} className="mt-3 px-3 py-1 bg-red-800 hover:bg-red-700 rounded text-sm text-white">Retry</button>
+        <button onClick={() => window.location.reload()} className="mt-3 px-3 py-1 bg-danger hover:opacity-90 rounded text-sm text-on-accent">Retry</button>
       </div>
     </div>
   );
@@ -160,7 +160,7 @@ export default function DashboardPage() {
           label="Connected Workers"
           value={connected}
           trend={workerTrend}
-          color="border-emerald-500/30"
+          color="border-success/30"
           sparkColor="#10b981"
           subtext={draining > 0 ? `${draining} draining` : `${wc.length} total`}
         />
@@ -168,7 +168,7 @@ export default function DashboardPage() {
           label="Success Rate"
           value={`${successRate}%`}
           trend={rateTrend}
-          color={successRate >= 80 ? 'border-emerald-500/30' : 'border-yellow-500/30'}
+          color={successRate >= 80 ? 'border-success/30' : 'border-warning/30'}
           sparkColor={successRate >= 80 ? '#10b981' : '#f59e0b'}
           subtext={`${successCount} succeeded`}
         />
@@ -176,7 +176,7 @@ export default function DashboardPage() {
           label="Failed Builds"
           value={failed}
           trend={failedTrend}
-          color={failed > 0 ? 'border-red-500/30' : 'border-border'}
+          color={failed > 0 ? 'border-danger/30' : 'border-border'}
           sparkColor="#ef4444"
           subtext={`${totalDone} total completed`}
         />
@@ -247,8 +247,8 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
                       <span className={`w-1.5 h-1.5 rounded-full ${
-                        w.status === 'Connected' ? 'bg-emerald-500' :
-                        w.status === 'Draining' ? 'bg-yellow-500' : 'bg-red-500'
+                        w.status === 'Connected' ? 'bg-success' :
+                        w.status === 'Draining' ? 'bg-warning' : 'bg-danger'
                       }`} />
                       <p className="text-xs text-secondary truncate max-w-[120px]">{w.hostname || w.worker_id}</p>
                     </div>

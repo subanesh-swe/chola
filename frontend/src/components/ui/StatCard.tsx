@@ -8,9 +8,9 @@ interface Props {
 
 const colorMap = {
   default: 'border-border',
-  success: 'border-emerald-500/30',
-  danger: 'border-red-500/30',
-  warning: 'border-yellow-500/30',
+  success: 'border-success/30',
+  danger: 'border-danger/30',
+  warning: 'border-warning/30',
   info: 'border-accent/30',
 };
 

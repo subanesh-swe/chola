@@ -69,7 +69,7 @@ const columns: Column<Run>[] = [
     key: 'exit_code',
     header: 'Exit',
     render: (r) => (
-      <span className={r.exit_code === 0 ? 'text-emerald-400' : r.exit_code != null ? 'text-red-400' : 'text-disabled'}>
+      <span className={r.exit_code === 0 ? 'text-success' : r.exit_code != null ? 'text-danger' : 'text-disabled'}>
         {r.exit_code != null ? r.exit_code : '—'}
       </span>
     ),
@@ -159,7 +159,7 @@ export default function RunsPage() {
       {isError && (
         <div
           role="alert"
-          className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400"
+          className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger"
         >
           Failed to load runs. Please try again.
         </div>

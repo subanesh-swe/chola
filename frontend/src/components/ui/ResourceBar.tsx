@@ -12,9 +12,9 @@ interface Props {
 }
 
 function getBarColor(percent: number): string {
-  if (percent >= 90) return 'bg-red-500';
-  if (percent >= 70) return 'bg-yellow-500';
-  return 'bg-emerald-500';
+  if (percent >= 90) return 'bg-danger';
+  if (percent >= 70) return 'bg-warning';
+  return 'bg-success';
 }
 
 export function ResourceBar({

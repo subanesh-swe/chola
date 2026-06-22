@@ -128,7 +128,7 @@ function KvEditor({
               <button
                 type="button"
                 onClick={() => remove(k)}
-                className="text-red-400 hover:text-red-300 focus:outline-none"
+                className="text-danger hover:text-danger focus:outline-none"
                 aria-label={`Remove ${k}`}
               >
                 &times;
@@ -386,7 +386,7 @@ export default function LabelGroupsPage() {
       </p>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
           Failed to load label groups. Please try again.
         </div>
       )}
@@ -413,7 +413,7 @@ export default function LabelGroupsPage() {
                       <span
                         className={`text-xs px-1.5 py-0.5 rounded border ${
                           g.enabled
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            ? 'bg-success-soft text-success border-success/30'
                             : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
@@ -446,7 +446,7 @@ export default function LabelGroupsPage() {
                         {g.capabilities.map((c) => (
                           <span
                             key={c}
-                            className="text-xs px-1.5 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded"
+                            className="text-xs px-1.5 py-0.5 bg-pending-soft text-pending border border-pending/30 rounded"
                           >
                             {c}
                           </span>
@@ -478,7 +478,7 @@ export default function LabelGroupsPage() {
                         className={`px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 ${
                           g.enabled
                             ? 'bg-surface-2 text-secondary border-border hover:bg-surface-hover focus:ring-border'
-                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 focus:ring-emerald-500'
+                            : 'bg-success-soft text-success border-success/30 hover:bg-success-soft focus:ring-success'
                         }`}
                       >
                         {g.enabled ? 'Disable' : 'Enable'}
@@ -491,7 +491,7 @@ export default function LabelGroupsPage() {
                       </button>
                       <button
                         onClick={() => setDeleteId(g.id)}
-                        className="px-2 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/30 rounded hover:bg-red-500/20 focus:outline-none focus:ring-1 focus:ring-red-500"
+                        className="px-2 py-1 text-xs bg-danger-soft text-danger border border-danger/30 rounded hover:bg-danger-soft focus:outline-none focus:ring-1 focus:ring-danger"
                       >
                         Delete
                       </button>

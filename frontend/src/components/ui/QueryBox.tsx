@@ -35,10 +35,10 @@ interface Props {
 }
 
 const KIND_BADGE_CLASSES: Record<Suggestion['kind'], string> = {
-  field: 'bg-blue-900/40 text-blue-300',
-  value: 'bg-emerald-900/40 text-emerald-300',
-  operator: 'bg-amber-900/40 text-amber-300',
-  keyword: 'bg-purple-900/40 text-purple-300',
+  field: 'bg-info-soft text-info',
+  value: 'bg-success-soft text-success',
+  operator: 'bg-warning-soft text-warning',
+  keyword: 'bg-pending-soft text-pending',
 };
 
 export const QueryBox = forwardRef<QueryBoxHandle, Props>(function QueryBox(

@@ -24,8 +24,8 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return this.props.fallback || (
         <div className="min-h-screen flex items-center justify-center bg-app">
-          <div className="bg-surface border border-red-500/30 rounded-xl p-8 max-w-md">
-            <h2 className="text-xl font-bold text-red-400 mb-2">Something went wrong</h2>
+          <div className="bg-surface border border-danger/30 rounded-xl p-8 max-w-md">
+            <h2 className="text-xl font-bold text-danger mb-2">Something went wrong</h2>
             <p className="text-sm text-muted mb-4">{this.state.error?.message || 'An unexpected error occurred'}</p>
             <button
               onClick={() => { this.setState({ hasError: false, error: null }); window.location.href = '/'; }}

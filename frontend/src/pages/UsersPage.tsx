@@ -49,7 +49,7 @@ export default function UsersPage() {
       </div>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
           Failed to load users. Please try again.
         </div>
       )}
@@ -73,8 +73,8 @@ export default function UsersPage() {
                   <td className="px-4 py-3"><StatusBadge status={u.active ? 'Connected' : 'Disconnected'} /></td>
                   <td className="px-4 py-3 text-sm"><TimeAgo date={u.created_at} className="text-disabled" /></td>
                   <td className="px-4 py-3 text-center space-x-2">
-                    <button onClick={() => toggleMut.mutate({ id: u.id, active: !u.active })} className="text-xs text-yellow-400 hover:text-yellow-300">{u.active ? 'Disable' : 'Enable'}</button>
-                    <button onClick={() => setDelId(u.id)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
+                    <button onClick={() => toggleMut.mutate({ id: u.id, active: !u.active })} className="text-xs text-warning hover:text-warning">{u.active ? 'Disable' : 'Enable'}</button>
+                    <button onClick={() => setDelId(u.id)} className="text-xs text-danger hover:text-danger">Delete</button>
                   </td>
                 </tr>
               ))}

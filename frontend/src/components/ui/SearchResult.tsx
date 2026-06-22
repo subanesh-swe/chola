@@ -42,8 +42,8 @@ const iconMap: Record<ResultType, () => React.ReactElement> = {
 
 const colorMap: Record<ResultType, string> = {
   build: 'text-accent-text',
-  repo: 'text-emerald-400',
-  worker: 'text-amber-400',
+  repo: 'text-success',
+  worker: 'text-warning',
 };
 
 interface Props {

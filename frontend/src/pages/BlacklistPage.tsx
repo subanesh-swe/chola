@@ -44,8 +44,8 @@ function RegexPreview({ pattern }: { pattern: string }) {
         placeholder="Type a command or branch to test..."
         className="w-full px-2 py-1.5 text-xs bg-input border border-border rounded text-primary focus:outline-none focus:ring-1 focus:ring-accent"
       />
-      {error && <p className="text-xs text-red-400">{error}</p>}
-      {matches === true && <p className="text-xs text-green-400">Pattern matches</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
+      {matches === true && <p className="text-xs text-success">Pattern matches</p>}
       {matches === false && <p className="text-xs text-muted">No match</p>}
     </div>
   );
@@ -222,7 +222,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
       </div>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger text-sm">
           Failed to load command blacklist.
         </div>
       )}
@@ -258,7 +258,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                         }
                         className={`text-xs px-2 py-0.5 rounded border transition-colors focus:outline-none focus:ring-1 ${
                           e.enabled
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                            ? 'bg-success-soft text-success border-success/30 hover:bg-success-soft'
                             : 'bg-surface-2 text-muted border-border hover:bg-surface-hover'
                         }`}
                         aria-label={`Toggle rule ${e.id}`}
@@ -269,7 +269,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                       <span
                         className={`text-xs px-2 py-0.5 rounded border ${
                           e.enabled
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            ? 'bg-success-soft text-success border-success/30'
                             : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
@@ -291,7 +291,7 @@ function CommandBlacklistTab({ canManage }: { canManage: boolean }) {
                         </button>
                         <button
                           onClick={() => setDeleteId(e.id)}
-                          className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                          className="text-xs text-danger hover:text-danger focus:outline-none focus:ring-1 focus:ring-danger rounded"
                         >
                           Delete
                         </button>
@@ -497,7 +497,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
       </div>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger text-sm">
           Failed to load branch blacklist.
         </div>
       )}
@@ -533,7 +533,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                         }
                         className={`text-xs px-2 py-0.5 rounded border transition-colors focus:outline-none focus:ring-1 ${
                           e.enabled
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                            ? 'bg-success-soft text-success border-success/30 hover:bg-success-soft'
                             : 'bg-surface-2 text-muted border-border hover:bg-surface-hover'
                         }`}
                         aria-label={`Toggle rule ${e.id}`}
@@ -544,7 +544,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                       <span
                         className={`text-xs px-2 py-0.5 rounded border ${
                           e.enabled
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            ? 'bg-success-soft text-success border-success/30'
                             : 'bg-surface-2 text-muted border-border'
                         }`}
                       >
@@ -566,7 +566,7 @@ function BranchBlacklistTab({ canManage }: { canManage: boolean }) {
                         </button>
                         <button
                           onClick={() => setDeleteId(e.id)}
-                          className="text-xs text-red-400 hover:text-red-300 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                          className="text-xs text-danger hover:text-danger focus:outline-none focus:ring-1 focus:ring-danger rounded"
                         >
                           Delete
                         </button>

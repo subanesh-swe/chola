@@ -116,7 +116,7 @@ function StageTimer({ job }: { job: Job }) {
     : null;
 
   const pct = maxSecs > 0 ? elapsedSecs / maxSecs : 0;
-  const color = pct > 0.9 ? 'text-red-400' : pct > 0.7 ? 'text-yellow-400' : 'text-muted';
+  const color = pct > 0.9 ? 'text-danger' : pct > 0.7 ? 'text-warning' : 'text-muted';
 
   return (
     <span className={`text-xs font-mono ${color}`}>
@@ -152,7 +152,7 @@ function JobLogPanel({ job, filesPurgedAt, onRetry }: JobLogPanelProps) {
           {job.state === 'failed' && onRetry && (
             <button
               onClick={onRetry}
-              className="px-3 py-1 text-xs bg-yellow-600/20 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-600/30 transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              className="px-3 py-1 text-xs bg-warning-soft text-warning border border-warning/30 rounded-lg hover:opacity-80 transition-colors focus:outline-none focus:ring-2 focus:ring-warning"
             >
               Retry Stage
             </button>
@@ -198,7 +198,7 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
   }, [isLiveStage]);
 
   const icon = status === 'active' ? '⏱' : status === 'paused' ? '⏸' : status === 'deactivated' ? '✓' : '○';
-  const color = status === 'active' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-disabled';
+  const color = status === 'active' ? 'text-success' : status === 'paused' ? 'text-warning' : 'text-disabled';
   const maxLabel = maxSecs > 0 ? formatSecs(maxSecs) : 'no limit';
 
   let timeDisplay: string;
@@ -335,7 +335,7 @@ export default function BuildDetailPage() {
 
   if (isLoading) return <PageSkeleton rows={4} />;
   if (isError) return (
-    <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+    <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
       Failed to load build. Please try again.
     </div>
   );
@@ -392,7 +392,7 @@ export default function BuildDetailPage() {
           {canCancelJobs && group.state === 'failed' && (
             <button
               onClick={() => setDialog('retry-build')}
-              className="px-4 py-2 text-sm bg-yellow-600/20 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-600/30 transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              className="px-4 py-2 text-sm bg-warning-soft text-warning border border-warning/30 rounded-lg hover:opacity-80 transition-colors focus:outline-none focus:ring-2 focus:ring-warning"
             >
               Retry Build
             </button>
@@ -400,7 +400,7 @@ export default function BuildDetailPage() {
           {canCancelJobs && !isTerminal && (
             <button
               onClick={() => setDialog('cancel')}
-              className="px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="px-4 py-2 text-sm bg-danger/20 text-danger border border-danger/30 rounded-lg hover:bg-danger/30 transition-colors focus:outline-none focus:ring-2 focus:ring-danger"
             >
               Cancel Build
             </button>

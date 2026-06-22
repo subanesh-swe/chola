@@ -63,9 +63,9 @@ function SystemInfoPanel({ info }: { info: WorkerSystemInfo }) {
 // ── Per-disk expandable section ──────────────────────────────────────────────
 
 function getBarColor(percent: number): string {
-  if (percent >= 90) return 'bg-red-500';
-  if (percent >= 70) return 'bg-yellow-500';
-  return 'bg-emerald-500';
+  if (percent >= 90) return 'bg-danger';
+  if (percent >= 70) return 'bg-warning';
+  return 'bg-success';
 }
 
 function DiskSection({
@@ -155,9 +155,9 @@ function DiskSection({
       )}
       {/* item 25: disk color legend */}
       <div className="flex items-center gap-3 mt-1 text-[10px] text-disabled">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{'<70%'}</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />70–90%</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{'>90%'}</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success inline-block" />{'<70%'}</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning inline-block" />70–90%</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-danger inline-block" />{'>90%'}</span>
       </div>
     </div>
   );
@@ -283,7 +283,7 @@ function RegisterWorkerModal({
         <div className="space-y-3">
           <div>
             <label className="block text-sm text-secondary mb-1">
-              Worker ID <span className="text-red-400">*</span>
+              Worker ID <span className="text-danger">*</span>
             </label>
             <input
               value={workerId}
@@ -294,7 +294,7 @@ function RegisterWorkerModal({
           </div>
           <div>
             <label className="block text-sm text-secondary mb-1">
-              Hostname <span className="text-red-400">*</span>
+              Hostname <span className="text-danger">*</span>
             </label>
             <input
               value={hostname}
@@ -338,7 +338,7 @@ function RegisterWorkerModal({
                     <button
                       type="button"
                       onClick={() => removeLabel(l)}
-                      className="text-accent-text hover:text-red-400 focus:outline-none"
+                      className="text-accent-text hover:text-danger focus:outline-none"
                       aria-label={`Remove label ${l}`}
                     >
                       &times;
@@ -490,13 +490,13 @@ function TokenDisplayModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="bg-surface border border-border rounded-xl p-6 max-w-lg w-full">
         <h3 className="text-lg font-semibold text-primary mb-1">Worker Registered</h3>
-        <p className="text-sm text-yellow-400 mb-4">
+        <p className="text-sm text-warning mb-4">
           Save this token now. It will not be shown again.
         </p>
         <div className="relative bg-surface-2 border border-border rounded-lg p-3 mb-4">
           <code
             ref={tokenRef}
-            className="block text-xs font-mono text-emerald-300 break-all pr-16"
+            className="block text-xs font-mono text-success break-all pr-16"
           >
             {result.token}
           </code>
@@ -570,7 +570,7 @@ function InlineLabelsEditor({
             <button
               type="button"
               onClick={() => removeLabel(l)}
-              className="text-accent-text hover:text-red-400 focus:outline-none"
+              className="text-accent-text hover:text-danger focus:outline-none"
               aria-label={`Remove label ${l}`}
             >
               &times;
@@ -808,7 +808,7 @@ function WorkerBranchBlacklist({
                   onClick={() => toggleMut.mutate({ id: e.id, enabled: !e.enabled })}
                   className={`px-1.5 py-0.5 rounded border shrink-0 focus:outline-none focus:ring-1 ${
                     e.enabled
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 focus:ring-emerald-500'
+                      ? 'bg-success-soft text-success border-success/30 hover:bg-success-soft focus:ring-success'
                       : 'bg-surface-2 text-muted border-border hover:bg-surface-hover focus:ring-border'
                   }`}
                 >
@@ -818,7 +818,7 @@ function WorkerBranchBlacklist({
                 <span
                   className={`px-1.5 py-0.5 rounded border shrink-0 ${
                     e.enabled
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      ? 'bg-success-soft text-success border-success/30'
                       : 'bg-surface-2 text-muted border-border'
                   }`}
                 >
@@ -828,7 +828,7 @@ function WorkerBranchBlacklist({
               {canManage && (
                 <button
                   onClick={() => setDeleteId(e.id)}
-                  className="text-red-400 hover:text-red-300 shrink-0 focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
+                  className="text-danger hover:text-danger shrink-0 focus:outline-none focus:ring-1 focus:ring-danger rounded"
                   aria-label={`Delete rule for pattern ${e.pattern}`}
                 >
                   &times;
@@ -1010,7 +1010,7 @@ export default function WorkersPage() {
       </div>
 
       {isError && (
-        <div role="alert" className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
+        <div role="alert" className="bg-danger-soft border border-danger/30 rounded-lg p-4 text-danger">
           Failed to load workers. Please try again.
         </div>
       )}
@@ -1035,7 +1035,7 @@ export default function WorkersPage() {
                       <span title={w.hostname}>{w.hostname}</span>
                       {' '}&middot;{' '}{w.disk_type}
                       {' '}&middot;{' '}Docker:{' '}
-                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-surface-2 text-muted border-border'}`}>
+                      <span className={`text-xs px-1 py-0.5 rounded border font-medium ${w.docker_enabled ? 'bg-success-soft text-success border-success/30' : 'bg-surface-2 text-muted border-border'}`}>
                         {w.docker_enabled ? 'Yes' : 'No'}
                       </span>
                     </p>
@@ -1044,7 +1044,7 @@ export default function WorkersPage() {
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                   {w.last_heartbeat && <span className="text-xs text-disabled">Jobs: {w.last_heartbeat.running_jobs}</span>}
                   {w.status === 'Draining' && (
-                    <span className="text-xs text-yellow-400">
+                    <span className="text-xs text-warning">
                       {(w.active_groups?.length ?? 0) > 0
                         ? `${w.active_groups!.length} reservation${w.active_groups!.length !== 1 ? 's' : ''} remaining`
                         : 'Idle — ready for maintenance'}
@@ -1054,7 +1054,7 @@ export default function WorkersPage() {
                     <button
                       onClick={() => drainMut.mutate(w.worker_id)}
                       aria-label={`Drain worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/30 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                      className="px-3 py-1 text-xs bg-warning-soft text-warning border border-warning/30 rounded-lg hover:bg-warning-soft focus:outline-none focus:ring-2 focus:ring-warning"
                     >
                       Drain
                     </button>
@@ -1063,7 +1063,7 @@ export default function WorkersPage() {
                     <button
                       onClick={() => undrainMut.mutate(w.worker_id)}
                       aria-label={`Undrain worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      className="px-3 py-1 text-xs bg-success-soft text-success border border-success/30 rounded-lg hover:bg-success/30 focus:outline-none focus:ring-2 focus:ring-success"
                     >
                       Undrain
                     </button>
@@ -1072,7 +1072,7 @@ export default function WorkersPage() {
                     <button
                       onClick={() => setRegenConfirmId(w.worker_id)}
                       aria-label={`Regenerate token for worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg hover:bg-amber-500/30 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      className="px-3 py-1 text-xs bg-warning-soft text-warning border border-warning/30 rounded-lg hover:bg-warning-soft focus:outline-none focus:ring-2 focus:ring-warning"
                     >
                       Regen Token
                     </button>
@@ -1081,7 +1081,7 @@ export default function WorkersPage() {
                     <button
                       onClick={() => setDeleteConfirmId(w.worker_id)}
                       aria-label={`Delete worker ${w.worker_id}`}
-                      className="px-3 py-1 text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      className="px-3 py-1 text-xs bg-danger-soft text-danger border border-danger/30 rounded-lg hover:bg-danger-soft focus:outline-none focus:ring-2 focus:ring-danger"
                     >
                       Delete
                     </button>
