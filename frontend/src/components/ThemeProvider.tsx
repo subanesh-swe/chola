@@ -1,41 +1,38 @@
 import { useEffect } from 'react';
-import { useThemeStore, type ThemeMode } from '../stores/theme';
-
-function resolveColorScheme(mode: ThemeMode, mq: MediaQueryList): 'dark' | 'light' {
-  if (mode === 'system') return mq.matches ? 'dark' : 'light';
-  return mode;
-}
+import { useThemeStore } from '../stores/theme';
+import { CSS_VAR_MAP, type ThemePalette } from '../themes/presets';
+import { getPattern } from '../themes/patterns';
 
 export function ThemeProvider() {
+  const palette = useThemeStore((s) => s.palette);
   const mode = useThemeStore((s) => s.mode);
-  const accent = useThemeStore((s) => s.accent);
+  const patternId = useThemeStore((s) => s.patternId);
+  const patternOpacity = useThemeStore((s) => s.patternOpacity);
 
   useEffect(() => {
     const html = document.documentElement;
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
 
-    function apply() {
-      html.setAttribute('data-theme', mode);
-      html.setAttribute('data-accent', accent);
-
-      // Keep Tailwind's built-in dark: variant working if anything uses it.
-      const scheme = resolveColorScheme(mode, mq);
-      if (scheme === 'dark') {
-        html.classList.add('dark');
-        html.classList.remove('light');
-      } else {
-        html.classList.add('light');
-        html.classList.remove('dark');
-      }
+    // Write each palette token as an inline CSS variable on <html>.
+    for (const [field, varName] of Object.entries(CSS_VAR_MAP)) {
+      html.style.setProperty(varName, palette[field as keyof ThemePalette]);
     }
 
-    apply();
+    // Pattern — write image, size and resolved opacity.
+    const pat = getPattern(patternId);
+    html.style.setProperty('--pattern-image', pat.image);
+    html.style.setProperty('--pattern-size', pat.size);
+    html.style.setProperty('--pattern-opacity', String(pat.opacity * patternOpacity));
 
-    // Re-apply when system preference changes while mode === 'system'
-    const handler = () => { if (mode === 'system') apply(); };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, [mode, accent]);
+    // Keep Tailwind's `dark:` variant working.
+    html.setAttribute('data-theme', mode);
+    if (mode === 'dark') {
+      html.classList.add('dark');
+      html.classList.remove('light');
+    } else {
+      html.classList.add('light');
+      html.classList.remove('dark');
+    }
+  }, [palette, mode, patternId, patternOpacity]);
 
   return null;
 }

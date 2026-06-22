@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/auth';
-import { useThemeStore, type ThemeMode, type ThemeAccent } from '../stores/theme';
+import { useThemeStore } from '../stores/theme';
+import { PRESETS, PALETTE_FIELDS, type ThemePalette } from '../themes/presets';
+import { PATTERNS } from '../themes/patterns';
 import { changePassword } from '../api/auth';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { toast } from 'sonner';
@@ -100,112 +102,286 @@ function ChangePasswordSection() {
   );
 }
 
-const ACCENT_SWATCHES: Record<ThemeAccent, string> = {
-  indigo:  'bg-indigo-600',
-  emerald: 'bg-emerald-600',
-  rose:    'bg-rose-600',
-  sky:     'bg-sky-600',
-  violet:  'bg-violet-600',
-  amber:   'bg-amber-600',
-  teal:    'bg-teal-600',
-  fuchsia: 'bg-fuchsia-600',
-  slate:   'bg-slate-500',
-};
+/** A swatch + HEX text + native color picker for one token. */
+function TokenRow({
+  field,
+  label,
+  hex,
+  onChange,
+}: {
+  field: keyof ThemePalette;
+  label: string;
+  hex: string;
+  onChange: (next: string) => void;
+}) {
+  // Validate before propagating so users can type intermediate values.
+  const [draft, setDraft] = useState(hex);
+  // Sync external -> local when palette changes (preset switch, reset, etc.)
+  if (draft !== hex && /^#[0-9a-fA-F]{3,8}$/.test(draft)) {
+    // user is in the middle of typing — don't reset
+  } else if (draft !== hex && !/^#/.test(draft)) {
+    setDraft(hex);
+  } else if (draft !== hex && draft.length === 0) {
+    setDraft(hex);
+  } else if (draft !== hex && /^#[0-9a-fA-F]{3,8}$/.test(hex) && draft !== hex) {
+    // hex changed externally (preset applied) — sync if user isn't editing
+    setDraft(hex);
+  }
+
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <label htmlFor={`tok-${field}`} className="flex-1 text-sm text-secondary truncate">{label}</label>
+      <span
+        className="w-6 h-6 rounded border border-border shrink-0"
+        style={{ backgroundColor: hex }}
+        aria-hidden="true"
+      />
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => {
+          const v = e.target.value;
+          setDraft(v);
+          if (/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v)) onChange(v);
+        }}
+        onBlur={() => {
+          if (!/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(draft)) setDraft(hex);
+        }}
+        spellCheck={false}
+        className="w-24 bg-input border border-border rounded px-2 py-1 text-xs text-primary font-mono focus:outline-none focus:ring-2 focus:ring-accent"
+        aria-label={`${label} hex value`}
+      />
+      <input
+        id={`tok-${field}`}
+        type="color"
+        value={hex.length >= 7 ? hex.slice(0, 7) : hex}
+        onChange={(e) => {
+          const v = e.target.value;
+          setDraft(v);
+          onChange(v);
+        }}
+        className="w-8 h-8 rounded border border-border cursor-pointer bg-transparent"
+        aria-label={`${label} color picker`}
+      />
+    </div>
+  );
+}
 
 function AppearanceSection() {
-  const mode = useThemeStore((s) => s.mode);
-  const accent = useThemeStore((s) => s.accent);
-  const setMode = useThemeStore((s) => s.setMode);
-  const setAccent = useThemeStore((s) => s.setAccent);
+  const presetId = useThemeStore((s) => s.presetId);
+  const palette = useThemeStore((s) => s.palette);
+  const applyPreset = useThemeStore((s) => s.applyPreset);
+  const setToken = useThemeStore((s) => s.setToken);
+  const resetToCurrentPreset = useThemeStore((s) => s.resetToCurrentPreset);
+  const importPalette = useThemeStore((s) => s.importPalette);
+  const exportPalette = useThemeStore((s) => s.exportPalette);
+  const patternId = useThemeStore((s) => s.patternId);
+  const patternOpacity = useThemeStore((s) => s.patternOpacity);
+  const setPattern = useThemeStore((s) => s.setPattern);
+  const setPatternOpacity = useThemeStore((s) => s.setPatternOpacity);
 
-  const modes: { value: ThemeMode; label: string; beta?: boolean }[] = [
-    { value: 'light',  label: 'Light', beta: true },
-    { value: 'dark',   label: 'Dark'   },
-    { value: 'system', label: 'System' },
-  ];
+  const [importDraft, setImportDraft] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
-  const accents: { value: ThemeAccent; label: string }[] = [
-    { value: 'indigo',  label: 'Indigo'  },
-    { value: 'emerald', label: 'Emerald' },
-    { value: 'rose',    label: 'Rose'    },
-    { value: 'sky',     label: 'Sky'     },
-    { value: 'violet',  label: 'Violet'  },
-    { value: 'amber',   label: 'Amber'   },
-    { value: 'teal',    label: 'Teal'    },
-    { value: 'fuchsia', label: 'Fuchsia' },
-    { value: 'slate',   label: 'Slate'   },
-  ];
+  // Group tokens by their `group` field for readable layout
+  const groups = Array.from(new Set(PALETTE_FIELDS.map((f) => f.group)));
+
+  function handleCopy() {
+    navigator.clipboard.writeText(exportPalette()).then(
+      () => toast.success('Theme JSON copied'),
+      () => toast.error('Copy failed'),
+    );
+  }
+
+  function handleImport() {
+    if (importPalette(importDraft)) {
+      toast.success('Theme imported');
+      setShowImport(false);
+      setImportDraft('');
+    } else {
+      toast.error('Invalid theme JSON');
+    }
+  }
 
   return (
     <div className="bg-surface border border-border rounded-xl p-6 space-y-6">
       <div>
         <h3 className="text-lg font-semibold text-primary mb-1">Appearance</h3>
+        <p className="text-xs text-muted">
+          Pick a preset or edit any of the 17 colors individually. Changes save instantly.
+        </p>
       </div>
 
-      {/* Mode */}
+      {/* Presets */}
       <div>
-        <p className="text-sm font-medium text-secondary mb-3">Mode</p>
-        <div className="flex gap-3 flex-wrap" role="radiogroup" aria-label="Color mode">
-          {modes.map(({ value, label, beta }) => {
-            const active = mode === value;
+        <p className="text-sm font-medium text-secondary mb-3">Preset</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Theme preset">
+          {PRESETS.map((p) => {
+            const active = presetId === p.id;
             return (
-              <label
-                key={value}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => applyPreset(p.id)}
+                aria-pressed={active}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-left text-sm transition-colors
                   ${active
                     ? 'border-accent bg-accent-soft text-primary'
                     : 'border-border text-muted hover:border-border-strong hover:text-secondary'
                   }`}
               >
-                <input
-                  type="radio"
-                  name="theme-mode"
-                  value={value}
-                  checked={active}
-                  onChange={() => setMode(value)}
-                  className="sr-only"
-                />
-                {label}
-                {beta && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-warning-soft text-warning border border-warning/30 font-medium uppercase tracking-wide">
-                    Beta
-                  </span>
-                )}
-              </label>
+                {/* Mini palette preview — 4 swatches */}
+                <span className="flex shrink-0 rounded overflow-hidden border border-border">
+                  <span className="w-3 h-5" style={{ backgroundColor: p.palette.appBg }} aria-hidden="true" />
+                  <span className="w-3 h-5" style={{ backgroundColor: p.palette.chromeBg }} aria-hidden="true" />
+                  <span className="w-3 h-5" style={{ backgroundColor: p.palette.surfaceBg }} aria-hidden="true" />
+                  <span className="w-3 h-5" style={{ backgroundColor: p.palette.accent }} aria-hidden="true" />
+                </span>
+                <span className="truncate">{p.name}</span>
+              </button>
             );
           })}
+          {presetId === 'custom' && (
+            <span className="flex items-center px-3 py-2 rounded-lg border border-warning/30 bg-warning-soft text-warning text-xs">
+              Custom (modified)
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Accent */}
+      {/* Per-token editor — grouped */}
       <div>
-        <p className="text-sm font-medium text-secondary mb-3">Accent color</p>
-        <div className="flex gap-2 flex-wrap" role="radiogroup" aria-label="Accent color">
-          {accents.map(({ value, label }) => {
-            const active = accent === value;
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-medium text-secondary">Colors</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={resetToCurrentPreset}
+              className="text-xs text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="text-xs text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
+            >
+              Copy JSON
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowImport((v) => !v)}
+              className="text-xs text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
+            >
+              Import…
+            </button>
+          </div>
+        </div>
+
+        {showImport && (
+          <div className="mb-4 space-y-2">
+            <textarea
+              value={importDraft}
+              onChange={(e) => setImportDraft(e.target.value)}
+              placeholder='{"appBg":"#…","accent":"#…",…}'
+              rows={4}
+              className="w-full bg-input border border-border rounded-lg px-3 py-2 text-xs text-primary font-mono focus:outline-none focus:ring-2 focus:ring-accent"
+              spellCheck={false}
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setShowImport(false); setImportDraft(''); }}
+                className="px-3 py-1 text-xs text-muted hover:text-primary focus:outline-none focus:ring-1 focus:ring-border rounded"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleImport}
+                disabled={!importDraft.trim()}
+                className="px-3 py-1 text-xs bg-accent text-on-accent rounded hover:bg-accent-hover disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                Import
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {groups.map((g) => (
+            <div key={g}>
+              <p className="text-xs font-semibold text-disabled uppercase tracking-wider mb-1">{g}</p>
+              <div className="divide-y divide-border/40 border border-border/40 rounded-lg px-3">
+                {PALETTE_FIELDS.filter((f) => f.group === g).map((f) => (
+                  <TokenRow
+                    key={f.key}
+                    field={f.key}
+                    label={f.label}
+                    hex={palette[f.key]}
+                    onChange={(next) => setToken(f.key, next)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Background pattern */}
+      <div>
+        <p className="text-sm font-medium text-secondary mb-3">Background pattern</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Background pattern">
+          {PATTERNS.map((p) => {
+            const active = patternId === p.id;
             return (
-              <label
-                key={value}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer text-sm transition-colors
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPattern(p.id)}
+                aria-pressed={active}
+                className={`relative flex flex-col items-stretch h-16 rounded-lg border overflow-hidden text-left text-xs transition-colors
                   ${active
-                    ? 'border-accent bg-accent-soft text-primary'
-                    : 'border-border text-muted hover:border-border-strong hover:text-secondary'
+                    ? 'border-accent ring-2 ring-accent/30'
+                    : 'border-border hover:border-border-strong'
                   }`}
               >
-                <input
-                  type="radio"
-                  name="theme-accent"
-                  value={value}
-                  checked={active}
-                  onChange={() => setAccent(value)}
-                  className="sr-only"
+                {/* Tile preview using the actual pattern image */}
+                <span
+                  className="absolute inset-0"
+                  style={{
+                    backgroundImage: p.image === 'none' ? undefined : p.image,
+                    backgroundSize: p.size,
+                    backgroundRepeat: 'repeat',
+                    opacity: p.opacity,
+                    color: 'var(--color-text-primary)',
+                  }}
+                  aria-hidden="true"
                 />
-                <span className={`w-3 h-3 rounded-full shrink-0 ${ACCENT_SWATCHES[value]}`} aria-hidden="true" />
-                {label}
-              </label>
+                <span className="relative mt-auto px-2 py-1 bg-surface/70 text-primary truncate">
+                  {p.name}
+                </span>
+              </button>
             );
           })}
         </div>
+
+        {patternId !== 'none' && (
+          <div className="mt-3 flex items-center gap-3">
+            <label htmlFor="pattern-opacity" className="text-xs text-muted shrink-0">Intensity</label>
+            <input
+              id="pattern-opacity"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={patternOpacity}
+              onChange={(e) => setPatternOpacity(parseFloat(e.target.value))}
+              className="flex-1 accent-accent"
+            />
+            <span className="text-xs text-muted w-10 text-right tabular-nums">{Math.round(patternOpacity * 100)}%</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,11 @@
 @import "tailwindcss";
 
-/* -----------------------------------------------------------------------
+/* =============================================================================
    Tailwind v4 — semantic CSS variables wired as utility classes.
+
+   These variables are SET by the ThemeProvider (frontend/src/components/ThemeProvider.tsx)
+   reading from the Zustand store (frontend/src/stores/theme.ts). Every value
+   comes from the user-chosen preset or their custom HEX overrides.
 
    SURFACES   bg-app bg-surface bg-surface-2 bg-surface-hover bg-input bg-chrome
    BORDERS    border-border border-border-strong divide-border
@@ -10,7 +14,7 @@
               bg-accent-50 bg-accent-200 bg-accent-400 bg-accent-600 bg-accent-800
    STATE      success / warning / danger / info / pending — each with -soft
    GRADIENTS  bg-[image:var(--gradient-accent)] bg-[image:var(--gradient-chrome)]
-   ----------------------------------------------------------------------- */
+   ============================================================================= */
 @theme inline {
   --color-app:            var(--color-app);
   --color-surface:        var(--color-surface);
@@ -33,7 +37,7 @@
   --color-accent-soft:    var(--color-accent-soft);
   --color-accent-text:    var(--color-accent-text);
 
-  /* multi-shade accent palette (50=lightest, 800=darkest) */
+  /* multi-shade accent palette (derived from --color-accent via color-mix) */
   --color-accent-50:      var(--color-accent-50);
   --color-accent-200:     var(--color-accent-200);
   --color-accent-400:     var(--color-accent-400);
@@ -53,320 +57,74 @@
 }
 
 /* =============================================================================
-   DARK THEME — refined warm-dark palette (Linear/Vercel-inspired)
-   ============================================================================= */
-:root,
-[data-theme="dark"] {
-  /* Surface substrate — slightly warm near-black, not pure slate */
-  --color-app-base:       #0a0b10;   /* deeper than slate-950, faint warm tone */
-  --color-surface-base:   #13151c;   /* card */
-  --color-surface-2-base: #1c1f29;   /* elevated card / hover */
+   DERIVATIONS — built FROM the user-chosen palette via color-mix().
 
-  /* Derived surfaces — pick up the active accent */
-  --color-app:            color-mix(in srgb, var(--color-accent) 5%,  var(--color-app-base));
-  --color-surface:        color-mix(in srgb, var(--color-accent) 4%,  var(--color-surface-base));
-  --color-surface-2:      color-mix(in srgb, var(--color-accent) 6%,  var(--color-surface-2-base));
-  --color-surface-hover:  color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-base));
-  --color-input:          color-mix(in srgb, var(--color-accent) 3%,  var(--color-surface-base));
-  --color-chrome:         color-mix(in srgb, var(--color-accent) 14%, var(--color-surface-base));
-  --color-overlay:        rgba(8, 9, 14, 0.72);
-
-  /* Borders — low contrast, no hard edges */
-  --color-border:         #262932;
-  --color-border-strong:  #3a3e4a;
-
-  /* Text — soft whites, no harsh pure white */
-  --color-text-primary:   #ecedf0;
-  --color-text-secondary: #c5c8ce;
-  --color-text-muted:     #8b8f99;
-  --color-text-disabled:  #5a5e69;
-  --color-text-on-accent: #ffffff;
-
-  /* State colors — refined, slightly desaturated for sophistication */
-  --color-success:        #2ec27e;
-  --color-success-soft:   rgba(46, 194, 126, 0.12);
-  --color-warning:        #f0a839;
-  --color-warning-soft:   rgba(240, 168, 57, 0.13);
-  --color-danger:         #ef4a5e;
-  --color-danger-soft:    rgba(239, 74, 94, 0.13);
-  --color-info:           #4aa6ed;
-  --color-info-soft:      rgba(74, 166, 237, 0.13);
-  --color-pending:        #b496ff;
-  --color-pending-soft:   rgba(180, 150, 255, 0.15);
-
-  /* Elevation — soft, layered shadows (Apple-style) */
-  --shadow-sm:        0 1px 2px rgba(0,0,0,0.18), 0 1px 1px rgba(0,0,0,0.10);
-  --shadow-md:        0 2px 6px rgba(0,0,0,0.22), 0 4px 12px rgba(0,0,0,0.14);
-  --shadow-lg:        0 8px 24px rgba(0,0,0,0.28), 0 12px 36px rgba(0,0,0,0.18);
-  --shadow-elevated:  0 20px 60px rgba(0,0,0,0.45), 0 8px 20px rgba(0,0,0,0.30);
-  --shadow-inset-hi:  inset 0 1px 0 rgba(255,255,255,0.06);
-}
-
-/* =============================================================================
-   LIGHT THEME — soft warm whites, no flat pure-white
-   ============================================================================= */
-[data-theme="light"] {
-  --color-app-base:       #fafafb;
-  --color-surface-base:   #ffffff;
-  --color-surface-2-base: #f4f5f7;
-
-  --color-app:            color-mix(in srgb, var(--color-accent) 4%,  var(--color-app-base));
-  --color-surface:        color-mix(in srgb, var(--color-accent) 2%,  var(--color-surface-base));
-  --color-surface-2:      color-mix(in srgb, var(--color-accent) 6%,  var(--color-surface-2-base));
-  --color-surface-hover:  color-mix(in srgb, var(--color-accent) 9%,  var(--color-surface-base));
-  --color-input:          color-mix(in srgb, var(--color-accent) 2%,  var(--color-surface-base));
-  --color-chrome:         color-mix(in srgb, var(--color-accent) 9%,  var(--color-surface-base));
-  --color-overlay:        rgba(15, 23, 42, 0.40);
-
-  --color-border:         #e4e6ea;
-  --color-border-strong:  #cdd1d8;
-
-  --color-text-primary:   #0c0d10;
-  --color-text-secondary: #353841;
-  --color-text-muted:     #6c7280;
-  --color-text-disabled:  #9ba0aa;
-  --color-text-on-accent: #ffffff;
-
-  --color-success:        #15803d;
-  --color-success-soft:   rgba(34, 197, 94, 0.13);
-  --color-warning:        #c2740a;
-  --color-warning-soft:   rgba(217, 138, 21, 0.13);
-  --color-danger:         #d23656;
-  --color-danger-soft:    rgba(210, 54, 86, 0.11);
-  --color-info:           #0a78c6;
-  --color-info-soft:      rgba(10, 120, 198, 0.12);
-  --color-pending:        #6b48c0;
-  --color-pending-soft:   rgba(107, 72, 192, 0.13);
-
-  --shadow-sm:        0 1px 2px rgba(15,23,42,0.06), 0 1px 1px rgba(15,23,42,0.04);
-  --shadow-md:        0 2px 6px rgba(15,23,42,0.07), 0 4px 12px rgba(15,23,42,0.05);
-  --shadow-lg:        0 8px 24px rgba(15,23,42,0.09), 0 12px 36px rgba(15,23,42,0.06);
-  --shadow-elevated:  0 20px 60px rgba(15,23,42,0.15), 0 8px 20px rgba(15,23,42,0.09);
-  --shadow-inset-hi:  inset 0 1px 0 rgba(255,255,255,0.50);
-}
-
-/* =============================================================================
-   SYSTEM THEME — inherits from prefers-color-scheme
-   ============================================================================= */
-@media (prefers-color-scheme: light) {
-  [data-theme="system"] {
-    --color-app-base:       #fafafb;
-    --color-surface-base:   #ffffff;
-    --color-surface-2-base: #f4f5f7;
-    --color-app:            color-mix(in srgb, var(--color-accent) 4%, var(--color-app-base));
-    --color-surface:        color-mix(in srgb, var(--color-accent) 2%, var(--color-surface-base));
-    --color-surface-2:      color-mix(in srgb, var(--color-accent) 6%, var(--color-surface-2-base));
-    --color-surface-hover:  color-mix(in srgb, var(--color-accent) 9%, var(--color-surface-base));
-    --color-input:          color-mix(in srgb, var(--color-accent) 2%, var(--color-surface-base));
-    --color-chrome:         color-mix(in srgb, var(--color-accent) 9%, var(--color-surface-base));
-    --color-overlay:        rgba(15, 23, 42, 0.40);
-    --color-border:         #e4e6ea;
-    --color-border-strong:  #cdd1d8;
-    --color-text-primary:   #0c0d10;
-    --color-text-secondary: #353841;
-    --color-text-muted:     #6c7280;
-    --color-text-disabled:  #9ba0aa;
-    --color-text-on-accent: #ffffff;
-    --color-success: #15803d; --color-success-soft: rgba(34,197,94,0.13);
-    --color-warning: #c2740a; --color-warning-soft: rgba(217,138,21,0.13);
-    --color-danger:  #d23656; --color-danger-soft:  rgba(210,54,86,0.11);
-    --color-info:    #0a78c6; --color-info-soft:    rgba(10,120,198,0.12);
-    --color-pending: #6b48c0; --color-pending-soft: rgba(107,72,192,0.13);
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  [data-theme="system"] {
-    --color-app-base:       #0a0b10;
-    --color-surface-base:   #13151c;
-    --color-surface-2-base: #1c1f29;
-    --color-app:            color-mix(in srgb, var(--color-accent) 5%,  var(--color-app-base));
-    --color-surface:        color-mix(in srgb, var(--color-accent) 4%,  var(--color-surface-base));
-    --color-surface-2:      color-mix(in srgb, var(--color-accent) 6%,  var(--color-surface-2-base));
-    --color-surface-hover:  color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-base));
-    --color-input:          color-mix(in srgb, var(--color-accent) 3%,  var(--color-surface-base));
-    --color-chrome:         color-mix(in srgb, var(--color-accent) 14%, var(--color-surface-base));
-    --color-overlay:        rgba(8, 9, 14, 0.72);
-    --color-border:         #262932;
-    --color-border-strong:  #3a3e4a;
-    --color-text-primary:   #ecedf0;
-    --color-text-secondary: #c5c8ce;
-    --color-text-muted:     #8b8f99;
-    --color-text-disabled:  #5a5e69;
-    --color-text-on-accent: #ffffff;
-    --color-success: #2ec27e; --color-success-soft: rgba(46,194,126,0.12);
-    --color-warning: #f0a839; --color-warning-soft: rgba(240,168,57,0.13);
-    --color-danger:  #ef4a5e; --color-danger-soft:  rgba(239,74,94,0.13);
-    --color-info:    #4aa6ed; --color-info-soft:    rgba(74,166,237,0.13);
-    --color-pending: #b496ff; --color-pending-soft: rgba(180,150,255,0.15);
-  }
-}
-
-/* =============================================================================
-   ACCENT PALETTES — each exposes 5 shades (50/200/400/600/800)
-
-   Picked from refined modern palettes (Apple HIG / Linear / Radix-leaning),
-   not stock Tailwind. Slightly desaturated, perceptually consistent at 500.
-   ============================================================================= */
-:root,
-[data-accent="indigo"] {
-  --color-accent-50:    #ecedff;
-  --color-accent-200:   #c8caff;
-  --color-accent-400:   #7c7fff;
-  --color-accent-600:   #5b5ee0;
-  --color-accent-800:   #3438a8;
-  --color-accent:       var(--color-accent-400);   /* 400 = main */
-  --color-accent-hover: var(--color-accent-600);   /* 600 = hover */
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="emerald"] {
-  --color-accent-50:    #d8f5e8;
-  --color-accent-200:   #8de2bc;
-  --color-accent-400:   #34c285;
-  --color-accent-600:   #169968;
-  --color-accent-800:   #0d6845;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="rose"] {
-  --color-accent-50:    #ffe6ec;
-  --color-accent-200:   #ffb5c3;
-  --color-accent-400:   #ff5d7c;
-  --color-accent-600:   #d63359;
-  --color-accent-800:   #8e1e3e;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="sky"] {
-  --color-accent-50:    #dbf0ff;
-  --color-accent-200:   #93d2ff;
-  --color-accent-400:   #38a9f0;
-  --color-accent-600:   #1581c8;
-  --color-accent-800:   #0c5388;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="violet"] {
-  --color-accent-50:    #ece6ff;
-  --color-accent-200:   #c4b3ff;
-  --color-accent-400:   #9270ff;
-  --color-accent-600:   #6c45e6;
-  --color-accent-800:   #432aa0;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="amber"] {
-  --color-accent-50:    #fff2d4;
-  --color-accent-200:   #ffd97c;
-  --color-accent-400:   #f5b13a;
-  --color-accent-600:   #d18811;
-  --color-accent-800:   #8a560a;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 13%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="teal"] {
-  --color-accent-50:    #d3f4ee;
-  --color-accent-200:   #7ee0cd;
-  --color-accent-400:   #2bc1a4;
-  --color-accent-600:   #119883;
-  --color-accent-800:   #0a6356;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="fuchsia"] {
-  --color-accent-50:    #fbe0ff;
-  --color-accent-200:   #ec9cff;
-  --color-accent-400:   #d958f5;
-  --color-accent-600:   #ad2bcc;
-  --color-accent-800:   #6f1882;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 12%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-[data-accent="slate"] {
-  --color-accent-50:    #e4e7ec;
-  --color-accent-200:   #b4bac4;
-  --color-accent-400:   #758090;
-  --color-accent-600:   #50596a;
-  --color-accent-800:   #2c323d;
-  --color-accent:       var(--color-accent-400);
-  --color-accent-hover: var(--color-accent-600);
-  --color-accent-soft:  color-mix(in srgb, var(--color-accent) 15%, transparent);
-  --color-accent-text:  var(--color-accent-400);
-  --gradient-accent:    linear-gradient(135deg, var(--color-accent-400), var(--color-accent-600));
-}
-
-/* Light mode tweaks — switch accent-text to a darker shade for contrast on light bg */
-[data-theme="light"] [data-accent="indigo"],
-[data-theme="light"][data-accent="indigo"]   { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="emerald"],
-[data-theme="light"][data-accent="emerald"]  { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="rose"],
-[data-theme="light"][data-accent="rose"]     { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="sky"],
-[data-theme="light"][data-accent="sky"]      { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="violet"],
-[data-theme="light"][data-accent="violet"]   { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="amber"],
-[data-theme="light"][data-accent="amber"]    { --color-accent-text: var(--color-accent-800); }
-[data-theme="light"] [data-accent="teal"],
-[data-theme="light"][data-accent="teal"]     { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="fuchsia"],
-[data-theme="light"][data-accent="fuchsia"]  { --color-accent-text: var(--color-accent-600); }
-[data-theme="light"] [data-accent="slate"],
-[data-theme="light"][data-accent="slate"]    { --color-accent-text: var(--color-accent-600); }
-
-/* =============================================================================
-   GRADIENTS — derived from accent
+   These don't need separate light/dark blocks; they automatically adapt
+   because their inputs change.
    ============================================================================= */
 :root {
-  /* Radial wash for the app background — subtle accent glow from top-left */
+  /* Soft / hover variants of state colors — 12% over transparent so they
+     sit nicely on whatever surface bg the user picked. */
+  --color-success-soft:   color-mix(in srgb, var(--color-success) 14%, transparent);
+  --color-warning-soft:   color-mix(in srgb, var(--color-warning) 14%, transparent);
+  --color-danger-soft:    color-mix(in srgb, var(--color-danger)  14%, transparent);
+  --color-info-soft:      color-mix(in srgb, var(--color-info)    14%, transparent);
+  --color-accent-soft:    color-mix(in srgb, var(--color-accent)  14%, transparent);
+  --color-pending:        color-mix(in srgb, var(--color-accent) 80%, #a78bfa 20%);
+  --color-pending-soft:   color-mix(in srgb, var(--color-pending) 16%, transparent);
+
+  /* Accent hover (slightly darker than accent) */
+  --color-accent-hover:   color-mix(in srgb, var(--color-accent) 84%, black);
+
+  /* Multi-shade accent — 50 (lightest tint) … 800 (deepest) */
+  --color-accent-50:      color-mix(in srgb, var(--color-accent)  8%,  var(--color-app));
+  --color-accent-200:     color-mix(in srgb, var(--color-accent) 30%, var(--color-app));
+  --color-accent-400:     color-mix(in srgb, var(--color-accent) 78%, var(--color-app));
+  --color-accent-600:     color-mix(in srgb, var(--color-accent) 88%, black);
+  --color-accent-800:     color-mix(in srgb, var(--color-accent) 60%, black);
+
+  /* Surfaces */
+  --color-surface-hover:  color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+
+  /* Border tier 2 */
+  --color-border-strong:  color-mix(in srgb, var(--color-border) 70%, var(--color-primary));
+
+  /* Overlay (modal backdrop) — semi-transparent app bg */
+  --color-overlay:        color-mix(in srgb, var(--color-app) 65%, transparent);
+
+  /* Background pattern — settable per theme. Defaults to none. */
+  --pattern-image:        none;
+  --pattern-opacity:      0;
+  --pattern-size:         auto;
+}
+
+/* =============================================================================
+   ELEVATION + GRADIENTS
+   ============================================================================= */
+:root {
+  /* Shadows — adaptive via color-mix so they work on light AND dark bg */
+  --shadow-sm:        0 1px 2px color-mix(in srgb, black 22%, transparent), 0 1px 1px color-mix(in srgb, black 12%, transparent);
+  --shadow-md:        0 2px 6px color-mix(in srgb, black 24%, transparent), 0 4px 12px color-mix(in srgb, black 16%, transparent);
+  --shadow-lg:        0 8px 24px color-mix(in srgb, black 28%, transparent), 0 12px 36px color-mix(in srgb, black 18%, transparent);
+  --shadow-elevated:  0 20px 60px color-mix(in srgb, black 40%, transparent), 0 8px 20px color-mix(in srgb, black 28%, transparent);
+  --shadow-inset-hi:  inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+
+  /* Radial accent glow from top-left of the viewport */
   --gradient-app-glow:    radial-gradient(
                             ellipse 80% 50% at 20% -10%,
                             color-mix(in srgb, var(--color-accent) 18%, transparent),
                             transparent 60%
                           );
-  /* Chrome (sidebar/header) gradient — slightly darker at the bottom */
+  /* Sidebar/header gradient — top brighter, bottom slightly darker */
   --gradient-chrome:      linear-gradient(180deg,
-                            color-mix(in srgb, var(--color-accent) 15%, var(--color-surface-base)),
-                            color-mix(in srgb, var(--color-accent) 8%,  var(--color-surface-base))
+                            color-mix(in srgb, var(--color-accent) 6%, var(--color-chrome)),
+                            var(--color-chrome)
                           );
-  /* Button gradient — same accent, 10° darker at bottom-right for depth */
+  /* Button depth — 135° darken at the bottom-right */
   --gradient-button:      linear-gradient(135deg,
                             var(--color-accent),
-                            color-mix(in srgb, var(--color-accent) 80%, black)
+                            color-mix(in srgb, var(--color-accent) 78%, black)
                           );
-  /* Soft state gradients */
   --gradient-success:     linear-gradient(135deg, var(--color-success), color-mix(in srgb, var(--color-success) 80%, black));
   --gradient-danger:      linear-gradient(135deg, var(--color-danger),  color-mix(in srgb, var(--color-danger)  80%, black));
   --gradient-warning:     linear-gradient(135deg, var(--color-warning), color-mix(in srgb, var(--color-warning) 80%, black));
@@ -390,14 +148,36 @@
 body {
   margin: 0;
   min-height: 100vh;
-  /* Subtle radial accent wash on the entire app, sits above the bg color */
+  /* Solid app bg + radial accent wash. Pattern is painted via ::before. */
   background:
     var(--gradient-app-glow),
     var(--color-app);
-  background-attachment: fixed;
+  background-attachment: fixed, fixed;
+  position: relative;
 }
 
-/* Scrollbar — refined, no big chunky blocks */
+/* Pattern overlay — paints behind page content, in front of app bg.
+   Uses currentColor (inherits from body) so patterns auto-tint with
+   primary text color and look right on both light and dark themes. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: var(--pattern-image);
+  background-size: var(--pattern-size);
+  background-repeat: repeat;
+  opacity: var(--pattern-opacity);
+}
+
+/* Ensure all content sits above the pattern overlay */
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Scrollbar — refined */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -417,7 +197,6 @@ body {
   border: 2px solid transparent;
 }
 
-/* Apple-style focus rings (more refined than Tailwind's default) */
 :focus-visible {
   outline-offset: 2px;
 }
@@ -441,12 +220,12 @@ a.bg-accent {
 button.bg-accent:hover,
 a.bg-accent:hover {
   box-shadow: var(--shadow-md), var(--shadow-inset-hi);
-  filter: brightness(1.05);
+  filter: brightness(1.08);
 }
 button.bg-accent:active,
 a.bg-accent:active {
   transform: translateY(0.5px);
-  filter: brightness(0.96);
+  filter: brightness(0.94);
 }
 button.bg-accent:disabled,
 button.bg-accent[disabled] {

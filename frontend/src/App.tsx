@@ -31,14 +31,12 @@ function useSystemTheme(): 'light' | 'dark' {
 
 function AppShell() {
   const mode = useThemeStore((s) => s.mode);
-  const systemTheme = useSystemTheme();
-  const toasterTheme = mode === 'system' ? systemTheme : mode;
-
+  // Toaster only accepts 'light' | 'dark' — mode is now always one of those.
   return (
     <BrowserRouter>
       <ThemeProvider />
       <AppRouter />
-      <Toaster theme={toasterTheme} position="bottom-right" />
+      <Toaster theme={mode} position="bottom-right" />
     </BrowserRouter>
   );
 }
