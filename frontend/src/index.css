@@ -15,6 +15,7 @@
   --color-surface-2:      var(--color-surface-2);
   --color-surface-hover:  var(--color-surface-hover);
   --color-input:          var(--color-input);
+  --color-chrome:         var(--color-chrome);
 
   --color-border:         var(--color-border);
   --color-border-strong:  var(--color-border-strong);
@@ -47,12 +48,18 @@
    ----------------------------------------------------------------------- */
 :root,
 [data-theme="dark"] {
-  /* surfaces */
-  --color-app:            #020617; /* slate-950 */
-  --color-surface:        #0f172a; /* slate-900 */
-  --color-surface-2:      #1e293b; /* slate-800 */
-  --color-surface-hover:  #1e293b; /* slate-800 */
-  --color-input:          #0f172a; /* slate-900 */
+  /* surface base palette (neutral, used as the mix substrate) */
+  --color-app-base:       #020617; /* slate-950 */
+  --color-surface-base:   #0f172a; /* slate-900 */
+  --color-surface-2-base: #1e293b; /* slate-800 */
+
+  /* derived surfaces — tint with the current accent for Apple/Chrome feel */
+  --color-app:            color-mix(in srgb, var(--color-accent) 5%,  var(--color-app-base));
+  --color-surface:        color-mix(in srgb, var(--color-accent) 4%,  var(--color-surface-base));
+  --color-surface-2:      color-mix(in srgb, var(--color-accent) 5%,  var(--color-surface-2-base));
+  --color-surface-hover:  color-mix(in srgb, var(--color-accent) 9%,  var(--color-surface-base));
+  --color-input:          color-mix(in srgb, var(--color-accent) 3%,  var(--color-surface-base));
+  --color-chrome:         color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-base));
   --color-overlay:        rgba(0,0,0,0.6);
 
   /* borders */
@@ -89,11 +96,16 @@
    Light theme
    ----------------------------------------------------------------------- */
 [data-theme="light"] {
-  --color-app:            #f8fafc; /* slate-50 */
-  --color-surface:        #ffffff;
-  --color-surface-2:      #f1f5f9; /* slate-100 */
-  --color-surface-hover:  #f1f5f9; /* slate-100 */
-  --color-input:          #ffffff;
+  --color-app-base:       #f8fafc; /* slate-50 */
+  --color-surface-base:   #ffffff;
+  --color-surface-2-base: #f1f5f9; /* slate-100 */
+
+  --color-app:            color-mix(in srgb, var(--color-accent) 4%,  var(--color-app-base));
+  --color-surface:        color-mix(in srgb, var(--color-accent) 2%,  var(--color-surface-base));
+  --color-surface-2:      color-mix(in srgb, var(--color-accent) 5%,  var(--color-surface-2-base));
+  --color-surface-hover:  color-mix(in srgb, var(--color-accent) 8%,  var(--color-surface-base));
+  --color-input:          color-mix(in srgb, var(--color-accent) 2%,  var(--color-surface-base));
+  --color-chrome:         color-mix(in srgb, var(--color-accent) 8%,  var(--color-surface-base));
   --color-overlay:        rgba(15,23,42,0.4);
 
   --color-border:         #e2e8f0; /* slate-200 */
@@ -126,11 +138,15 @@
    ----------------------------------------------------------------------- */
 @media (prefers-color-scheme: light) {
   [data-theme="system"] {
-    --color-app:            #f8fafc;
-    --color-surface:        #ffffff;
-    --color-surface-2:      #f1f5f9;
-    --color-surface-hover:  #f1f5f9;
-    --color-input:          #ffffff;
+    --color-app-base:       #f8fafc;
+    --color-surface-base:   #ffffff;
+    --color-surface-2-base: #f1f5f9;
+    --color-app:            color-mix(in srgb, var(--color-accent) 4%,  var(--color-app-base));
+    --color-surface:        color-mix(in srgb, var(--color-accent) 2%,  var(--color-surface-base));
+    --color-surface-2:      color-mix(in srgb, var(--color-accent) 5%,  var(--color-surface-2-base));
+    --color-surface-hover:  color-mix(in srgb, var(--color-accent) 8%,  var(--color-surface-base));
+    --color-input:          color-mix(in srgb, var(--color-accent) 2%,  var(--color-surface-base));
+    --color-chrome:         color-mix(in srgb, var(--color-accent) 8%,  var(--color-surface-base));
     --color-overlay:        rgba(15,23,42,0.4);
     --color-border:         #e2e8f0;
     --color-border-strong:  #cbd5e1;
@@ -145,11 +161,15 @@
 
 @media (prefers-color-scheme: dark) {
   [data-theme="system"] {
-    --color-app:            #020617;
-    --color-surface:        #0f172a;
-    --color-surface-2:      #1e293b;
-    --color-surface-hover:  #1e293b;
-    --color-input:          #0f172a;
+    --color-app-base:       #020617;
+    --color-surface-base:   #0f172a;
+    --color-surface-2-base: #1e293b;
+    --color-app:            color-mix(in srgb, var(--color-accent) 5%,  var(--color-app-base));
+    --color-surface:        color-mix(in srgb, var(--color-accent) 4%,  var(--color-surface-base));
+    --color-surface-2:      color-mix(in srgb, var(--color-accent) 5%,  var(--color-surface-2-base));
+    --color-surface-hover:  color-mix(in srgb, var(--color-accent) 9%,  var(--color-surface-base));
+    --color-input:          color-mix(in srgb, var(--color-accent) 3%,  var(--color-surface-base));
+    --color-chrome:         color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-base));
     --color-overlay:        rgba(0,0,0,0.6);
     --color-border:         #334155;
     --color-border-strong:  #475569;

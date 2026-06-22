@@ -31,7 +31,7 @@ export function Header({ onOpenSearch }: HeaderProps) {
   const nav = useNavigate();
 
   return (
-    <header className="h-14 bg-surface border-b border-border flex items-center justify-between px-6 pl-16 md:pl-6">
+    <header className="h-14 bg-chrome border-b border-border flex items-center justify-between px-6 pl-16 md:pl-6">
       <Breadcrumbs />
       <div className="flex items-center gap-4">
         {onOpenSearch && (
