@@ -2,7 +2,16 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type ThemeAccent = 'indigo' | 'emerald' | 'rose';
+export type ThemeAccent =
+  | 'indigo'
+  | 'emerald'
+  | 'rose'
+  | 'sky'
+  | 'violet'
+  | 'amber'
+  | 'teal'
+  | 'fuchsia'
+  | 'slate';
 
 interface ThemeState {
   mode: ThemeMode;

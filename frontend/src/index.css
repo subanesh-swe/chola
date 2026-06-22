@@ -38,6 +38,8 @@
   --color-danger-soft:    var(--color-danger-soft);
   --color-info:           var(--color-info);
   --color-info-soft:      var(--color-info-soft);
+  --color-pending:        var(--color-pending);
+  --color-pending-soft:   var(--color-pending-soft);
 }
 
 /* -----------------------------------------------------------------------
@@ -79,6 +81,8 @@
   --color-danger-soft:    rgba(244,63,94,0.1);
   --color-info:           #0ea5e9; /* sky-500 */
   --color-info-soft:      rgba(14,165,233,0.1);
+  --color-pending:        #a78bfa; /* violet-400 — for "reserved/queued" transient states */
+  --color-pending-soft:   rgba(167,139,250,0.15);
 }
 
 /* -----------------------------------------------------------------------
@@ -103,6 +107,18 @@
 
   /* accent-text darker for light contrast */
   --color-accent-text:    #4f46e5; /* indigo-600 */
+
+  /* state colors darken/adjust for light bg contrast */
+  --color-success:        #059669; /* emerald-600 */
+  --color-success-soft:   rgba(16,185,129,0.14);
+  --color-warning:        #d97706; /* amber-600 */
+  --color-warning-soft:   rgba(245,158,11,0.16);
+  --color-danger:         #e11d48; /* rose-600 */
+  --color-danger-soft:    rgba(244,63,94,0.14);
+  --color-info:           #0284c7; /* sky-600 */
+  --color-info-soft:      rgba(14,165,233,0.14);
+  --color-pending:        #7c3aed; /* violet-600 */
+  --color-pending-soft:   rgba(139,92,246,0.16);
 }
 
 /* -----------------------------------------------------------------------
@@ -171,6 +187,48 @@
   --color-accent-text:  #fb7185; /* rose-400 */
 }
 
+[data-accent="sky"] {
+  --color-accent:       #0ea5e9; /* sky-500 */
+  --color-accent-hover: #0284c7; /* sky-600 */
+  --color-accent-soft:  rgba(14,165,233,0.12);
+  --color-accent-text:  #38bdf8; /* sky-400 */
+}
+
+[data-accent="violet"] {
+  --color-accent:       #8b5cf6; /* violet-500 */
+  --color-accent-hover: #7c3aed; /* violet-600 */
+  --color-accent-soft:  rgba(139,92,246,0.12);
+  --color-accent-text:  #a78bfa; /* violet-400 */
+}
+
+[data-accent="amber"] {
+  --color-accent:       #f59e0b; /* amber-500 */
+  --color-accent-hover: #d97706; /* amber-600 */
+  --color-accent-soft:  rgba(245,158,11,0.12);
+  --color-accent-text:  #fbbf24; /* amber-400 */
+}
+
+[data-accent="teal"] {
+  --color-accent:       #14b8a6; /* teal-500 */
+  --color-accent-hover: #0d9488; /* teal-600 */
+  --color-accent-soft:  rgba(20,184,166,0.12);
+  --color-accent-text:  #2dd4bf; /* teal-400 */
+}
+
+[data-accent="fuchsia"] {
+  --color-accent:       #d946ef; /* fuchsia-500 */
+  --color-accent-hover: #c026d3; /* fuchsia-600 */
+  --color-accent-soft:  rgba(217,70,239,0.12);
+  --color-accent-text:  #e879f9; /* fuchsia-400 */
+}
+
+[data-accent="slate"] {
+  --color-accent:       #64748b; /* slate-500 */
+  --color-accent-hover: #475569; /* slate-600 */
+  --color-accent-soft:  rgba(100,116,139,0.16);
+  --color-accent-text:  #94a3b8; /* slate-400 */
+}
+
 /* Light mode: darken accent-text for contrast */
 [data-theme="light"][data-accent="indigo"],
 [data-theme="light"] [data-accent="indigo"] {
@@ -185,6 +243,36 @@
 [data-theme="light"][data-accent="rose"],
 [data-theme="light"] [data-accent="rose"] {
   --color-accent-text: #e11d48; /* rose-600 */
+}
+
+[data-theme="light"][data-accent="sky"],
+[data-theme="light"] [data-accent="sky"] {
+  --color-accent-text: #0284c7; /* sky-600 */
+}
+
+[data-theme="light"][data-accent="violet"],
+[data-theme="light"] [data-accent="violet"] {
+  --color-accent-text: #7c3aed; /* violet-600 */
+}
+
+[data-theme="light"][data-accent="amber"],
+[data-theme="light"] [data-accent="amber"] {
+  --color-accent-text: #b45309; /* amber-700 — darker for light bg */
+}
+
+[data-theme="light"][data-accent="teal"],
+[data-theme="light"] [data-accent="teal"] {
+  --color-accent-text: #0d9488; /* teal-600 */
+}
+
+[data-theme="light"][data-accent="fuchsia"],
+[data-theme="light"] [data-accent="fuchsia"] {
+  --color-accent-text: #c026d3; /* fuchsia-600 */
+}
+
+[data-theme="light"][data-accent="slate"],
+[data-theme="light"] [data-accent="slate"] {
+  --color-accent-text: #475569; /* slate-600 */
 }
 
 /* -----------------------------------------------------------------------
