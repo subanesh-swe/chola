@@ -104,6 +104,12 @@ const ACCENT_SWATCHES: Record<ThemeAccent, string> = {
   indigo:  'bg-indigo-600',
   emerald: 'bg-emerald-600',
   rose:    'bg-rose-600',
+  sky:     'bg-sky-600',
+  violet:  'bg-violet-600',
+  amber:   'bg-amber-600',
+  teal:    'bg-teal-600',
+  fuchsia: 'bg-fuchsia-600',
+  slate:   'bg-slate-500',
 };
 
 function AppearanceSection() {
@@ -112,8 +118,8 @@ function AppearanceSection() {
   const setMode = useThemeStore((s) => s.setMode);
   const setAccent = useThemeStore((s) => s.setAccent);
 
-  const modes: { value: ThemeMode; label: string }[] = [
-    { value: 'light',  label: 'Light'  },
+  const modes: { value: ThemeMode; label: string; beta?: boolean }[] = [
+    { value: 'light',  label: 'Light', beta: true },
     { value: 'dark',   label: 'Dark'   },
     { value: 'system', label: 'System' },
   ];
@@ -122,6 +128,12 @@ function AppearanceSection() {
     { value: 'indigo',  label: 'Indigo'  },
     { value: 'emerald', label: 'Emerald' },
     { value: 'rose',    label: 'Rose'    },
+    { value: 'sky',     label: 'Sky'     },
+    { value: 'violet',  label: 'Violet'  },
+    { value: 'amber',   label: 'Amber'   },
+    { value: 'teal',    label: 'Teal'    },
+    { value: 'fuchsia', label: 'Fuchsia' },
+    { value: 'slate',   label: 'Slate'   },
   ];
 
   return (
@@ -133,8 +145,8 @@ function AppearanceSection() {
       {/* Mode */}
       <div>
         <p className="text-sm font-medium text-secondary mb-3">Mode</p>
-        <div className="flex gap-3" role="radiogroup" aria-label="Color mode">
-          {modes.map(({ value, label }) => {
+        <div className="flex gap-3 flex-wrap" role="radiogroup" aria-label="Color mode">
+          {modes.map(({ value, label, beta }) => {
             const active = mode === value;
             return (
               <label
@@ -154,6 +166,11 @@ function AppearanceSection() {
                   className="sr-only"
                 />
                 {label}
+                {beta && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-warning-soft text-warning border border-warning/30 font-medium uppercase tracking-wide">
+                    Beta
+                  </span>
+                )}
               </label>
             );
           })}
@@ -163,7 +180,7 @@ function AppearanceSection() {
       {/* Accent */}
       <div>
         <p className="text-sm font-medium text-secondary mb-3">Accent color</p>
-        <div className="flex gap-3" role="radiogroup" aria-label="Accent color">
+        <div className="flex gap-2 flex-wrap" role="radiogroup" aria-label="Accent color">
           {accents.map(({ value, label }) => {
             const active = accent === value;
             return (
