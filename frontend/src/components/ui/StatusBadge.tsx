@@ -14,20 +14,20 @@ type Status =
 
 const statusStyles: Record<string, string> = {
   pending: 'bg-surface-2/50 text-muted border-border',
-  reserved: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  reserved: 'bg-pending-soft text-pending border-pending/30',
   queued: 'bg-surface-2/50 text-muted border-border',
   assigned: 'bg-accent-soft text-accent-text border-accent/30',
   running: 'bg-accent-soft text-accent-text border-accent/30',
-  success: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-  failed: 'bg-red-500/20 text-red-400 border-red-500/30',
-  cancelled: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  expired: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  unknown: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  archived: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-  'files-purged': 'bg-slate-600/20 text-slate-500 border-slate-600/30',
-  Connected: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-  Disconnected: 'bg-red-500/20 text-red-400 border-red-500/30',
-  Draining: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  success: 'bg-success-soft text-success border-success/30',
+  failed: 'bg-danger-soft text-danger border-danger/30',
+  cancelled: 'bg-warning-soft text-warning border-warning/30',
+  expired: 'bg-warning-soft text-warning border-warning/30',
+  unknown: 'bg-info-soft text-info border-info/30',
+  archived: 'bg-surface-2/60 text-muted border-border',
+  'files-purged': 'bg-surface-2/40 text-disabled border-border',
+  Connected: 'bg-success-soft text-success border-success/30',
+  Disconnected: 'bg-danger-soft text-danger border-danger/30',
+  Draining: 'bg-warning-soft text-warning border-warning/30',
 };
 
 /** Map raw enum values to human-readable labels. */
@@ -59,21 +59,20 @@ const labelMap: Record<string, string> = {
 
 /** Styles keyed to normalised canonical values (lower-case). */
 const enumStyleMap: Record<string, string> = {
-  unknown: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  unknown: 'bg-info-soft text-info border-info/30',
   queued: 'bg-surface-2/50 text-muted border-border',
   assigned: 'bg-accent-soft text-accent-text border-accent/30',
   running: 'bg-accent-soft text-accent-text border-accent/30',
   pending: 'bg-surface-2/50 text-muted border-border',
-  reserved: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-  success: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-  failed: 'bg-red-500/20 text-red-400 border-red-500/30',
-  cancelled: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  expired: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  connected: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-  disconnected: 'bg-red-500/20 text-red-400 border-red-500/30',
-  draining: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  // repo enabled/disabled (item 31)
-  enabled: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+  reserved: 'bg-pending-soft text-pending border-pending/30',
+  success: 'bg-success-soft text-success border-success/30',
+  failed: 'bg-danger-soft text-danger border-danger/30',
+  cancelled: 'bg-warning-soft text-warning border-warning/30',
+  expired: 'bg-warning-soft text-warning border-warning/30',
+  connected: 'bg-success-soft text-success border-success/30',
+  disconnected: 'bg-danger-soft text-danger border-danger/30',
+  draining: 'bg-warning-soft text-warning border-warning/30',
+  enabled: 'bg-success-soft text-success border-success/30',
   disabled: 'bg-surface-2 text-muted border-border',
 };
 
