@@ -5,37 +5,66 @@ import { DEFAULT_PATTERN_ID } from '../themes/patterns';
 
 export type { ThemePalette, ThemeMode } from '../themes/presets';
 
-interface ThemeState {
-  /** ID of the preset the user picked (or 'custom' if they edited any token). */
+/**
+ * Snapshot of everything that defines a theme. Both the live (draft) state
+ * and the persisted (saved) state use this shape so save() and reset() are
+ * just copies in either direction.
+ */
+export interface ThemeSnapshot {
   presetId: string;
-  /** Resolved palette — what actually drives CSS variables. */
   palette: ThemePalette;
-  /** Whether the current palette is light or dark — for Tailwind's `dark:` variant. */
   mode: ThemeMode;
-  /** Background pattern id (see themes/patterns.ts). 'none' = solid bg. */
   patternId: string;
-  /** Pattern intensity 0…1 (multiplied into pattern's base opacity). */
   patternOpacity: number;
+}
 
+interface ThemeState extends ThemeSnapshot {
+  /**
+   * Last-saved snapshot. ThemeProvider always renders from the live (top-level)
+   * fields, so edits show in the UI immediately. Only the `saved` snapshot is
+   * persisted to localStorage; clicking Save copies live -> saved.
+   */
+  saved: ThemeSnapshot;
+
+  // Edits (mutate live state only — no persistence until save())
   applyPreset: (presetId: string) => void;
   setToken: (key: keyof ThemePalette, hex: string) => void;
-  resetToCurrentPreset: () => void;
   setPattern: (id: string) => void;
   setPatternOpacity: (n: number) => void;
   importPalette: (json: string) => boolean;
   exportPalette: () => string;
+
+  // Persistence
+  save: () => void;
+  reset: () => void;
+  isDirty: () => boolean;
+  changedFields: () => ChangedField[];
 }
 
+export type ChangedField =
+  | keyof ThemePalette
+  | 'presetId'
+  | 'patternId'
+  | 'patternOpacity'
+  | 'mode';
+
 const defaultPreset = getPreset(DEFAULT_PRESET_ID);
+
+function defaultSnapshot(): ThemeSnapshot {
+  return {
+    presetId: defaultPreset.id,
+    palette: defaultPreset.palette,
+    mode: defaultPreset.mode,
+    patternId: DEFAULT_PATTERN_ID,
+    patternOpacity: 1.0,
+  };
+}
 
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      presetId: defaultPreset.id,
-      palette: defaultPreset.palette,
-      mode: defaultPreset.mode,
-      patternId: DEFAULT_PATTERN_ID,
-      patternOpacity: 1.0,
+      ...defaultSnapshot(),
+      saved: defaultSnapshot(),
 
       applyPreset: (presetId) => {
         const p = getPreset(presetId);
@@ -45,12 +74,6 @@ export const useThemeStore = create<ThemeState>()(
       setToken: (key, hex) => {
         const next = { ...get().palette, [key]: hex };
         set({ palette: next, presetId: 'custom' });
-      },
-
-      resetToCurrentPreset: () => {
-        const id = get().presetId === 'custom' ? DEFAULT_PRESET_ID : get().presetId;
-        const p = getPreset(id);
-        set({ presetId: p.id, palette: p.palette, mode: p.mode });
       },
 
       setPattern: (id) => set({ patternId: id }),
@@ -85,25 +108,102 @@ export const useThemeStore = create<ThemeState>()(
         const { palette, mode } = get();
         return JSON.stringify({ mode, ...palette }, null, 2);
       },
+
+      save: () => {
+        const s = get();
+        set({
+          saved: {
+            presetId: s.presetId,
+            palette: s.palette,
+            mode: s.mode,
+            patternId: s.patternId,
+            patternOpacity: s.patternOpacity,
+          },
+        });
+      },
+
+      reset: () => {
+        const { saved } = get();
+        set({
+          presetId: saved.presetId,
+          palette: saved.palette,
+          mode: saved.mode,
+          patternId: saved.patternId,
+          patternOpacity: saved.patternOpacity,
+        });
+      },
+
+      isDirty: () => {
+        const s = get();
+        const a = s.saved;
+        if (s.presetId !== a.presetId) return true;
+        if (s.mode !== a.mode) return true;
+        if (s.patternId !== a.patternId) return true;
+        if (s.patternOpacity !== a.patternOpacity) return true;
+        for (const k of Object.keys(s.palette) as (keyof ThemePalette)[]) {
+          if (s.palette[k] !== a.palette[k]) return true;
+        }
+        return false;
+      },
+
+      changedFields: () => {
+        const s = get();
+        const a = s.saved;
+        const out: ChangedField[] = [];
+        if (s.presetId !== a.presetId) out.push('presetId');
+        if (s.mode !== a.mode) out.push('mode');
+        if (s.patternId !== a.patternId) out.push('patternId');
+        if (s.patternOpacity !== a.patternOpacity) out.push('patternOpacity');
+        for (const k of Object.keys(s.palette) as (keyof ThemePalette)[]) {
+          if (s.palette[k] !== a.palette[k]) out.push(k);
+        }
+        return out;
+      },
     }),
     {
       name: 'chola-theme-v2',
-      partialize: (state) => ({
-        presetId: state.presetId,
-        palette: state.palette,
-        mode: state.mode,
-        patternId: state.patternId,
-        patternOpacity: state.patternOpacity,
-      }),
-      // Migrate from the v1 mode+accent shape if present.
-      version: 2,
+      // Persist ONLY the saved snapshot. The live draft is in-memory only.
+      partialize: (state) => ({ saved: state.saved }),
+      // After hydration, copy `saved` -> live fields so the UI renders the
+      // last-saved theme on page load.
+      onRehydrateStorage: () => (state) => {
+        if (state?.saved) {
+          state.presetId = state.saved.presetId;
+          state.palette = state.saved.palette;
+          state.mode = state.saved.mode;
+          state.patternId = state.saved.patternId;
+          state.patternOpacity = state.saved.patternOpacity;
+        }
+      },
+      // Migrate from the v1 (mode+accent) and v2-flat (presetId+palette at top
+      // level) shapes if present in localStorage.
+      version: 3,
       migrate: (persistedState: unknown, version) => {
         if (version < 2 && typeof persistedState === 'object' && persistedState !== null) {
-          const old = persistedState as { mode?: string; accent?: string };
-          // Old "dark" → onyx, "light" → snow, anything else → onyx.
+          // v1 -> v3: pick a preset based on old mode
+          const old = persistedState as { mode?: string };
           const presetId = old.mode === 'light' ? 'snow' : 'onyx';
           const p = getPreset(presetId);
-          return { presetId: p.id, palette: p.palette, mode: p.mode };
+          const snap: ThemeSnapshot = {
+            presetId: p.id,
+            palette: p.palette,
+            mode: p.mode,
+            patternId: DEFAULT_PATTERN_ID,
+            patternOpacity: 1.0,
+          };
+          return { saved: snap };
+        }
+        if (version === 2 && typeof persistedState === 'object' && persistedState !== null) {
+          // v2 -> v3: flat shape becomes the `saved` snapshot
+          const flat = persistedState as Partial<ThemeSnapshot>;
+          const snap: ThemeSnapshot = {
+            presetId: flat.presetId ?? DEFAULT_PRESET_ID,
+            palette: flat.palette ?? defaultPreset.palette,
+            mode: flat.mode ?? defaultPreset.mode,
+            patternId: flat.patternId ?? DEFAULT_PATTERN_ID,
+            patternOpacity: flat.patternOpacity ?? 1.0,
+          };
+          return { saved: snap };
         }
         return persistedState as ThemeState;
       },
