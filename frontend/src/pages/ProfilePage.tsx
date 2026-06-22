@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
-import { PRESETS, PALETTE_FIELDS, type ThemePalette } from '../themes/presets';
-import { PATTERNS } from '../themes/patterns';
+import { PRESETS, PALETTE_FIELDS, getPreset, type ThemePalette } from '../themes/presets';
+import { PATTERNS, getPattern } from '../themes/patterns';
 import { changePassword } from '../api/auth';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { toast } from 'sonner';
@@ -172,13 +172,26 @@ function AppearanceSection() {
   const palette = useThemeStore((s) => s.palette);
   const applyPreset = useThemeStore((s) => s.applyPreset);
   const setToken = useThemeStore((s) => s.setToken);
-  const resetToCurrentPreset = useThemeStore((s) => s.resetToCurrentPreset);
   const importPalette = useThemeStore((s) => s.importPalette);
   const exportPalette = useThemeStore((s) => s.exportPalette);
   const patternId = useThemeStore((s) => s.patternId);
   const patternOpacity = useThemeStore((s) => s.patternOpacity);
   const setPattern = useThemeStore((s) => s.setPattern);
   const setPatternOpacity = useThemeStore((s) => s.setPatternOpacity);
+  // Subscribe to the saved snapshot so the diff re-renders on save/reset.
+  const saved = useThemeStore((s) => s.saved);
+  const saveTheme = useThemeStore((s) => s.save);
+  const resetTheme = useThemeStore((s) => s.reset);
+
+  // Compute the diff against the saved snapshot. Re-derives whenever any
+  // edit happens (because every dependency above re-runs the subscription).
+  const tokenDiff = PALETTE_FIELDS.filter((f) => palette[f.key] !== saved.palette[f.key]);
+  const presetChanged = presetId !== saved.presetId;
+  const modeChanged = useThemeStore((s) => s.mode) !== saved.mode;
+  const patternChanged = patternId !== saved.patternId;
+  const patternOpacityChanged = patternOpacity !== saved.patternOpacity;
+  const dirty =
+    tokenDiff.length > 0 || presetChanged || modeChanged || patternChanged || patternOpacityChanged;
 
   const [importDraft, setImportDraft] = useState('');
   const [showImport, setShowImport] = useState(false);
@@ -208,7 +221,9 @@ function AppearanceSection() {
       <div>
         <h3 className="text-lg font-semibold text-primary mb-1">Appearance</h3>
         <p className="text-xs text-muted">
-          Pick a preset or edit any of the 17 colors individually. Changes save instantly.
+          Pick a preset or edit any of the 17 colors individually. Changes preview live;
+          click <span className="text-secondary font-medium">Save</span> to keep them or
+          {' '}<span className="text-secondary font-medium">Reset</span> to revert.
         </p>
       </div>
 
@@ -254,13 +269,6 @@ function AppearanceSection() {
         <div className="flex items-center justify-between mb-3">
           <p className="text-sm font-medium text-secondary">Colors</p>
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={resetToCurrentPreset}
-              className="text-xs text-muted hover:text-primary underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
-            >
-              Reset
-            </button>
             <button
               type="button"
               onClick={handleCopy}
@@ -382,6 +390,128 @@ function AppearanceSection() {
             <span className="text-xs text-muted w-10 text-right tabular-nums">{Math.round(patternOpacity * 100)}%</span>
           </div>
         )}
+      </div>
+
+      {/* Diff + Save/Reset bar — only renders when there are unsaved edits */}
+      {dirty && (
+        <ChangeReview
+          tokenDiff={tokenDiff}
+          presetChanged={presetChanged}
+          patternChanged={patternChanged}
+          patternOpacityChanged={patternOpacityChanged}
+          onSave={() => { saveTheme(); toast.success('Theme saved'); }}
+          onReset={() => { resetTheme(); toast.info('Changes discarded'); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Diff + Save/Reset bar shown above the rest of the page when there are unsaved theme edits. */
+function ChangeReview({
+  tokenDiff,
+  presetChanged,
+  patternChanged,
+  patternOpacityChanged,
+  onSave,
+  onReset,
+}: {
+  tokenDiff: typeof PALETTE_FIELDS;
+  presetChanged: boolean;
+  patternChanged: boolean;
+  patternOpacityChanged: boolean;
+  onSave: () => void;
+  onReset: () => void;
+}) {
+  const presetId = useThemeStore((s) => s.presetId);
+  const palette = useThemeStore((s) => s.palette);
+  const patternId = useThemeStore((s) => s.patternId);
+  const patternOpacity = useThemeStore((s) => s.patternOpacity);
+  const saved = useThemeStore((s) => s.saved);
+
+  const total =
+    tokenDiff.length +
+    (presetChanged ? 1 : 0) +
+    (patternChanged ? 1 : 0) +
+    (patternOpacityChanged ? 1 : 0);
+
+  const presetLabel = (id: string) =>
+    id === 'custom' ? 'Custom' : getPreset(id).name;
+
+  return (
+    <div
+      className="sticky bottom-4 z-10 -mx-2 mt-4 bg-surface border border-accent/40 rounded-xl p-4 shadow-lg"
+      role="region"
+      aria-label="Unsaved theme changes"
+    >
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+        <div>
+          <p className="text-sm font-semibold text-primary">
+            {total} unsaved change{total === 1 ? '' : 's'}
+          </p>
+          <p className="text-xs text-muted">Preview is live. Save to keep, or reset to revert.</p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onReset}
+            className="px-3 py-1.5 text-sm text-secondary bg-surface-2 rounded-lg hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            className="px-4 py-1.5 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div className="max-h-44 overflow-y-auto space-y-1 text-xs">
+        {presetChanged && (
+          <div className="flex items-center gap-2 px-2 py-1 rounded bg-surface-2/40">
+            <span className="text-muted w-32 shrink-0">Preset</span>
+            <span className="text-disabled">{presetLabel(saved.presetId)}</span>
+            <span className="text-disabled" aria-hidden="true">→</span>
+            <span className="text-accent-text font-medium">{presetLabel(presetId)}</span>
+          </div>
+        )}
+        {patternChanged && (
+          <div className="flex items-center gap-2 px-2 py-1 rounded bg-surface-2/40">
+            <span className="text-muted w-32 shrink-0">Background pattern</span>
+            <span className="text-disabled">{getPattern(saved.patternId).name}</span>
+            <span className="text-disabled" aria-hidden="true">→</span>
+            <span className="text-accent-text font-medium">{getPattern(patternId).name}</span>
+          </div>
+        )}
+        {patternOpacityChanged && (
+          <div className="flex items-center gap-2 px-2 py-1 rounded bg-surface-2/40">
+            <span className="text-muted w-32 shrink-0">Pattern intensity</span>
+            <span className="text-disabled">{Math.round(saved.patternOpacity * 100)}%</span>
+            <span className="text-disabled" aria-hidden="true">→</span>
+            <span className="text-accent-text font-medium">{Math.round(patternOpacity * 100)}%</span>
+          </div>
+        )}
+        {tokenDiff.map((f) => (
+          <div key={f.key} className="flex items-center gap-2 px-2 py-1 rounded bg-surface-2/40">
+            <span className="text-muted w-32 shrink-0 truncate" title={f.label}>{f.label}</span>
+            <span
+              className="w-4 h-4 rounded border border-border shrink-0"
+              style={{ backgroundColor: saved.palette[f.key] }}
+              aria-hidden="true"
+            />
+            <span className="text-disabled font-mono text-[10px]">{saved.palette[f.key]}</span>
+            <span className="text-disabled" aria-hidden="true">→</span>
+            <span
+              className="w-4 h-4 rounded border border-accent/40 shrink-0"
+              style={{ backgroundColor: palette[f.key] }}
+              aria-hidden="true"
+            />
+            <span className="text-accent-text font-mono text-[10px] font-medium">{palette[f.key]}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
