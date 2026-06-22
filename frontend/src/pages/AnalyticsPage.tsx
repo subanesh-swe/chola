@@ -58,8 +58,11 @@ function ChartCard({
 }) {
   return (
     <div className="bg-surface border border-border rounded-xl">
-      <div className="px-4 py-3 border-b border-border">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <h3 className="text-sm font-semibold text-secondary">{title}</h3>
+        {onMaximize && (
+          <MaximizeButton onClick={onMaximize} aria-label={`Maximize ${title} chart`} />
+        )}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -280,24 +283,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold text-primary">Analytics</h2>
-        <div className="flex gap-1 bg-surface-2 rounded-lg p-0.5">
-          {RANGE_OPTIONS.map((opt) => (
-            <button
-              key={opt.days}
-              onClick={() => setPreset(opt.days)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                activePreset === opt.days
-                  ? 'bg-accent text-on-accent'
-                  : 'text-muted hover:text-primary'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <h2 className="text-2xl font-bold text-primary">Analytics</h2>
 
       <FilterBar
         filters={draft}

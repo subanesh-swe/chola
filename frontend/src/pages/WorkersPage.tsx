@@ -20,7 +20,8 @@ import type { MutationError, BranchBlacklistEntry, DiskDetail, WorkerSystemInfo,
 import type { Worker as CholaWorker } from '../types/worker';
 import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { EmptyState } from '../components/ui/EmptyState';
-import { formatBytes } from '../utils/format';
+import { RefreshControl } from '../components/ui/RefreshControl';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
 
 // ── System Info panel ────────────────────────────────────────────────────────
 
@@ -981,7 +982,7 @@ export default function WorkersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         {/* item 21: skeleton for count badge while loading */}
         <h2 className="text-2xl font-bold text-primary">
           Workers
@@ -990,14 +991,22 @@ export default function WorkersPage() {
             : <span className="ml-1">({workers.length})</span>
           }
         </h2>
-        {canManageWorkers && (
-          <button
-            onClick={() => setShowRegisterModal(true)}
-            className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            Register Worker
-          </button>
-        )}
+        <div className="flex items-center gap-3 flex-wrap">
+          <RefreshControl
+            intervalSecs={refreshSecs}
+            onIntervalChange={setRefreshSecs}
+            onRefresh={() => refetch()}
+            isFetching={isFetching}
+          />
+          {canManageWorkers && (
+            <button
+              onClick={() => setShowRegisterModal(true)}
+              className="px-4 py-2 text-sm bg-accent text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              Register Worker
+            </button>
+          )}
+        </div>
       </div>
 
       {isError && (
@@ -1106,7 +1115,7 @@ export default function WorkersPage() {
                         <span className="mr-2">{formatBytes(w.allocated_memory_mb)} RAM</span>
                       )}
                       {w.allocated_disk_mb > 0 && (
-                        <span>{formatBytes(w.allocated_disk_mb)} disk</span>
+                        <span>{w.allocated_disk_mb.toLocaleString()} MB disk</span>
                       )}
                     </p>
                     <a

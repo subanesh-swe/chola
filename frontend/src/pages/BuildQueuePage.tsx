@@ -1,6 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { listBuildsRaw } from '../api/builds';
+import { listBuilds } from '../api/builds';
+import { useAppliedFilters } from '../hooks/useAppliedFilters';
+import { useRefreshInterval } from '../hooks/useRefreshInterval';
+import { useQueryHistory } from '../hooks/useQueryHistory';
+import { FilterBar } from '../components/ui/FilterBar';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
@@ -11,10 +16,26 @@ const QUEUE_STATES = ['pending', 'reserved', 'running'];
 const HIDDEN: Array<'dateRange'> = ['dateRange'];
 
 export default function BuildQueuePage() {
-  const pendingQ = useQuery({
-    queryKey: ['queue', 'pending'],
-    queryFn: () => listBuildsRaw({ limit: 100, state: 'pending' }),
-    refetchInterval: 5000,
+  const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
+  const [refreshSecs, setRefreshSecs] = useRefreshInterval('queue', 5);
+  // queryValue mirrors applied.q so the QueryBox reflects the active ChQL query.
+  const [queryValue, setQueryValue] = useState(applied.q);
+  const historyApi = useQueryHistory('queue');
+
+  // Seed queue states on first load if user has not set any state filter.
+  useEffect(() => {
+    if (applied.state.length === 0) {
+      applyPatch({ state: QUEUE_STATES });
+    }
+    // Only on mount — intentionally omitting deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+    queryKey: ['queue', applied],
+    queryFn: () => listBuilds({ ...applied, page: 1 }),
+    refetchInterval: refreshSecs > 0 ? refreshSecs * 1000 : false,
+    placeholderData: keepPreviousData,
   });
 
   const queueItems = data?.data ?? [];
@@ -62,7 +83,7 @@ export default function BuildQueuePage() {
       )}
       <div className="bg-surface border border-border rounded-xl overflow-hidden">
         {isLoading ? (
-          <div className="p-8 text-center text-muted">Loading…</div>
+          <TableSkeleton rows={6} cols={7} />
         ) : (
           <>
             {/* Desktop table */}

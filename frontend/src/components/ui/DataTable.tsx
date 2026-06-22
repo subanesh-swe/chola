@@ -105,10 +105,9 @@ export function DataTable<T>({
             ) : (
               data.map((row) => {
                 const href = rowHref ? rowHref(row) : undefined;
-                const rowKey = keyExtractor(row);
                 return (
                   <tr
-                    key={rowKey}
+                    key={keyExtractor(row)}
                     onClick={onRowClick && !rowHref ? () => onRowClick(row) : undefined}
                     onKeyDown={
                       onRowClick && !rowHref
@@ -117,32 +116,36 @@ export function DataTable<T>({
                     }
                     tabIndex={onRowClick && !rowHref ? 0 : undefined}
                     className={clsx(
-                      'relative transition-colors',
-                      isClickable && 'hover:bg-surface-hover/50',
+                      'transition-colors',
+                      // item 46: active bg for touch feedback
+                      isClickable && 'hover:bg-surface-hover/50 active:bg-surface-hover',
                       onRowClick && !rowHref && 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent',
                     )}
                   >
+                    {/* Stretched link relies on row-level position:relative; supported in Safari 16+, Chromium 88+, Firefox 90+. */}
                     {columns.map((col, colIdx) => (
                       <td
                         key={col.key}
                         className={clsx(
-                          'px-4 py-3 text-sm text-secondary',
+                          'text-sm text-secondary',
+                          href ? 'p-0' : 'px-4 py-3',
                           col.className,
                         )}
                       >
-                        {/* Stretched invisible anchor covers the whole row — first cell only */}
-                        {href && colIdx === 0 && (
+                        {href ? (
                           <Link
                             to={href}
-                            aria-label={rowKey}
-                            tabIndex={0}
-                            className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent"
-                          />
+                            // First cell carries the accessible label; subsequent cells are duplicates — hide from AT.
+                            aria-label={colIdx === 0 ? (rowAriaLabel?.(row) ?? keyExtractor(row)) : undefined}
+                            aria-hidden={colIdx !== 0 ? true : undefined}
+                            tabIndex={colIdx !== 0 ? -1 : undefined}
+                            className="block px-4 py-3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent"
+                          >
+                            {col.render(row)}
+                          </Link>
+                        ) : (
+                          col.render(row)
                         )}
-                        {/* Interactive children (e.g. buttons) sit above the stretched link */}
-                        <span className={clsx(href && 'relative z-10')}>
-                          {col.render(row)}
-                        </span>
                       </td>
                     ))}
                   </tr>

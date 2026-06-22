@@ -13,6 +13,7 @@ import { useLiveLog } from '../hooks/useLiveLog';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
 import { formatSecs, formatBytes } from '../utils/format';
+import { PageSkeleton } from '../components/ui/PageSkeleton';
 import { toast } from 'sonner';
 import type { Job, JobGroup, ArchivedChildren, MutationError } from '../types';
 
