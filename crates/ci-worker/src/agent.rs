@@ -174,8 +174,18 @@ async fn run_session(
     let jobs_snapshot = running_jobs.read().await.clone();
     if jobs_snapshot.is_empty() {
         // Fresh registration
-        // Use real system info for totals, fall back to config
-        let sys = sysinfo::System::new_all();
+        // Use real system info for totals, fall back to config. Narrow the
+        // sysinfo refresh to cpu+memory ONLY — `System::new_all()` walks
+        // every /proc/<pid> via __access_remote_vm and freezes the worker
+        // (uninterruptible D-state) if any neighbour process is wedged.
+        // We don't need the process list here, just totals. `with_memory`
+        // needs an everything()-grade refresh kind so total_memory() is
+        // actually populated (a nothing() kind leaves it at zero).
+        let sys = sysinfo::System::new_with_specifics(
+            sysinfo::RefreshKind::nothing()
+                .with_cpu(sysinfo::CpuRefreshKind::nothing())
+                .with_memory(sysinfo::MemoryRefreshKind::everything()),
+        );
         let real_cpu = sys.cpus().len() as u32;
         let real_memory_mb = sys.total_memory() / 1024 / 1024;
         let disk_details = collect_disk_details(&config.tracked_disk_paths);
@@ -1106,6 +1116,24 @@ pub(crate) async fn purge_group_dirs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Confirms the narrowed sysinfo refresh still surfaces CPU count and
+    /// total memory — same data the worker needs for RegisterRequest, but
+    /// without the per-process walk that froze the worker on hosts with
+    /// wedged D-state neighbours.
+    #[test]
+    fn narrowed_sysinfo_returns_cpu_and_memory_totals() {
+        let sys = sysinfo::System::new_with_specifics(
+            sysinfo::RefreshKind::nothing()
+                .with_cpu(sysinfo::CpuRefreshKind::nothing())
+                .with_memory(sysinfo::MemoryRefreshKind::everything()),
+        );
+        assert!(sys.cpus().len() > 0, "cpus() must return at least one CPU");
+        assert!(
+            sys.total_memory() > 0,
+            "total_memory() must report a non-zero value"
+        );
+    }
 
     /// Build a unique tmpdir for a test. We avoid the `tempfile` crate
     /// (not in the dep tree) and roll a simple uuid-named dir under
