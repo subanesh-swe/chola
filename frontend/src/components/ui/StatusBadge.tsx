@@ -76,7 +76,11 @@ const enumStyleMap: Record<string, string> = {
   disabled: 'bg-surface-2 text-muted border-border',
 };
 
-const pulseStatuses = new Set(['running', 'assigned', 'JOB_STATE_RUNNING', 'JOB_STATE_ASSIGNED', 'JOB_GROUP_STATE_RUNNING']);
+// `running` shows a spinning loader — far more visible than a pulse-dot
+// when scanning the page for the active stage. `assigned` (worker accepted
+// but not yet started) keeps the pulse-dot.
+const spinStatuses = new Set(['running', 'JOB_STATE_RUNNING', 'JOB_GROUP_STATE_RUNNING']);
+const pulseStatuses = new Set(['assigned', 'JOB_STATE_ASSIGNED']);
 
 /** Fallback: "JOB_STATE_RUNNING" -> "Running", "some_thing" -> "Some thing". */
 function prettify(raw: string): string {
@@ -106,6 +110,7 @@ export function StatusBadge({ status, size = 'sm', title }: Props) {
     'bg-surface-2/50 text-muted border-border';
 
   const pulse = pulseStatuses.has(status);
+  const spin = spinStatuses.has(status);
 
   return (
     <span
@@ -117,6 +122,17 @@ export function StatusBadge({ status, size = 'sm', title }: Props) {
       aria-label={`Status: ${label}`}
       title={title}
     >
+      {spin && (
+        <svg
+          className={clsx('animate-spin text-current', size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5')}
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="4" />
+          <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+        </svg>
+      )}
       {pulse && (
         <span className="relative flex h-2 w-2" aria-hidden="true">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />

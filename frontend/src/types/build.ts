@@ -24,6 +24,10 @@ export interface JobGroup {
   trigger_source: string;
   reserved_worker_id: string | null;
   state: JobGroupState;
+  /** Granted stage manifest at reservation time (post silent-filter). */
+  reserved_stages?: string[];
+  /** Stage names that have a submitted job. Derived from `jobs[].stage_name`. */
+  submitted_stages?: string[];
   allocated_resources?: AllocatedResources;
   last_activity_at?: string | null;
   time_until_timeout_secs?: number | null;
