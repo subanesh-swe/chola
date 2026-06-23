@@ -2580,6 +2580,7 @@ impl Orchestrator for OrchestratorService {
                 pr_number: None,
                 idempotency_key: None,
                 allocated_resources: ci_core::models::job_group::AllocatedResources::default(),
+                reserved_stages: Vec::new(),
                 status_reason: None,
                 created_at: now,
                 updated_at: now,

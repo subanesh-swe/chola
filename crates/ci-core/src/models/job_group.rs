@@ -77,6 +77,12 @@ pub struct JobGroup {
     /// Resources allocated on the worker for this group
     #[serde(default)]
     pub allocated_resources: AllocatedResources,
+    /// Stage names that were granted at reservation time (post silent-filter).
+    /// Empty for legacy rows or in-memory-only groups. When non-empty, group
+    /// completion requires that all of these have a submitted terminal job;
+    /// missing submissions trigger `stall_timeout_secs` expiry.
+    #[serde(default)]
+    pub reserved_stages: Vec<String>,
     pub status_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -102,6 +108,7 @@ impl JobGroup {
             pr_number: None,
             idempotency_key: None,
             allocated_resources: AllocatedResources::default(),
+            reserved_stages: Vec::new(),
             status_reason: None,
             created_at: now,
             updated_at: now,
@@ -130,6 +137,7 @@ impl JobGroup {
             pr_number: None,
             idempotency_key: None,
             allocated_resources: AllocatedResources::default(),
+            reserved_stages: Vec::new(),
             status_reason: None,
             created_at: now,
             updated_at: now,
