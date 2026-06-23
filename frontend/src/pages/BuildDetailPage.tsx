@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -227,149 +227,133 @@ function TimerRow({ label, timer, job }: { label: string; timer: TimerInfo | und
   );
 }
 
-function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: TimerInfo; stall?: TimerInfo; stage?: TimerInfo } }; jobs: Job[] }) {
-  const isTerminal = ['success', 'failed', 'cancelled', 'expired'].includes(group.state);
-  if (isTerminal) return null;
-
-  // ALL currently-running jobs, not just the first one. Parallel stages
-  // each get their own stage-timeout row.
-  const runningJobs = jobs.filter(j => j.state === 'running');
-
-  if (group.timers) {
-    // Server-side computed timers — render one stage row per running job
-    // (server only ships a single `timers.stage`, so fall back to it for
-    // the first running job and compute the rest client-side from
-    // max_duration_secs on each running Job).
-    return (
-      <div className="bg-surface border border-border rounded-xl p-4">
-        <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider mb-3">Timers</h3>
-        <div className="space-y-2">
-          {runningJobs.length === 0 && (
-            <TimerRow label="Stage timeout" timer={group.timers.stage} job={null} />
-          )}
-          {runningJobs.map((j, idx) => (
-            <TimerRow
-              key={j.id}
-              label={`Stage timeout: ${j.stage_name}`}
-              timer={
-                idx === 0 && group.timers?.stage
-                  ? group.timers.stage
-                  : buildStageTimerFromJob(j)
-              }
-              job={j}
-            />
-          ))}
-          <TimerRow label="Stall timeout" timer={group.timers.stall} />
-          <TimerRow label="Idle timeout" timer={group.timers.idle} />
-        </div>
-      </div>
-    );
-  }
-
-  // Client-side computed fallback when the server doesn't ship `timers`.
-  const hasRunning = runningJobs.length > 0 || jobs.some(j => j.state === 'assigned');
-  const idleMax = group.idle_timeout_secs ?? 300;
-  const stallMax = group.stall_timeout_secs ?? 1800;
-
-  const stallTimer: TimerInfo = group.state === 'running'
-    ? hasRunning
-      ? { status: 'paused', remaining_secs: null, max_secs: stallMax, reason: 'Paused (stage running)' }
-      : { status: 'active', remaining_secs: group.time_until_timeout_secs ?? stallMax, max_secs: stallMax, reason: 'Waiting for next stage' }
-    : { status: 'na', remaining_secs: null, max_secs: stallMax };
-
-  const idleTimer: TimerInfo = group.state === 'reserved'
-    ? { status: 'active', remaining_secs: group.time_until_timeout_secs ?? idleMax, max_secs: idleMax, reason: 'Waiting for first stage' }
-    : { status: 'deactivated', remaining_secs: null, max_secs: idleMax };
-
+/** Subheading + bordered group inside the Timers panel. */
+function TimerGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="bg-surface border border-border rounded-xl p-4">
-      <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider mb-3">Timers</h3>
-      <div className="space-y-2">
-        {runningJobs.length === 0 ? (
-          <TimerRow
-            label="Stage timeout"
-            timer={{ status: 'na', remaining_secs: null, max_secs: 0 }}
-          />
-        ) : (
-          runningJobs.map(j => (
-            <TimerRow
-              key={j.id}
-              label={`Stage timeout: ${j.stage_name}`}
-              timer={buildStageTimerFromJob(j)}
-              job={j}
-            />
-          ))
-        )}
-        <TimerRow label="Stall timeout" timer={stallTimer} />
-        <TimerRow label="Idle timeout" timer={idleTimer} />
-      </div>
+    <div className="rounded-lg border border-border/60 bg-surface-2/30 p-3">
+      <p className="text-[11px] font-semibold text-disabled uppercase tracking-wider mb-2">{title}</p>
+      <div className="space-y-2">{children}</div>
     </div>
   );
 }
 
 /**
- * Compact "<stage>: 02:35 / 30m" chip for the Pipeline header — one per
- * currently-running stage. Color shifts to warning/danger as the
- * countdown closes in on the per-stage max_duration_secs.
+ * One row per stage in the Timers panel. Works for running AND terminal
+ * stages:
+ *  - running + timeout: live "X left / max" countdown, color escalates as
+ *    the deadline nears.
+ *  - running, no timeout: elapsed + "no limit".
+ *  - terminal: final "used Y / max (pct)" — so people can see, after the
+ *    fact, how much of each stage's budget was consumed.
  */
-function RunningStageChip({ job }: { job: Job }) {
+function StageTimerRow({ job }: { job: Job }) {
+  const isRunning = job.state === 'running';
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
+    if (!isRunning) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [isRunning]);
 
-  if (!job.started_at) return null;
-  const elapsed = Math.max(0, Math.floor((now - new Date(job.started_at).getTime()) / 1000));
   const maxSecs = job.max_duration_secs || 0;
+  const endMs = job.completed_at ? new Date(job.completed_at).getTime() : now;
+  const elapsedSecs = job.started_at
+    ? Math.max(0, Math.floor((endMs - new Date(job.started_at).getTime()) / 1000))
+    : 0;
+  const pct = maxSecs > 0 ? elapsedSecs / maxSecs : 0;
 
-  let timeLabel: string;
-  let colorClass: string;
-  if (maxSecs > 0) {
-    const remaining = Math.max(0, maxSecs - elapsed);
-    const pct = elapsed / maxSecs;
-    colorClass =
-      pct > 0.9
-        ? 'bg-danger-soft text-danger border-danger/30'
-        : pct > 0.7
-        ? 'bg-warning-soft text-warning border-warning/30'
-        : 'bg-accent-soft text-accent-text border-accent/30';
-    timeLabel = `${formatSecs(remaining)} / ${formatSecs(maxSecs)}`;
+  // Icon + color by lifecycle.
+  let icon: string;
+  let color: string;
+  if (isRunning) {
+    icon = '⏱';
+    color = pct > 0.9 ? 'text-danger' : pct > 0.7 ? 'text-warning' : 'text-success';
+  } else if (job.state === 'success') {
+    icon = '✓';
+    color = 'text-disabled';
+  } else if (job.state === 'failed') {
+    icon = '✗';
+    color = 'text-danger';
   } else {
-    colorClass = 'bg-accent-soft text-accent-text border-accent/30';
-    timeLabel = formatSecs(elapsed);
+    icon = '○';
+    color = 'text-disabled';
+  }
+
+  const maxLabel = maxSecs > 0 ? formatSecs(maxSecs) : 'no limit';
+  let timeDisplay: string;
+  if (isRunning && maxSecs > 0) {
+    timeDisplay = `${formatSecs(Math.max(0, maxSecs - elapsedSecs))} left / ${maxLabel}`;
+  } else if (maxSecs > 0) {
+    timeDisplay = `${formatSecs(elapsedSecs)} / ${maxLabel} (${Math.round(Math.min(pct, 1) * 100)}%)`;
+  } else {
+    timeDisplay = `${formatSecs(elapsedSecs)} / ${maxLabel}`;
   }
 
   return (
-    <span
-      className={clsx(
-        'inline-flex items-center gap-2 border rounded-full px-2.5 py-0.5 text-xs font-mono',
-        colorClass,
-      )}
-      title={`${job.stage_name}: ${timeLabel}`}
-    >
-      <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="4" />
-        <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-      </svg>
-      <span className="font-semibold">{job.stage_name}</span>
-      <span>{timeLabel}</span>
-    </span>
+    <div className="flex items-center justify-between text-xs">
+      <div className="flex items-center gap-2 min-w-0">
+        <span aria-hidden="true">{icon}</span>
+        <span className="text-secondary font-mono truncate">{job.stage_name}</span>
+      </div>
+      <span className={`${color} font-mono shrink-0`}>{timeDisplay}</span>
+    </div>
   );
 }
 
-/** Build a client-side TimerInfo from a running job's max_duration_secs. */
-function buildStageTimerFromJob(job: Job): TimerInfo {
-  if (!job.started_at || !job.max_duration_secs || job.max_duration_secs <= 0) {
-    return { status: 'na', remaining_secs: null, max_secs: job.max_duration_secs ?? 0 };
-  }
-  const elapsed = Math.floor((Date.now() - new Date(job.started_at).getTime()) / 1000);
-  return {
-    status: 'active',
-    remaining_secs: Math.max(0, job.max_duration_secs - elapsed),
-    max_secs: job.max_duration_secs,
-    reason: `Active (${job.stage_name})`,
-  };
+function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: TimerInfo; stall?: TimerInfo; stage?: TimerInfo } }; jobs: Job[] }) {
+  const isTerminal = ['success', 'failed', 'cancelled', 'expired'].includes(group.state);
+
+  // Show every stage that has a job (running or finished) so the panel is
+  // useful both live and as a post-mortem.
+  const sortedJobs = [...jobs].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+  const hasRunning = jobs.some(j => j.state === 'running' || j.state === 'assigned');
+
+  // ── Build-level timers (stall + idle). Prefer server-computed values;
+  // otherwise compute a sensible client-side view. ──
+  const idleMax = group.timers?.idle?.max_secs ?? group.idle_timeout_secs ?? 300;
+  const stallMax = group.timers?.stall?.max_secs ?? group.stall_timeout_secs ?? 1800;
+
+  const stallTimer: TimerInfo = group.timers?.stall ?? (
+    isTerminal
+      ? { status: 'deactivated', remaining_secs: null, max_secs: stallMax, reason: 'Build finished' }
+      : group.state === 'running'
+        ? hasRunning
+          ? { status: 'paused', remaining_secs: null, max_secs: stallMax, reason: 'Paused (stage running)' }
+          : { status: 'active', remaining_secs: group.time_until_timeout_secs ?? stallMax, max_secs: stallMax, reason: 'Waiting for next stage' }
+        : { status: 'na', remaining_secs: null, max_secs: stallMax }
+  );
+
+  const idleTimer: TimerInfo = group.timers?.idle ?? (
+    isTerminal
+      ? { status: 'deactivated', remaining_secs: null, max_secs: idleMax, reason: 'Build finished' }
+      : group.state === 'reserved'
+        ? { status: 'active', remaining_secs: group.time_until_timeout_secs ?? idleMax, max_secs: idleMax, reason: 'Waiting for first stage' }
+        : { status: 'deactivated', remaining_secs: null, max_secs: idleMax }
+  );
+
+  return (
+    <div className="bg-surface border border-border rounded-xl p-4">
+      <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider mb-3">
+        Timers{isTerminal && <span className="ml-2 normal-case text-disabled/70 font-normal">(final)</span>}
+      </h3>
+      <div className="space-y-3">
+        <TimerGroup title={`Stage timeouts${sortedJobs.length ? ` · ${sortedJobs.length}` : ''}`}>
+          {sortedJobs.length > 0 ? (
+            sortedJobs.map(j => <StageTimerRow key={j.id} job={j} />)
+          ) : (
+            <p className="text-xs text-disabled italic">No stages submitted yet</p>
+          )}
+        </TimerGroup>
+
+        <TimerGroup title="Build timeouts">
+          <TimerRow label="Stall timeout" timer={stallTimer} />
+          <TimerRow label="Idle timeout" timer={idleTimer} />
+        </TimerGroup>
+      </div>
+    </div>
+  );
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -571,22 +555,13 @@ export default function BuildDetailPage() {
         </div>
       )}
 
-      {/* Stage pipeline timeline */}
+      {/* Stage pipeline timeline. Per-stage timeout/countdown is rendered
+          inside each row (next to the stage name) by StageTimeline. */}
       <div className="bg-surface border border-border rounded-xl">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+        <div className="px-4 py-3 border-b border-border">
           <h3 className="text-sm font-semibold text-secondary">
             Pipeline ({jobs.length} stage{jobs.length !== 1 ? 's' : ''})
           </h3>
-          {/* Show per-running-stage countdown chips so users see at a
-              glance how long each active stage has before its
-              max_duration_secs hits. */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {jobs
-              .filter((j) => j.state === 'running')
-              .map((j) => (
-                <RunningStageChip key={j.id} job={j} />
-              ))}
-          </div>
         </div>
         {jobs.length > 0 ? (
           <div className="p-2">
