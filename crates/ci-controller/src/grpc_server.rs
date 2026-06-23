@@ -717,6 +717,132 @@ pub async fn do_reserve_worker(
     // Generate group_id upfront so Redis lock references it
     let group_id = uuid::Uuid::new_v4();
 
+    // ── Early validation, hoisted above worker selection ─────────────────
+    // Looking up the repo, validating stage names, fetching the dependency
+    // map, and consulting the idempotency cache must all happen BEFORE a
+    // worker is selected. Otherwise a reservation can hold a worker while
+    // the request turns out to be invalid (or already cached) and we leak
+    // resources until the group times out.
+
+    // Look up repo by name — must exist in DB
+    let (repo_id, max_concurrent, cancel_superseded) = if let Some(storage) = &state.storage {
+        match storage.get_repo_by_name(&req.repo_name).await {
+            Ok(Some(repo)) => (repo.id, repo.max_concurrent_builds, repo.cancel_superseded),
+            Ok(None) => {
+                return Ok(ReserveWorkerResponse {
+                    job_group_id: String::new(),
+                    worker_id: String::new(),
+                    stages: Vec::new(),
+                    success: false,
+                    message: format!(
+                        "Repo '{}' not found — create it in the DB first",
+                        req.repo_name
+                    ),
+                });
+            }
+            Err(e) => {
+                warn!("Failed to lookup repo {}: {}", req.repo_name, e);
+                (uuid::Uuid::new_v4(), 0, false)
+            }
+        }
+    } else {
+        (uuid::Uuid::new_v4(), 0, false) // no DB — in-memory only
+    };
+
+    // Validate requested stages exist in DB
+    if !req.stages.is_empty() {
+        if let Some(storage) = &state.storage {
+            let configs = storage
+                .get_stage_configs_for_repo(repo_id)
+                .await
+                .unwrap_or_default();
+            let known: std::collections::HashSet<&str> =
+                configs.iter().map(|c| c.stage_name.as_str()).collect();
+            let unknown: Vec<&str> = req
+                .stages
+                .iter()
+                .filter(|s| !s.is_empty() && !known.contains(s.as_str()))
+                .map(|s| s.as_str())
+                .collect();
+            if !unknown.is_empty() {
+                return Err(Status::invalid_argument(format!(
+                    "Unknown stages for repo '{}': {}",
+                    req.repo_name,
+                    unknown.join(", ")
+                )));
+            }
+        }
+    }
+
+    // Fetch stage dependency map for DAG validation and StageInfo enrichment
+    let stage_deps: std::collections::HashMap<String, Vec<String>> =
+        if let Some(storage) = &state.storage {
+            storage
+                .get_stage_dependencies(repo_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+    // Helper: build StageInfo with depends_on from the DB map
+    let build_stage_info = |name: &str| -> ci_core::proto::orchestrator::StageInfo {
+        let deps = stage_deps.get(name).cloned().unwrap_or_default();
+        ci_core::proto::orchestrator::StageInfo {
+            stage_name: name.to_string(),
+            command: String::new(),
+            required_cpu: 0,
+            required_memory_mb: 0,
+            required_disk_mb: 0,
+            max_duration_secs: 0,
+            parallel_group: String::new(),
+            job_type: "common".to_string(),
+            depends_on: deps,
+        }
+    };
+
+    // Idempotency: if key provided, return existing group with same key.
+    // Done BEFORE worker selection so a retry with the same key returns the
+    // cached group even when workers are tight, instead of failing fresh
+    // worker selection.
+    if !req.idempotency_key.is_empty() {
+        if let Some(storage) = &state.storage {
+            if let Ok(Some(existing)) = storage.find_by_idempotency_key(&req.idempotency_key).await
+            {
+                let worker_connected = {
+                    let wr = state.worker_registry.read().await;
+                    existing
+                        .reserved_worker_id
+                        .as_ref()
+                        .and_then(|wid| wr.get(wid))
+                        .map(|w| w.status == ci_core::models::worker::WorkerStatus::Connected)
+                        .unwrap_or(false)
+                };
+
+                if worker_connected {
+                    info!(
+                        "Returning existing group {} for idempotency_key={}",
+                        existing.id, req.idempotency_key
+                    );
+                    let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
+                    return Ok(ReserveWorkerResponse {
+                        job_group_id: existing.id.to_string(),
+                        worker_id: existing.reserved_worker_id.unwrap_or_default(),
+                        stages,
+                        success: true,
+                        message: "Existing active group returned (idempotency key match)"
+                            .to_string(),
+                    });
+                } else {
+                    warn!(
+                        "Existing group {} (key={}) has disconnected worker, creating new reservation",
+                        existing.id, req.idempotency_key
+                    );
+                }
+            }
+        }
+    }
+
     // Compute resource requirements from stage_configs
     let (needed_cpu, needed_memory, needed_disk) = compute_resource_needs(state, req).await;
 
@@ -846,55 +972,8 @@ pub async fn do_reserve_worker(
         }
     }
 
-    // Look up repo by name — must exist in DB
-    let (repo_id, max_concurrent, cancel_superseded) = if let Some(storage) = &state.storage {
-        match storage.get_repo_by_name(&req.repo_name).await {
-            Ok(Some(repo)) => (repo.id, repo.max_concurrent_builds, repo.cancel_superseded),
-            Ok(None) => {
-                return Ok(ReserveWorkerResponse {
-                    job_group_id: String::new(),
-                    worker_id: String::new(),
-                    stages: Vec::new(),
-                    success: false,
-                    message: format!(
-                        "Repo '{}' not found — create it in the DB first",
-                        req.repo_name
-                    ),
-                });
-            }
-            Err(e) => {
-                warn!("Failed to lookup repo {}: {}", req.repo_name, e);
-                (uuid::Uuid::new_v4(), 0, false)
-            }
-        }
-    } else {
-        (uuid::Uuid::new_v4(), 0, false) // no DB — in-memory only
-    };
-
-    // Validate requested stages exist in DB
-    if !req.stages.is_empty() {
-        if let Some(storage) = &state.storage {
-            let configs = storage
-                .get_stage_configs_for_repo(repo_id)
-                .await
-                .unwrap_or_default();
-            let known: std::collections::HashSet<&str> =
-                configs.iter().map(|c| c.stage_name.as_str()).collect();
-            let unknown: Vec<&str> = req
-                .stages
-                .iter()
-                .filter(|s| !s.is_empty() && !known.contains(s.as_str()))
-                .map(|s| s.as_str())
-                .collect();
-            if !unknown.is_empty() {
-                return Err(Status::invalid_argument(format!(
-                    "Unknown stages for repo '{}': {}",
-                    req.repo_name,
-                    unknown.join(", ")
-                )));
-            }
-        }
-    }
+    // (Repo lookup + stage validation are now done at the top of this
+    // function, above worker selection — see the "Early validation" block.)
 
     // Enforce concurrency limits
     if max_concurrent > 0 {
@@ -942,80 +1021,15 @@ pub async fn do_reserve_worker(
         }
     }
 
-    // Fetch stage dependency map for DAG validation and StageInfo enrichment
-    let stage_deps: std::collections::HashMap<String, Vec<String>> =
-        if let Some(storage) = &state.storage {
-            storage
-                .get_stage_dependencies(repo_id)
-                .await
-                .unwrap_or_default()
-        } else {
-            std::collections::HashMap::new()
-        };
-
-    // Validate DAG — reject reservation if stages form a cycle
+    // (stage_deps + build_stage_info + idempotency lookup are now done at
+    // the top of this function — see the "Early validation" block.) Run the
+    // DAG cycle check here using the hoisted stage_deps map.
     if let Err(cycle_node) = dag::validate_dag(&stage_deps) {
         return Err(Status::invalid_argument(format!(
             "Stage dependency cycle detected involving '{}'",
             cycle_node
         )));
     }
-
-    // Helper: build StageInfo with depends_on from the DB map
-    let build_stage_info = |name: &str| -> ci_core::proto::orchestrator::StageInfo {
-        let deps = stage_deps.get(name).cloned().unwrap_or_default();
-        ci_core::proto::orchestrator::StageInfo {
-            stage_name: name.to_string(),
-            command: String::new(),
-            required_cpu: 0,
-            required_memory_mb: 0,
-            required_disk_mb: 0,
-            max_duration_secs: 0,
-            parallel_group: String::new(),
-            job_type: "common".to_string(),
-            depends_on: deps,
-        }
-    };
-
-    // Idempotency: if key provided, return existing group with same key
-    if !req.idempotency_key.is_empty() {
-        if let Some(storage) = &state.storage {
-            if let Ok(Some(existing)) = storage.find_by_idempotency_key(&req.idempotency_key).await
-            {
-                let worker_connected = {
-                    let wr = state.worker_registry.read().await;
-                    existing
-                        .reserved_worker_id
-                        .as_ref()
-                        .and_then(|wid| wr.get(wid))
-                        .map(|w| w.status == ci_core::models::worker::WorkerStatus::Connected)
-                        .unwrap_or(false)
-                };
-
-                if worker_connected {
-                    info!(
-                        "Returning existing group {} for idempotency_key={}",
-                        existing.id, req.idempotency_key
-                    );
-                    let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
-                    return Ok(ReserveWorkerResponse {
-                        job_group_id: existing.id.to_string(),
-                        worker_id: existing.reserved_worker_id.unwrap_or_default(),
-                        stages,
-                        success: true,
-                        message: "Existing active group returned (idempotency key match)"
-                            .to_string(),
-                    });
-                } else {
-                    warn!(
-                        "Existing group {} (key={}) has disconnected worker, creating new reservation",
-                        existing.id, req.idempotency_key
-                    );
-                }
-            }
-        }
-    }
-    // No key or no match -- create new group (no implicit dedup)
 
     // Redis lock acquired (or no Redis) -- now create the in-memory group
     let mut group = ci_core::models::job_group::JobGroup::new(
