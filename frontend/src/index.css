@@ -249,3 +249,25 @@ button.bg-accent[disabled] {
 .bg-warning {
   background-image: var(--gradient-warning);
 }
+
+/* =============================================================================
+   PROGRESS-BAR ANIMATIONS — for stages that are actively running.
+   `marching-stripes` produces a barber-pole diagonal stripe sweep, the
+   universal "in progress" signal. Used by StageTimeline on running jobs.
+   ============================================================================= */
+@keyframes marching-stripes {
+  from { background-position: 0 0; }
+  to   { background-position: 40px 0; }
+}
+
+.animate-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-accent) 0%,  transparent) 0px,
+    color-mix(in srgb, var(--color-accent) 0%,  transparent) 10px,
+    color-mix(in srgb, var(--color-accent) 35%, transparent) 10px,
+    color-mix(in srgb, var(--color-accent) 35%, transparent) 20px
+  );
+  background-size: 40px 40px;
+  animation: marching-stripes 1.2s linear infinite;
+}

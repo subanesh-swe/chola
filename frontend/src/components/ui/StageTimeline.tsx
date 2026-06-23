@@ -71,16 +71,22 @@ export function StageTimeline({ jobs, onSelectJob, selectedJobId }: Props) {
             aria-valuenow={durationBar(job.started_at, job.completed_at, maxMs)}
             aria-valuemin={0}
             aria-valuemax={100}
+            aria-busy={job.state === 'running'}
           >
-            <div
-              className={clsx(
-                'h-full rounded transition-all duration-500',
-                stateColor[job.state] ?? 'bg-surface-2',
-              )}
-              style={{ width: `${durationBar(job.started_at, job.completed_at, maxMs)}%` }}
-            />
-            {job.state === 'running' && (
-              <div className="absolute inset-0 bg-accent/20 animate-pulse rounded" aria-hidden="true" />
+            {job.state === 'running' ? (
+              // Running: full-width accent fill with marching diagonal
+              // stripes — the universal "in progress" signal. The
+              // numeric width-based duration animation isn't useful here
+              // because completed_at is null (job hasn't finished yet).
+              <div className="h-full w-full rounded bg-accent/60 animate-stripes" aria-hidden="true" />
+            ) : (
+              <div
+                className={clsx(
+                  'h-full rounded transition-all duration-500',
+                  stateColor[job.state] ?? 'bg-surface-2',
+                )}
+                style={{ width: `${durationBar(job.started_at, job.completed_at, maxMs)}%` }}
+              />
             )}
           </div>
 
