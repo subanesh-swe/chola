@@ -749,29 +749,54 @@ pub async fn do_reserve_worker(
         (uuid::Uuid::new_v4(), 0, false) // no DB — in-memory only
     };
 
-    // Validate requested stages exist in DB
-    if !req.stages.is_empty() {
-        if let Some(storage) = &state.storage {
-            let configs = storage
-                .get_stage_configs_for_repo(repo_id)
-                .await
-                .unwrap_or_default();
-            let known: std::collections::HashSet<&str> =
-                configs.iter().map(|c| c.stage_name.as_str()).collect();
-            let unknown: Vec<&str> = req
-                .stages
-                .iter()
-                .filter(|s| !s.is_empty() && !known.contains(s.as_str()))
-                .map(|s| s.as_str())
-                .collect();
-            if !unknown.is_empty() {
-                return Err(Status::invalid_argument(format!(
-                    "Unknown stages for repo '{}': {}",
-                    req.repo_name,
-                    unknown.join(", ")
-                )));
-            }
-        }
+    // Silent-filter requested stages against the repo's stage_configs.
+    //
+    // The Jenkinsfile sends a wide candidate list (e.g.
+    // [checkout-scm, vira-ci, gitleaks]) where some names may be Jenkins-
+    // managed steps with no stage_config (checkout-scm) or stages that
+    // will be configured later. We drop the unknown ones and continue
+    // with the known subset; the dropped names are surfaced in the
+    // response message so Jenkins console shows them.
+    let (effective_stages, dropped_stages): (Vec<String>, Vec<String>) = if req.stages.is_empty() {
+        (Vec::new(), Vec::new())
+    } else if let Some(storage) = &state.storage {
+        let configs = storage
+            .get_stage_configs_for_repo(repo_id)
+            .await
+            .unwrap_or_default();
+        let known: std::collections::HashSet<&str> =
+            configs.iter().map(|c| c.stage_name.as_str()).collect();
+        req.stages
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .partition(|s| known.contains(s.as_str()))
+    } else {
+        (req.stages.clone(), Vec::new())
+    };
+
+    if !dropped_stages.is_empty() {
+        info!(
+            "Reservation: skipping unconfigured stages {:?} for repo '{}'",
+            dropped_stages, req.repo_name
+        );
+    }
+
+    // All-unknown short-circuit. Caller asked for stages but none are
+    // configured — return success with no reservation so Jenkins falls
+    // back to Cloud cleanly. NO worker held, NO DB row, NO Redis key.
+    if !req.stages.is_empty() && effective_stages.is_empty() {
+        return Ok(ReserveWorkerResponse {
+            job_group_id: String::new(),
+            worker_id: String::new(),
+            stages: Vec::new(),
+            success: true,
+            message: format!(
+                "No configured stages for repo '{}'. Skipped: {}",
+                req.repo_name,
+                dropped_stages.join(", ")
+            ),
+        });
     }
 
     // Fetch stage dependency map for DAG validation and StageInfo enrichment
@@ -824,7 +849,12 @@ pub async fn do_reserve_worker(
                         "Returning existing group {} for idempotency_key={}",
                         existing.id, req.idempotency_key
                     );
-                    let stages = req.stages.iter().map(|n| build_stage_info(n)).collect();
+                    // Report only the granted (effective) subset, never the
+                    // dropped stage names.
+                    let stages = effective_stages
+                        .iter()
+                        .map(|n| build_stage_info(n))
+                        .collect();
                     return Ok(ReserveWorkerResponse {
                         job_group_id: existing.id.to_string(),
                         worker_id: existing.reserved_worker_id.unwrap_or_default(),
@@ -1053,9 +1083,12 @@ pub async fn do_reserve_worker(
     };
     group.updated_at = chrono::Utc::now();
 
-    // Build stage info from request stages
-    let stage_infos: Vec<ci_core::proto::orchestrator::StageInfo> =
-        req.stages.iter().map(|n| build_stage_info(n)).collect();
+    // Build stage info from the FILTERED stage list — never expose unknown
+    // stage names to the caller as "reserved".
+    let stage_infos: Vec<ci_core::proto::orchestrator::StageInfo> = effective_stages
+        .iter()
+        .map(|n| build_stage_info(n))
+        .collect();
 
     // Persist job group to PostgreSQL (clone before add_group takes ownership)
     if let Some(storage) = &state.storage {
@@ -1079,12 +1112,22 @@ pub async fn do_reserve_worker(
         worker_id, group_id, req.repo_name, req.branch
     );
 
+    let message = if dropped_stages.is_empty() {
+        "Worker reserved successfully".to_string()
+    } else {
+        format!(
+            "Worker reserved successfully. Skipped (not configured for repo '{}'): {}",
+            req.repo_name,
+            dropped_stages.join(", ")
+        )
+    };
+
     Ok(ReserveWorkerResponse {
         job_group_id: group_id.to_string(),
         worker_id,
         stages: stage_infos,
         success: true,
-        message: "Worker reserved successfully".to_string(),
+        message,
     })
 }
 
