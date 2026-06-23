@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import type { Job } from '../../types';
 import { StatusBadge } from './StatusBadge';
@@ -8,6 +9,20 @@ function durationBar(start: string | null, end: string | null, maxMs: number): n
   return Math.min((durationMs(start, end) / maxMs) * 100, 100);
 }
 
+/**
+ * Width % for a RUNNING stage's bar.
+ *  - With a per-stage timeout: grow elapsed/max toward 100% as the
+ *    deadline approaches (so the bar visibly fills up over time).
+ *  - Without a timeout: full width — there's no deadline to track, the
+ *    stripe animation alone signals "running".
+ */
+function runningBarPct(startedAt: string | null, maxDurationSecs: number, now: number): number {
+  if (!maxDurationSecs || maxDurationSecs <= 0) return 100;
+  if (!startedAt) return 100;
+  const elapsedSecs = Math.max(0, (now - new Date(startedAt).getTime()) / 1000);
+  return Math.min((elapsedSecs / maxDurationSecs) * 100, 100);
+}
+
 interface Props {
   jobs: Job[];
   onSelectJob: (job: Job) => void;
@@ -15,6 +30,16 @@ interface Props {
 }
 
 export function StageTimeline({ jobs, onSelectJob, selectedJobId }: Props) {
+  // Tick every second while any stage is running so the growing-toward-
+  // timeout bars advance smoothly.
+  const hasRunning = jobs.some((j) => j.state === 'running');
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!hasRunning) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hasRunning]);
+
   const sorted = [...jobs].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   );
@@ -74,11 +99,15 @@ export function StageTimeline({ jobs, onSelectJob, selectedJobId }: Props) {
             aria-busy={job.state === 'running'}
           >
             {job.state === 'running' ? (
-              // Running: full-width accent fill with marching diagonal
-              // stripes — the universal "in progress" signal. The
-              // numeric width-based duration animation isn't useful here
-              // because completed_at is null (job hasn't finished yet).
-              <div className="h-full w-full rounded bg-accent/60 animate-stripes" aria-hidden="true" />
+              // Running: marching diagonal stripes over an accent fill.
+              // With a per-stage timeout the bar grows elapsed/max toward
+              // 100% as the deadline nears; with no timeout it's full
+              // width and the stripes alone signal "in progress".
+              <div
+                className="h-full rounded bg-accent/60 animate-stripes transition-all duration-1000 ease-linear"
+                style={{ width: `${runningBarPct(job.started_at, job.max_duration_secs, now)}%` }}
+                aria-hidden="true"
+              />
             ) : (
               <div
                 className={clsx(
