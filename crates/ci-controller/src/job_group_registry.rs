@@ -151,19 +151,60 @@ impl JobGroupRegistry {
             .find(|j| job_id_matches(&j.job_id, job_id))
     }
 
-    /// Check if all jobs in a group have reached terminal state.
-    /// Sets `status_reason` on the group when it transitions to a terminal state.
+    /// Check if a group has reached a terminal state.
+    ///
+    /// A group transitions to Success only when EVERY reserved stage has a
+    /// submitted job AND all submitted jobs are terminal. Reserved stages
+    /// that never get submitted keep the group in Running; the reservation
+    /// reaper (workers.stall_timeout_secs) will eventually Expire it.
+    ///
+    /// Failure / cancellation propagate as soon as any submitted job hits
+    /// that state — no need to wait for the rest in those cases.
+    ///
+    /// Sets `status_reason` on the group when it transitions to terminal.
     pub fn check_group_completion(&mut self, group_id: &Uuid) -> Option<JobGroupState> {
         let group = self.groups.get(group_id)?;
         if group.state.is_terminal() {
             return None;
         }
+        let reserved_stages: Vec<String> = group.reserved_stages.clone();
 
         let jobs = self.group_jobs.get(group_id)?;
         if jobs.is_empty() {
             return None;
         }
 
+        // Fast-fail: any failed/cancelled job collapses the whole group.
+        let any_failed = jobs.iter().any(|j| j.state == JobState::Failed);
+        let any_cancelled = jobs.iter().any(|j| j.state == JobState::Cancelled);
+
+        if any_failed || any_cancelled {
+            let (new_state, reason) = if any_failed {
+                let reason = jobs
+                    .iter()
+                    .find(|j| j.state == JobState::Failed)
+                    .map(|j| {
+                        let stage = j.stage_name.as_deref().unwrap_or("unknown");
+                        let code = j.exit_code.unwrap_or(-1);
+                        format!("Stage {stage} failed (exit code {code})")
+                    })
+                    .unwrap_or_else(|| "Stage failed".to_string());
+                (JobGroupState::Failed, reason)
+            } else {
+                (
+                    JobGroupState::Cancelled,
+                    "Cancelled: stage was cancelled".to_string(),
+                )
+            };
+            self.update_state(group_id, new_state);
+            if let Some(group) = self.groups.get_mut(group_id) {
+                group.status_reason = Some(reason);
+            }
+            return Some(new_state);
+        }
+
+        // Success path: ALL submitted jobs must be terminal AND every
+        // reserved stage must have a submitted job.
         let all_terminal = jobs.iter().all(|j| {
             matches!(
                 j.state,
@@ -174,38 +215,33 @@ impl JobGroupRegistry {
             return None;
         }
 
-        let any_failed = jobs.iter().any(|j| j.state == JobState::Failed);
-        let any_cancelled = jobs.iter().any(|j| j.state == JobState::Cancelled);
-
-        let (new_state, reason) = if any_failed {
-            // Find the first failed stage to include in the reason
-            let reason = jobs
+        if !reserved_stages.is_empty() {
+            // Every reserved stage name needs at least one submitted job.
+            // We don't enforce one-job-per-stage (retries can submit twice);
+            // having ≥1 job per reserved name is enough to call it "ran."
+            let submitted_stages: std::collections::HashSet<&str> = jobs
                 .iter()
-                .find(|j| j.state == JobState::Failed)
-                .map(|j| {
-                    let stage = j.stage_name.as_deref().unwrap_or("unknown");
-                    let code = j.exit_code.unwrap_or(-1);
-                    format!("Stage {stage} failed (exit code {code})")
-                })
-                .unwrap_or_else(|| "Stage failed".to_string());
-            (JobGroupState::Failed, reason)
-        } else if any_cancelled {
-            (
-                JobGroupState::Cancelled,
-                "Cancelled: stage was cancelled".to_string(),
-            )
-        } else {
-            (
-                JobGroupState::Success,
-                "All stages completed successfully".to_string(),
-            )
-        };
-
-        self.update_state(group_id, new_state);
-        if let Some(group) = self.groups.get_mut(group_id) {
-            group.status_reason = Some(reason);
+                .filter_map(|j| j.stage_name.as_deref())
+                .collect();
+            let missing: Vec<&str> = reserved_stages
+                .iter()
+                .map(|s| s.as_str())
+                .filter(|s| !submitted_stages.contains(s))
+                .collect();
+            if !missing.is_empty() {
+                // Submitted jobs are done; we're still waiting for the rest
+                // of the reservation manifest. Stay in Running — the
+                // stall_timeout reaper will Expire the group if no further
+                // submissions land.
+                return None;
+            }
         }
-        Some(new_state)
+
+        self.update_state(group_id, JobGroupState::Success);
+        if let Some(group) = self.groups.get_mut(group_id) {
+            group.status_reason = Some("All stages completed successfully".to_string());
+        }
+        Some(JobGroupState::Success)
     }
 
     /// Evict terminal groups older than `max_age`. Returns count evicted.
