@@ -261,8 +261,12 @@ pub async fn get_one(
         String::new()
     };
 
-    // Look up reserved stages from stage_configs for this repo
-    let reserved_stages: Vec<String> = if let Some(rid) = group.repo_id {
+    // The granted stage manifest (set at reservation time, post silent-
+    // filter). Empty for legacy rows from before migration 034 — fall
+    // back to the repo's full stage_configs list for those.
+    let reserved_stages: Vec<String> = if !group.reserved_stages.is_empty() {
+        group.reserved_stages.clone()
+    } else if let Some(rid) = group.repo_id {
         storage
             .get_stage_configs_for_repo(rid)
             .await
@@ -273,6 +277,10 @@ pub async fn get_one(
     } else {
         Vec::new()
     };
+
+    // Stages that have a submitted job — for "X of Y" progress UI. Order
+    // matches the jobs list (creation order).
+    let submitted_stages: Vec<String> = jobs.iter().map(|j| j.stage_name.clone()).collect();
 
     // Look up allocated resources from in-memory registry
     let alloc = {
@@ -508,6 +516,7 @@ pub async fn get_one(
         "state": group.state.to_string(),
         "status_reason": group.status_reason,
         "reserved_stages": reserved_stages,
+        "submitted_stages": submitted_stages,
         "allocated_resources": alloc_json,
         "created_at": group.created_at.to_rfc3339(),
         "updated_at": group.updated_at.to_rfc3339(),
