@@ -710,35 +710,40 @@ async fn compute_resource_needs(
 /// with enough available capacity. Multiple builds can share a worker when
 /// resources allow. Falls back to whole-worker reservation when stages have
 /// no resource requirements configured.
+/// Returns `(response, dropped_stages)`. `dropped_stages` is the list of
+/// requested stage names that aren't configured for the repo — surfaced
+/// separately so the REST handler can emit a structured `skipped_stages`
+/// field. gRPC callers can ignore `.1`.
 pub async fn do_reserve_worker(
     state: &Arc<ControllerState>,
     req: &ReserveWorkerRequest,
-) -> Result<ReserveWorkerResponse, Status> {
+) -> Result<(ReserveWorkerResponse, Vec<String>), Status> {
     // Generate group_id upfront so Redis lock references it
     let group_id = uuid::Uuid::new_v4();
 
-    // ── Early validation, hoisted above worker selection ─────────────────
-    // Looking up the repo, validating stage names, fetching the dependency
-    // map, and consulting the idempotency cache must all happen BEFORE a
-    // worker is selected. Otherwise a reservation can hold a worker while
-    // the request turns out to be invalid (or already cached) and we leak
-    // resources until the group times out.
-
-    // Look up repo by name — must exist in DB
+    // ── Early validation: repo + stage filtering ─────────────────────────
+    // Look up the repo, then filter requested stages against its
+    // stage_configs BEFORE any worker selection. This way we never reserve
+    // a worker just to discover the request is unactionable, and the
+    // all-unknown short-circuit doesn't depend on workers being available
+    // at all.
     let (repo_id, max_concurrent, cancel_superseded) = if let Some(storage) = &state.storage {
         match storage.get_repo_by_name(&req.repo_name).await {
             Ok(Some(repo)) => (repo.id, repo.max_concurrent_builds, repo.cancel_superseded),
             Ok(None) => {
-                return Ok(ReserveWorkerResponse {
-                    job_group_id: String::new(),
-                    worker_id: String::new(),
-                    stages: Vec::new(),
-                    success: false,
-                    message: format!(
-                        "Repo '{}' not found — create it in the DB first",
-                        req.repo_name
-                    ),
-                });
+                return Ok((
+                    ReserveWorkerResponse {
+                        job_group_id: String::new(),
+                        worker_id: String::new(),
+                        stages: Vec::new(),
+                        success: false,
+                        message: format!(
+                            "Repo '{}' not found — create it in the DB first",
+                            req.repo_name
+                        ),
+                    },
+                    Vec::new(),
+                ));
             }
             Err(e) => {
                 warn!("Failed to lookup repo {}: {}", req.repo_name, e);
@@ -750,13 +755,9 @@ pub async fn do_reserve_worker(
     };
 
     // Silent-filter requested stages against the repo's stage_configs.
-    //
-    // The Jenkinsfile sends a wide candidate list (e.g.
-    // [checkout-scm, vira-ci, gitleaks]) where some names may be Jenkins-
-    // managed steps with no stage_config (checkout-scm) or stages that
-    // will be configured later. We drop the unknown ones and continue
-    // with the known subset; the dropped names are surfaced in the
-    // response message so Jenkins console shows them.
+    // Unknown stage names are dropped; the dropped list is propagated to
+    // the REST layer via the `skipped_stages` field. Jenkins-managed steps
+    // like `checkout-scm` are EXPECTED to land here.
     let (effective_stages, dropped_stages): (Vec<String>, Vec<String>) = if req.stages.is_empty() {
         (Vec::new(), Vec::new())
     } else if let Some(storage) = &state.storage {
@@ -784,22 +785,28 @@ pub async fn do_reserve_worker(
 
     // All-unknown short-circuit. Caller asked for stages but none are
     // configured — return success with no reservation so Jenkins falls
-    // back to Cloud cleanly. NO worker held, NO DB row, NO Redis key.
+    // back to Cloud. NO worker held, NO DB row, NO Redis key.
     if !req.stages.is_empty() && effective_stages.is_empty() {
-        return Ok(ReserveWorkerResponse {
-            job_group_id: String::new(),
-            worker_id: String::new(),
-            stages: Vec::new(),
-            success: true,
-            message: format!(
-                "No configured stages for repo '{}'. Skipped: {}",
-                req.repo_name,
-                dropped_stages.join(", ")
-            ),
-        });
+        let msg = format!(
+            "No configured stages for repo '{}'. Skipped: {}",
+            req.repo_name,
+            dropped_stages.join(", ")
+        );
+        return Ok((
+            ReserveWorkerResponse {
+                job_group_id: String::new(),
+                worker_id: String::new(),
+                stages: Vec::new(),
+                success: true,
+                message: msg,
+            },
+            dropped_stages,
+        ));
     }
 
-    // Fetch stage dependency map for DAG validation and StageInfo enrichment
+    // Fetch stage dependency map up-front — needed both for StageInfo
+    // construction in the idempotency cache return path AND for the DAG
+    // validation that runs later. Computed once, used in both places.
     let stage_deps: std::collections::HashMap<String, Vec<String>> =
         if let Some(storage) = &state.storage {
             storage
@@ -810,7 +817,7 @@ pub async fn do_reserve_worker(
             std::collections::HashMap::new()
         };
 
-    // Helper: build StageInfo with depends_on from the DB map
+    // Helper: build StageInfo enriched with depends_on from the DB map.
     let build_stage_info = |name: &str| -> ci_core::proto::orchestrator::StageInfo {
         let deps = stage_deps.get(name).cloned().unwrap_or_default();
         ci_core::proto::orchestrator::StageInfo {
@@ -826,10 +833,10 @@ pub async fn do_reserve_worker(
         }
     };
 
-    // Idempotency: if key provided, return existing group with same key.
-    // Done BEFORE worker selection so a retry with the same key returns the
-    // cached group even when workers are tight, instead of failing fresh
-    // worker selection.
+    // Idempotency cache lookup — must run BEFORE worker selection so a retry
+    // with the same key returns the cached group without consuming a fresh
+    // worker reservation. If workers are tight, the original reservation is
+    // still the right answer.
     if !req.idempotency_key.is_empty() {
         if let Some(storage) = &state.storage {
             if let Ok(Some(existing)) = storage.find_by_idempotency_key(&req.idempotency_key).await
@@ -849,20 +856,21 @@ pub async fn do_reserve_worker(
                         "Returning existing group {} for idempotency_key={}",
                         existing.id, req.idempotency_key
                     );
-                    // Report only the granted (effective) subset, never the
-                    // dropped stage names.
                     let stages = effective_stages
                         .iter()
                         .map(|n| build_stage_info(n))
                         .collect();
-                    return Ok(ReserveWorkerResponse {
-                        job_group_id: existing.id.to_string(),
-                        worker_id: existing.reserved_worker_id.unwrap_or_default(),
-                        stages,
-                        success: true,
-                        message: "Existing active group returned (idempotency key match)"
-                            .to_string(),
-                    });
+                    return Ok((
+                        ReserveWorkerResponse {
+                            job_group_id: existing.id.to_string(),
+                            worker_id: existing.reserved_worker_id.unwrap_or_default(),
+                            stages,
+                            success: true,
+                            message: "Existing active group returned (idempotency key match)"
+                                .to_string(),
+                        },
+                        dropped_stages.clone(),
+                    ));
                 } else {
                     warn!(
                         "Existing group {} (key={}) has disconnected worker, creating new reservation",
@@ -872,6 +880,7 @@ pub async fn do_reserve_worker(
             }
         }
     }
+    // No key or no match -- create new group (no implicit dedup)
 
     // Compute resource requirements from stage_configs
     let (needed_cpu, needed_memory, needed_disk) = compute_resource_needs(state, req).await;
@@ -882,13 +891,16 @@ pub async fn do_reserve_worker(
         let connected = registry.connected_workers();
 
         if connected.is_empty() {
-            return Ok(ReserveWorkerResponse {
-                job_group_id: String::new(),
-                worker_id: String::new(),
-                stages: Vec::new(),
-                success: false,
-                message: "No connected workers available".to_string(),
-            });
+            return Ok((
+                ReserveWorkerResponse {
+                    job_group_id: String::new(),
+                    worker_id: String::new(),
+                    stages: Vec::new(),
+                    success: false,
+                    message: "No connected workers available".to_string(),
+                },
+                Vec::new(),
+            ));
         }
 
         // Filter by available resources (0 needed = no resource filter)
@@ -909,13 +921,16 @@ pub async fn do_reserve_worker(
     // worker_registry lock dropped here
 
     if candidate_ids.is_empty() {
-        return Ok(ReserveWorkerResponse {
-            job_group_id: String::new(),
-            worker_id: String::new(),
-            stages: Vec::new(),
-            success: false,
-            message: "No workers with sufficient resources available".to_string(),
-        });
+        return Ok((
+            ReserveWorkerResponse {
+                job_group_id: String::new(),
+                worker_id: String::new(),
+                stages: Vec::new(),
+                success: false,
+                message: "No workers with sufficient resources available".to_string(),
+            },
+            Vec::new(),
+        ));
     }
 
     // Allocate resources atomically via WorkerState::allocate() under write lock.
@@ -955,13 +970,16 @@ pub async fn do_reserve_worker(
     let worker_id = match worker_id {
         Some(id) => id,
         None => {
-            return Ok(ReserveWorkerResponse {
-                job_group_id: String::new(),
-                worker_id: String::new(),
-                stages: Vec::new(),
-                success: false,
-                message: "No workers with sufficient resources available".to_string(),
-            });
+            return Ok((
+                ReserveWorkerResponse {
+                    job_group_id: String::new(),
+                    worker_id: String::new(),
+                    stages: Vec::new(),
+                    success: false,
+                    message: "No workers with sufficient resources available".to_string(),
+                },
+                Vec::new(),
+            ));
         }
     };
 
@@ -1002,8 +1020,8 @@ pub async fn do_reserve_worker(
         }
     }
 
-    // (Repo lookup + stage validation are now done at the top of this
-    // function, above worker selection — see the "Early validation" block.)
+    // (Repo lookup, stage filter, and all-unknown short-circuit are now
+    // done at the top of the function — see the "Early validation" block.)
 
     // Enforce concurrency limits
     if max_concurrent > 0 {
@@ -1051,15 +1069,19 @@ pub async fn do_reserve_worker(
         }
     }
 
-    // (stage_deps + build_stage_info + idempotency lookup are now done at
-    // the top of this function — see the "Early validation" block.) Run the
-    // DAG cycle check here using the hoisted stage_deps map.
+    // (stage_deps + build_stage_info closure are now defined earlier, above
+    // the idempotency cache lookup.) Validate the DAG here using the same
+    // map.
     if let Err(cycle_node) = dag::validate_dag(&stage_deps) {
         return Err(Status::invalid_argument(format!(
             "Stage dependency cycle detected involving '{}'",
             cycle_node
         )));
     }
+
+    // (Idempotency cache lookup is now done above, before worker selection —
+    // a retry with the same key must return the cached group without
+    // consuming worker resources for a fresh selection.)
 
     // Redis lock acquired (or no Redis) -- now create the in-memory group
     let mut group = ci_core::models::job_group::JobGroup::new(
@@ -1122,13 +1144,16 @@ pub async fn do_reserve_worker(
         )
     };
 
-    Ok(ReserveWorkerResponse {
-        job_group_id: group_id.to_string(),
-        worker_id,
-        stages: stage_infos,
-        success: true,
-        message,
-    })
+    Ok((
+        ReserveWorkerResponse {
+            job_group_id: group_id.to_string(),
+            worker_id,
+            stages: stage_infos,
+            success: true,
+            message,
+        },
+        dropped_stages,
+    ))
 }
 
 /// Core logic for the `submit_stage` RPC.
@@ -2874,7 +2899,9 @@ impl Orchestrator for OrchestratorService {
             req.repo_name, req.branch, req.stages
         );
 
-        let response = do_reserve_worker(&self.state, &req).await?;
+        // gRPC contract is the proto response only — drop the dropped_stages
+        // side channel (REST-only enrichment).
+        let (response, _dropped) = do_reserve_worker(&self.state, &req).await?;
         Ok(Response::new(response))
     }
 
@@ -3396,13 +3423,13 @@ pub async fn run(state: Arc<ControllerState>) -> anyhow::Result<()> {
                         idempotency_key: String::new(),
                     };
                     match do_reserve_worker(&state_cron, &req).await {
-                        Ok(resp) if resp.success => {
+                        Ok((resp, _dropped)) if resp.success => {
                             info!(
                                 "Cron: reserved worker {} for group {} (schedule {})",
                                 resp.worker_id, resp.job_group_id, schedule.id
                             );
                         }
-                        Ok(resp) => {
+                        Ok((resp, _dropped)) => {
                             warn!(
                                 "Cron: reserve failed for schedule {}: {}",
                                 schedule.id, resp.message
