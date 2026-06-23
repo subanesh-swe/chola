@@ -1103,6 +1103,9 @@ pub async fn do_reserve_worker(
         memory_mb: needed_memory,
         disk_mb: needed_disk,
     };
+    // Persist the granted (filtered) stage list so check_group_completion
+    // can gate Success on "every reserved stage has a terminal job."
+    group.reserved_stages = effective_stages.clone();
     group.updated_at = chrono::Utc::now();
 
     // Build stage info from the FILTERED stage list — never expose unknown
