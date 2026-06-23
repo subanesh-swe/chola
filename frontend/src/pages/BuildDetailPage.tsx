@@ -445,6 +445,35 @@ export default function BuildDetailPage() {
       {/* Timers panel */}
       <TimersPanel group={group} jobs={jobs} />
 
+      {/* Reserved stages manifest — shows every stage that was granted at
+          reservation time and its current state (Pending until submitted). */}
+      {group.reserved_stages && group.reserved_stages.length > 0 && (
+        <div className="bg-surface border border-border rounded-xl">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-secondary">
+              Reserved stages ({jobs.length} / {group.reserved_stages.length} submitted)
+            </h3>
+            {jobs.length < group.reserved_stages.length && !isTerminal && (
+              <span className="text-xs text-muted">Waiting for {group.reserved_stages.length - jobs.length} more</span>
+            )}
+          </div>
+          <div className="px-4 py-3 flex flex-wrap gap-2">
+            {group.reserved_stages.map((stageName) => {
+              const job = jobs.find((j) => j.stage_name === stageName);
+              return (
+                <div
+                  key={stageName}
+                  className="inline-flex items-center gap-2 bg-surface-2/50 border border-border rounded-lg pl-3 pr-2 py-1.5"
+                >
+                  <span className="text-sm text-secondary font-mono">{stageName}</span>
+                  <StatusBadge status={job ? job.state : 'pending'} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Stage pipeline timeline */}
       <div className="bg-surface border border-border rounded-xl">
         <div className="px-4 py-3 border-b border-border">
