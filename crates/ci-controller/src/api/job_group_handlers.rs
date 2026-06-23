@@ -5,13 +5,61 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
 
 use ci_core::models::job_group::JobGroupState;
-use ci_core::proto::orchestrator::ReserveWorkerRequest;
+use ci_core::proto::orchestrator::{ReserveWorkerRequest, ReserveWorkerResponse};
+
+// ── REST response shape for POST /api/v1/job-groups ──────────────────────────
+//
+// We don't return the proto type directly — proto3 scalars can't be `null`,
+// and Jenkins/clients are easier to write against `Option<String>` than
+// against empty-string-means-absent semantics.
+
+#[derive(Serialize)]
+struct TriggerResponse {
+    /// Reservation id. `null` when nothing was reserved (all-unknown, no workers, etc.).
+    job_group_id: Option<String>,
+    /// Worker that owns the reservation. `null` when nothing was reserved.
+    worker_id: Option<String>,
+    /// Stages the controller will actually run (granted subset).
+    stages: Vec<StageInfoJson>,
+    /// Requested stage names that aren't configured for this repo and were
+    /// silently dropped. Always present (possibly `[]`) so callers don't have
+    /// to check field existence.
+    skipped_stages: Vec<String>,
+    success: bool,
+    /// Human-readable summary. Safe to surface in the Jenkins console.
+    message: String,
+}
+
+#[derive(Serialize)]
+struct StageInfoJson {
+    stage_name: String,
+}
+
+impl TriggerResponse {
+    fn build(resp: ReserveWorkerResponse, dropped: Vec<String>) -> Self {
+        let to_opt = |s: String| (!s.is_empty()).then_some(s);
+        Self {
+            job_group_id: to_opt(resp.job_group_id),
+            worker_id: to_opt(resp.worker_id),
+            stages: resp
+                .stages
+                .into_iter()
+                .map(|s| StageInfoJson {
+                    stage_name: s.stage_name,
+                })
+                .collect(),
+            skipped_stages: dropped,
+            success: resp.success,
+            message: resp.message,
+        }
+    }
+}
 
 use crate::auth::middleware::AuthUser;
 use crate::grpc_server::do_reserve_worker;
@@ -610,7 +658,7 @@ pub async fn trigger(
         idempotency_key: body.idempotency_key.clone().unwrap_or_default(),
     };
 
-    let resp = do_reserve_worker(&state, &req)
+    let (resp, dropped) = do_reserve_worker(&state, &req)
         .await
         .map_err(|e| ApiError::Internal(e.message().to_string()))?;
 
@@ -618,18 +666,11 @@ pub async fn trigger(
         return Err(ApiError::Conflict(resp.message));
     }
 
-    let stages: Vec<Value> = resp
-        .stages
-        .iter()
-        .map(|s| json!({"stage_name": s.stage_name}))
-        .collect();
-
-    Ok(Json(json!({
-        "job_group_id": resp.job_group_id,
-        "worker_id": resp.worker_id,
-        "stages": stages,
-        "message": resp.message,
-    })))
+    // Serializing an owned struct with derived Serialize is infallible in
+    // practice — no map-key gymnastics, no streaming IO.
+    let value = serde_json::to_value(TriggerResponse::build(resp, dropped))
+        .expect("TriggerResponse serializes cleanly");
+    Ok(Json(value))
 }
 
 /// POST /api/v1/job-groups/:id/retry  — re-run a failed/cancelled build
@@ -680,7 +721,9 @@ pub async fn retry(
         idempotency_key: String::new(),
     };
 
-    let resp = do_reserve_worker(&state, &req)
+    // Retry never sends unconfigured stages (we copy from existing jobs), so
+    // `dropped` is structurally always empty here — drop it.
+    let (resp, _dropped) = do_reserve_worker(&state, &req)
         .await
         .map_err(|e| ApiError::Internal(e.message().to_string()))?;
 
