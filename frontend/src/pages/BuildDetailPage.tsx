@@ -333,12 +333,30 @@ function TimersPanel({ group, jobs }: { group: JobGroup & { timers?: { idle?: Ti
         : { status: 'deactivated', remaining_secs: null, max_secs: idleMax }
   );
 
+  const res = group.allocated_resources;
+  const hasRes = res && (res.cpu > 0 || res.memory_mb > 0 || res.disk_mb > 0);
+
   return (
     <div className="bg-surface border border-border rounded-xl p-4">
-      <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider mb-3">
-        Timers{isTerminal && <span className="ml-2 normal-case text-disabled/70 font-normal">(final)</span>}
-      </h3>
-      <div className="space-y-3">
+      {/* Header row: card title on the left, compact reserved-resources
+          strip (clearly labelled) on the right. */}
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h3 className="text-xs font-semibold text-disabled uppercase tracking-wider">
+          Timers &amp; Resources{isTerminal && <span className="ml-2 normal-case text-disabled/70 font-normal">— final</span>}
+        </h3>
+        {hasRes && (
+          <div className="flex items-center gap-3 text-xs font-mono text-secondary">
+            <span className="text-disabled uppercase tracking-wider not-italic font-sans text-[10px] font-semibold">Reserved</span>
+            <span title="Reserved CPU">{res!.cpu} <span className="text-disabled">CPU</span></span>
+            <span className="text-disabled/40">·</span>
+            <span title="Reserved memory">{formatBytes(res!.memory_mb)} <span className="text-disabled">RAM</span></span>
+            <span className="text-disabled/40">·</span>
+            <span title="Reserved disk">{formatBytes(res!.disk_mb)} <span className="text-disabled">Disk</span></span>
+          </div>
+        )}
+      </div>
+      {/* Two groups side-by-side on wider screens to keep the panel short. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <TimerGroup title={`Stage timeouts${sortedJobs.length ? ` · ${sortedJobs.length}` : ''}`}>
           {sortedJobs.length > 0 ? (
             sortedJobs.map(j => <StageTimerRow key={j.id} job={j} />)
@@ -511,19 +529,7 @@ export default function BuildDetailPage() {
         </div>
       </div>
 
-      {/* Reserved resources */}
-      {group.allocated_resources && (group.allocated_resources.cpu > 0 || group.allocated_resources.memory_mb > 0 || group.allocated_resources.disk_mb > 0) && (
-        <div className="bg-surface-2/50 border border-border rounded-lg px-4 py-3">
-          <p className="text-xs text-disabled mb-1.5 uppercase font-semibold">Resources Reserved</p>
-          <div className="flex gap-6 text-sm">
-            <span className="text-secondary">{group.allocated_resources.cpu} <span className="text-disabled">CPU cores</span></span>
-            <span className="text-secondary">{formatBytes(group.allocated_resources.memory_mb)} <span className="text-disabled">RAM</span></span>
-            <span className="text-secondary">{formatBytes(group.allocated_resources.disk_mb)} <span className="text-disabled">Disk</span></span>
-          </div>
-        </div>
-      )}
-
-      {/* Timers panel */}
+      {/* Timers + reserved resources (combined to save vertical space) */}
       <TimersPanel group={group} jobs={jobs} />
 
       {/* Reserved stages manifest — shows every stage that was granted at
