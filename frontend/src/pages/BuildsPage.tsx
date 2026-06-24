@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { listBuilds } from '../api/builds';
 import { useAppliedFilters } from '../hooks/useAppliedFilters';
 import { useRefreshInterval } from '../hooks/useRefreshInterval';
@@ -11,6 +11,7 @@ import { TimeAgo } from '../components/ui/TimeAgo';
 import { TableSkeleton } from '../components/ui/PageSkeleton';
 
 export default function BuildsPage() {
+  const navigate = useNavigate();
   const { applied, draft, patchDraft, apply, applyPatch, reset, isDirty } = useAppliedFilters();
   const [refreshSecs, setRefreshSecs] = useRefreshInterval('builds', 5);
   const [queryValue, setQueryValue] = useState(applied.q);
@@ -97,24 +98,38 @@ export default function BuildsPage() {
                   {builds.map(b => {
                     const href = `/builds/${b.job_group_id}`;
                     return (
-                      <tr key={b.job_group_id} className={`relative hover:bg-surface-hover/50 transition-colors${b.archived ? ' opacity-60' : ''}`}>
+                      <tr
+                        key={b.job_group_id}
+                        onClick={() => navigate(href)}
+                        className={`cursor-pointer hover:bg-surface-hover/50 transition-colors${b.archived ? ' opacity-60' : ''}`}
+                      >
                         <td className="px-4 py-3">
-                          <Link to={href} aria-label={`Build ${b.job_group_id.slice(0, 8)}${b.branch ? ` on ${b.branch}` : ''} — ${b.state}${b.archived ? ' (archived)' : ''}`} className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent" />
-                          <span className="relative z-10">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <StatusBadge status={b.state} />
-                              {b.archived && <StatusBadge status="archived" />}
-                            </div>
-                            {b.status_reason && (
-                              <span className="block text-[10px] text-disabled truncate max-w-[180px]">{b.status_reason}</span>
-                            )}
-                          </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <StatusBadge status={b.state} />
+                            {b.archived && <StatusBadge status="archived" />}
+                          </div>
+                          {b.status_reason && (
+                            <span className="block text-[10px] text-disabled truncate max-w-[180px]">{b.status_reason}</span>
+                          )}
                         </td>
-                        <td className="px-4 py-3 text-sm text-secondary font-mono relative z-10">{b.job_group_id.slice(0, 8)}</td>
-                        <td className="px-4 py-3 text-sm text-secondary relative z-10">{b.branch || '-'}</td>
-                        <td className="px-4 py-3 text-sm text-muted font-mono relative z-10">{b.commit_sha?.slice(0, 7) || '-'}</td>
-                        <td className="px-4 py-3 text-sm text-muted relative z-10">{b.reserved_worker_id ?? '-'}</td>
-                        <td className="px-4 py-3 text-sm relative z-10">
+                        <td className="px-4 py-3 text-sm text-secondary font-mono">
+                          {/* Real anchor on the ID so cmd/middle-click opens a
+                              new tab and keyboard users get a focusable target.
+                              stopPropagation avoids a double-navigate with the
+                              row onClick. */}
+                          <Link
+                            to={href}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Build ${b.job_group_id.slice(0, 8)}${b.branch ? ` on ${b.branch}` : ''} — ${b.state}${b.archived ? ' (archived)' : ''}`}
+                            className="hover:text-accent-text focus:outline-none focus:ring-2 focus:ring-accent rounded"
+                          >
+                            {b.job_group_id.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-secondary">{b.branch || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-muted font-mono">{b.commit_sha?.slice(0, 7) || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-muted">{b.reserved_worker_id ?? '-'}</td>
+                        <td className="px-4 py-3 text-sm">
                           <TimeAgo date={b.created_at} className="text-disabled" />
                         </td>
                       </tr>
