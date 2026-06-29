@@ -347,6 +347,10 @@ pub async fn get_one(
                 "id": j.id.to_string(),
                 "stage_name": j.stage_name,
                 "command": j.command,
+                // pre/post script bodies so the UI can show pre/cmd/post as
+                // distinct pipeline steps (empty when the stage has none).
+                "pre_script": j.pre_script,
+                "post_script": j.post_script,
                 "worker_id": j.worker_id,
                 "state": j.state,
                 "exit_code": j.exit_code,
