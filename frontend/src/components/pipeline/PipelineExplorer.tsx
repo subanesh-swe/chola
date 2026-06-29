@@ -6,6 +6,7 @@ import type { Job } from '../../types';
 import { StatusBadge } from '../ui/StatusBadge';
 import { LogViewer } from '../log/LogViewer';
 import { useLiveLog } from '../../hooks/useLiveLog';
+import { PipelineGraph } from './PipelineGraph';
 import {
   buildPipeline,
   parseLogSections,
@@ -22,7 +23,6 @@ interface Props {
 
 interface Selection {
   jobId: string;
-  leafKey: string;
   kind: PipelineLeaf['kind'];
 }
 
@@ -58,7 +58,6 @@ function LeafOutput({
 
   return (
     <LogViewer
-      // Remount when the selected leaf changes so xterm shows fresh content.
       key={`${job.id}:${kind}:${isRunning ? 'live' : 'done'}`}
       content={isRunning ? undefined : (section || `(no ${kind} output)`)}
       liveChunks={isRunning ? chunks : undefined}
@@ -68,85 +67,33 @@ function LeafOutput({
   );
 }
 
-// ── Left pane: accordion node + leaves ──────────────────────────────────────
+// ── Right header: pre/cmd/post tabs for the selected node ────────────────────
 
-function LeafRow({
-  leaf,
-  selected,
+function StepTabs({
+  leaves,
+  activeKind,
   onSelect,
 }: {
-  leaf: PipelineLeaf;
-  selected: boolean;
-  onSelect: () => void;
+  leaves: PipelineLeaf[];
+  activeKind: PipelineLeaf['kind'];
+  onSelect: (kind: PipelineLeaf['kind']) => void;
 }) {
   return (
-    <button
-      onClick={onSelect}
-      className={clsx(
-        'w-full flex items-center justify-between gap-2 pl-9 pr-3 py-1.5 text-left text-xs rounded-md transition-colors',
-        'focus:outline-none focus:ring-2 focus:ring-accent',
-        selected ? 'bg-accent-soft text-accent-text' : 'hover:bg-surface-hover/50 text-secondary',
-      )}
-    >
-      <span className="font-mono truncate">{leaf.label}</span>
-      <span className="flex items-center gap-2 shrink-0">
-        {leaf.exitCode !== null && (
-          <span
-            className={clsx(
-              'font-mono text-[10px]',
-              leaf.exitCode === 0 ? 'text-disabled' : 'text-danger',
-            )}
-          >
-            exit {leaf.exitCode}
-          </span>
-        )}
-        <StatusBadge status={leaf.state} />
-      </span>
-    </button>
-  );
-}
-
-function NodeRow({
-  node,
-  expanded,
-  onToggle,
-  selection,
-  onSelectLeaf,
-}: {
-  node: PipelineNode;
-  expanded: boolean;
-  onToggle: () => void;
-  selection: Selection | null;
-  onSelectLeaf: (leaf: PipelineLeaf) => void;
-}) {
-  return (
-    <div className="rounded-lg border border-border/60 bg-surface-2/30 overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-hover/50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
-        aria-expanded={expanded}
-      >
-        <svg
-          className={clsx('w-3.5 h-3.5 text-disabled transition-transform shrink-0', expanded && 'rotate-90')}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+    <div className="flex items-center gap-1">
+      {leaves.map((leaf) => (
+        <button
+          key={leaf.key}
+          onClick={() => onSelect(leaf.kind)}
+          className={clsx(
+            'px-2.5 py-1 text-xs rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-accent',
+            leaf.kind === activeKind
+              ? 'bg-accent-soft text-accent-text'
+              : 'text-muted hover:bg-surface-hover/50',
+          )}
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-        <span className="text-sm font-medium text-secondary truncate flex-1">{node.title}</span>
-        <StatusBadge status={node.state} />
-      </button>
-      {expanded && (
-        <div className="px-2 pb-2 pt-0.5 space-y-1">
-          {node.leaves.map((leaf) => (
-            <LeafRow
-              key={leaf.key}
-              leaf={leaf}
-              selected={selection?.leafKey === leaf.key}
-              onSelect={() => onSelectLeaf(leaf)}
-            />
-          ))}
-        </div>
-      )}
+          {leaf.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -156,31 +103,22 @@ function NodeRow({
 export function PipelineExplorer({ jobs, filesPurgedAt, onRetryJob }: Props) {
   const nodes = useMemo(() => buildPipeline(jobs), [jobs]);
 
-  // Default selection: the command leaf of the running stage, else the last
-  // stage's command.
   const initial = useMemo<Selection | null>(() => {
     if (!nodes.length) return null;
     const running = nodes.find((n) => n.state === 'running');
     const target = running ?? nodes[nodes.length - 1];
     const cmd = target.leaves.find((l) => l.kind === 'cmd') ?? target.leaves[0];
-    return cmd ? { jobId: target.job.id, leafKey: cmd.key, kind: cmd.kind } : null;
+    return cmd ? { jobId: target.job.id, kind: cmd.kind } : null;
   }, [nodes]);
 
   const [selection, setSelection] = useState<Selection | null>(initial);
   const active = selection ?? initial;
 
-  // Expand the node containing the active selection by default.
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const s = new Set<string>();
-    const owner = nodes.find((n) => n.leaves.some((l) => l.key === initial?.leafKey));
-    if (owner) s.add(owner.key);
-    return s;
-  });
-
-  const selectedJob = active ? jobs.find((j) => j.id === active.jobId) ?? null : null;
-  const activeLeaf = active
-    ? nodes.flatMap((n) => n.leaves).find((l) => l.key === active.leafKey) ?? null
+  const activeNode: PipelineNode | null = active
+    ? nodes.find((n) => n.job.id === active.jobId) ?? null
     : null;
+  const selectedJob = activeNode?.job ?? null;
+  const activeLeaf = activeNode?.leaves.find((l) => l.kind === active?.kind) ?? null;
 
   if (!nodes.length) {
     return (
@@ -191,40 +129,37 @@ export function PipelineExplorer({ jobs, filesPurgedAt, onRetryJob }: Props) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(260px,340px)_1fr] gap-3">
-      {/* Left: pipeline tree */}
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,320px)_1fr] gap-3">
+      {/* Left: pipeline graph (Blue-Ocean style, parallel split/join) */}
       <div className="bg-surface border border-border rounded-xl flex flex-col min-h-[28rem] max-h-[36rem]">
         <div className="px-4 py-3 border-b border-border shrink-0">
           <h3 className="text-sm font-semibold text-secondary">Pipeline</h3>
         </div>
-        <div className="p-2 space-y-2 overflow-y-auto">
-          {nodes.map((node) => (
-            <NodeRow
-              key={node.key}
-              node={node}
-              expanded={expanded.has(node.key)}
-              onToggle={() =>
-                setExpanded((prev) => {
-                  const next = new Set(prev);
-                  next.has(node.key) ? next.delete(node.key) : next.add(node.key);
-                  return next;
-                })
-              }
-              selection={active}
-              onSelectLeaf={(leaf) =>
-                setSelection({ jobId: node.job.id, leafKey: leaf.key, kind: leaf.kind })
-              }
-            />
-          ))}
+        <div className="p-4 overflow-y-auto">
+          <PipelineGraph
+            nodes={nodes}
+            selectedJobId={selectedJob?.id}
+            onSelectNode={(node) => {
+              const cmd = node.leaves.find((l) => l.kind === 'cmd') ?? node.leaves[0];
+              if (cmd) setSelection({ jobId: node.job.id, kind: cmd.kind });
+            }}
+          />
         </div>
       </div>
 
       {/* Right: output */}
       <div className="bg-surface border border-border rounded-xl flex flex-col min-h-[28rem] max-h-[36rem]">
-        <div className="px-4 py-3 border-b border-border flex items-center gap-3 shrink-0">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-3 shrink-0 flex-wrap">
           <h3 className="text-sm font-semibold text-secondary truncate">
-            {selectedJob ? `${selectedJob.stage_name} · ${active?.kind}` : 'Output'}
+            {selectedJob ? selectedJob.stage_name : 'Output'}
           </h3>
+          {activeNode && active && (
+            <StepTabs
+              leaves={activeNode.leaves}
+              activeKind={active.kind}
+              onSelect={(kind) => setSelection({ jobId: activeNode.job.id, kind })}
+            />
+          )}
           {selectedJob?.state === 'failed' && onRetryJob && (
             <button
               onClick={() => onRetryJob(selectedJob)}
@@ -233,7 +168,6 @@ export function PipelineExplorer({ jobs, filesPurgedAt, onRetryJob }: Props) {
               Retry stage
             </button>
           )}
-          {/* Selected step status + exit code, pinned to the right. */}
           {activeLeaf && (
             <span className="ml-auto flex items-center gap-2 shrink-0">
               {activeLeaf.exitCode !== null && (
@@ -255,7 +189,7 @@ export function PipelineExplorer({ jobs, filesPurgedAt, onRetryJob }: Props) {
             <LeafOutput job={selectedJob} kind={active.kind} filesPurgedAt={filesPurgedAt} />
           ) : (
             <div className="h-full flex items-center justify-center text-disabled text-sm">
-              Select a step on the left
+              Select a stage on the left
             </div>
           )}
         </div>
