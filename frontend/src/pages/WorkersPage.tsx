@@ -1241,9 +1241,13 @@ export default function WorkersPage() {
                 {/* item 55: pill chips for job types */}
                 <div className="flex items-center gap-1 flex-wrap">
                   <span className="text-disabled">Types:</span>
-                  {w.supported_job_types.map((t) => (
-                    <span key={t} className="px-1.5 py-0.5 bg-surface-2 text-secondary border border-border rounded text-[10px] font-mono">{t}</span>
-                  ))}
+                  {(w.supported_job_types ?? []).length > 0 ? (
+                    (w.supported_job_types ?? []).map((t) => (
+                      <span key={t} className="px-1.5 py-0.5 bg-surface-2 text-secondary border border-border rounded text-[10px] font-mono">{t}</span>
+                    ))
+                  ) : (
+                    <span className="text-disabled italic">none</span>
+                  )}
                 </div>
                 <span>Registered: <TimeAgo date={w.registered_at} /></span>
                 {w.last_heartbeat && <span>Last beat: <TimeAgo date={w.last_heartbeat.timestamp} /></span>}

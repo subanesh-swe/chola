@@ -144,7 +144,10 @@ pub async fn list(
                         "available_disk_mb": 0,
                         "disk_type": row.disk_type.as_deref().unwrap_or("unknown"),
                         "docker_enabled": row.docker_enabled,
-                        "supported_job_types": row.supported_job_types,
+                        // Default null -> [] so the API always returns an
+                        // array (the live-worker path already does); avoids
+                        // null.map() crashes in clients.
+                        "supported_job_types": row.supported_job_types.clone().unwrap_or_default(),
                         "registered_at": row.registered_at.to_rfc3339(),
                         "last_heartbeat": row.last_heartbeat_at.map(|t| json!({ "timestamp": t.to_rfc3339() })),
                         "disk_details": [],

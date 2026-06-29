@@ -4746,8 +4746,15 @@ impl Storage {
     /// Deactivate all active tokens bound to a specific worker_id.
     /// Returns the number of rows updated.
     pub async fn deactivate_tokens_for_worker(&self, worker_id: &str) -> anyhow::Result<u64> {
+        // Also clear worker_id: the partial unique index
+        // `idx_worker_tokens_worker_id (worker_id) WHERE worker_id IS NOT NULL`
+        // is NOT scoped to `active`, so a deactivated row that still carries
+        // worker_id would block the fresh token insert during regeneration
+        // (duplicate key violation -> HTTP 500). A revoked token has no need
+        // for its worker binding.
         let result = sqlx::query(
-            "UPDATE worker_tokens SET active = false WHERE worker_id = $1 AND active = true",
+            "UPDATE worker_tokens SET active = false, worker_id = NULL \
+             WHERE worker_id = $1 AND active = true",
         )
         .bind(worker_id)
         .execute(&self.pool)
