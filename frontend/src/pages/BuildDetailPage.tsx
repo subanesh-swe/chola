@@ -3,14 +3,10 @@ import { clsx } from 'clsx';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getBuild, cancelBuild, retryBuild, retryJob } from '../api/builds';
-import apiClient from '../api/client';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { TimeAgo } from '../components/ui/TimeAgo';
-import { LogViewer } from '../components/log/LogViewer';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
-import { StageTimeline } from '../components/ui/StageTimeline';
-import { StageMetadata } from '../components/ui/StageMetadata';
-import { useLiveLog } from '../hooks/useLiveLog';
+import { PipelineExplorer } from '../components/pipeline/PipelineExplorer';
 import { usePermission } from '../hooks/usePermission';
 import { formatDuration } from '../utils/duration';
 import { formatSecs, formatBytes } from '../utils/format';
@@ -83,95 +79,6 @@ function ArchivedChildrenPanel({ children }: { children: ArchivedChildren }) {
 
 // ── Job log panel ─────────────────────────────────────────────────────────────
 
-interface JobLogPanelProps {
-  job: Job;
-  filesPurgedAt: string | null | undefined;
-  onRetry?: () => void;
-}
-
-function StageTimer({ job }: { job: Job }) {
-  const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    if (job.state !== 'running' || !job.started_at) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [job.state, job.started_at]);
-
-  if (!job.started_at) return null;
-
-  const startMs = new Date(job.started_at).getTime();
-  const endMs = job.completed_at ? new Date(job.completed_at).getTime() : now;
-  const elapsedSecs = Math.max(0, Math.floor((endMs - startMs) / 1000));
-  const maxSecs = job.max_duration_secs || 0;
-
-  const h = Math.floor(elapsedSecs / 3600);
-  const m = Math.floor((elapsedSecs % 3600) / 60);
-  const s = elapsedSecs % 60;
-  const elapsed = h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
-
-  const maxH = Math.floor(maxSecs / 3600);
-  const maxM = Math.floor((maxSecs % 3600) / 60);
-  const maxLabel = maxSecs > 0
-    ? (maxH > 0 ? `${maxH}h ${maxM}m` : `${maxM}m`)
-    : null;
-
-  const pct = maxSecs > 0 ? elapsedSecs / maxSecs : 0;
-  const color = pct > 0.9 ? 'text-danger' : pct > 0.7 ? 'text-warning' : 'text-muted';
-
-  return (
-    <span className={`text-xs font-mono ${color}`}>
-      {elapsed}{maxLabel && ` / ${maxLabel}`}
-    </span>
-  );
-}
-
-function JobLogPanel({ job, filesPurgedAt, onRetry }: JobLogPanelProps) {
-  const isRunning = job.state === 'running' || job.state === 'assigned';
-  const { chunks } = useLiveLog(job.id, isRunning && !filesPurgedAt);
-
-  // For completed jobs, fetch logs via GET — but skip if files are gone.
-  const { data: logData } = useQuery({
-    queryKey: ['job-logs', job.id],
-    queryFn: () => apiClient.get(`/jobs/${job.id}/logs`).then((r) => r.data),
-    enabled: !isRunning && !!job.id && !filesPurgedAt,
-  });
-
-  const completedLogs = logData?.data || '';
-
-  return (
-    <div className="bg-surface border border-border rounded-xl">
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <StatusBadge status={job.state} />
-          <h3 className="text-sm font-semibold text-secondary">{job.stage_name}</h3>
-        </div>
-        <div className="flex items-center gap-4 text-xs text-muted">
-          {job.exit_code !== null && <span>exit: {job.exit_code}</span>}
-          {job.status_reason && <span className="text-xs text-disabled">{job.status_reason}</span>}
-          <StageTimer job={job} />
-          {job.state === 'failed' && onRetry && (
-            <button
-              onClick={onRetry}
-              className="px-3 py-1 text-xs bg-warning-soft text-warning border border-warning/30 rounded-lg hover:opacity-80 transition-colors focus:outline-none focus:ring-2 focus:ring-warning"
-            >
-              Retry Stage
-            </button>
-          )}
-        </div>
-      </div>
-      <StageMetadata job={job} />
-      <div className="px-4 pb-4">
-        <LogViewer
-          content={isRunning ? undefined : completedLogs || `Stage: ${job.stage_name}\nState: ${job.state}\n`}
-          liveChunks={isRunning ? chunks : undefined}
-          filesPurgedAt={filesPurgedAt}
-          className="h-80"
-        />
-      </div>
-    </div>
-  );
-}
 
 interface TimerInfo {
   status: string;
@@ -388,8 +295,6 @@ export default function BuildDetailPage() {
   const { canCancelJobs } = usePermission();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [retryJobTarget, setRetryJobTarget] = useState<Job | null>(null);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-
   const { data, isLoading, isError } = useQuery({
     queryKey: ['build', id],
     queryFn: () => getBuild(id!),
@@ -442,9 +347,6 @@ export default function BuildDetailPage() {
 
   const { job_group: group, jobs } = data;
   const isTerminal = ['success', 'failed', 'cancelled'].includes(group.state);
-
-  const activeSelectedJob =
-    selectedJob ?? jobs.find((j) => j.state === 'running') ?? jobs.find((j) => j.state === 'failed') ?? null;
 
   function openRetryJob(job: Job) {
     setRetryJobTarget(job);
@@ -561,36 +463,13 @@ export default function BuildDetailPage() {
         </div>
       )}
 
-      {/* Stage pipeline timeline. Per-stage timeout/countdown is rendered
-          inside each row (next to the stage name) by StageTimeline. */}
-      <div className="bg-surface border border-border rounded-xl">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-secondary">
-            Pipeline ({jobs.length} stage{jobs.length !== 1 ? 's' : ''})
-          </h3>
-        </div>
-        {jobs.length > 0 ? (
-          <div className="p-2">
-            <StageTimeline
-              jobs={jobs}
-              onSelectJob={(job) => setSelectedJob((prev) => (prev?.id === job.id ? null : job))}
-              selectedJobId={activeSelectedJob?.id}
-            />
-          </div>
-        ) : (
-          <div className="px-4 py-8 text-center text-disabled">No stages submitted yet</div>
-        )}
-      </div>
-
-      {/* Log panel for selected job */}
-      {activeSelectedJob && (
-        <JobLogPanel
-          key={activeSelectedJob.id}
-          job={activeSelectedJob}
-          filesPurgedAt={group.files_purged_at}
-          onRetry={canCancelJobs ? () => openRetryJob(activeSelectedJob) : undefined}
-        />
-      )}
+      {/* Pipeline explorer: left accordion tree (stages -> pre/cmd/post,
+          global post-script) + right output pane for the selected step. */}
+      <PipelineExplorer
+        jobs={jobs}
+        filesPurgedAt={group.files_purged_at}
+        onRetryJob={canCancelJobs ? openRetryJob : undefined}
+      />
 
       {/* Archived child records (collapsed by default) */}
       {group.archived && group.children && (
