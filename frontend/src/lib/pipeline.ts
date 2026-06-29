@@ -69,8 +69,14 @@ export function buildPipeline(jobs: Job[]): PipelineNode[] {
   for (const job of sorted) {
     const isCleanup = job.stage_name.includes(CLEANUP_MARKER);
 
+    // A pre/post leaf exists if the script body is present OR the phase
+    // actually ran (exit code recorded) — the latter keeps leaves visible
+    // even when the API doesn't ship the script bodies.
+    const hasPre = !!(job.pre_script && job.pre_script.trim()) || job.pre_exit_code != null;
+    const hasPost = !!(job.post_script && job.post_script.trim()) || job.post_exit_code != null;
+
     const leaves: PipelineLeaf[] = [];
-    if (!isCleanup && job.pre_script && job.pre_script.trim()) {
+    if (!isCleanup && hasPre) {
       leaves.push({
         key: `${job.id}:pre`,
         kind: 'pre',
@@ -89,7 +95,7 @@ export function buildPipeline(jobs: Job[]): PipelineNode[] {
       state: job.state,
       exitCode: job.exit_code,
     });
-    if (!isCleanup && job.post_script && job.post_script.trim()) {
+    if (!isCleanup && hasPost) {
       leaves.push({
         key: `${job.id}:post`,
         kind: 'post',
