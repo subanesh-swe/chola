@@ -133,6 +133,48 @@ export function buildPipeline(jobs: Job[]): PipelineNode[] {
   return nodes;
 }
 
+// ── Parallelism inference (for the Blue-Ocean-style graph) ──────────────────
+//
+// chola doesn't ship the stage DAG in the build-detail payload, so we infer
+// concurrency from execution windows: stages whose [start, end] intervals
+// overlap ran in parallel and share a "row" (drawn as side-by-side lanes);
+// a stage that starts after everything in the current row has finished
+// begins a new sequential row. Each row is one split/join band in the graph.
+
+function startMs(node: PipelineNode): number {
+  const s = node.job.started_at ?? node.job.created_at;
+  return s ? new Date(s).getTime() : 0;
+}
+
+function endMs(node: PipelineNode): number {
+  // Still-running stages extend to "now" so they overlap anything after them.
+  return node.job.completed_at ? new Date(node.job.completed_at).getTime() : Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * Group pipeline nodes into sequential rows of parallel lanes. Row order is
+ * by start time; within a row, lanes are stages that overlapped in time.
+ */
+export function clusterRows(nodes: PipelineNode[]): PipelineNode[][] {
+  const sorted = [...nodes].sort((a, b) => startMs(a) - startMs(b));
+  const rows: PipelineNode[][] = [];
+  let row: PipelineNode[] = [];
+  let rowEnd = -Infinity;
+
+  for (const node of sorted) {
+    if (row.length === 0 || startMs(node) < rowEnd) {
+      row.push(node);
+      rowEnd = Math.max(rowEnd, endMs(node));
+    } else {
+      rows.push(row);
+      row = [node];
+      rowEnd = endMs(node);
+    }
+  }
+  if (row.length) rows.push(row);
+  return rows;
+}
+
 export interface LogSections {
   pre: string;
   cmd: string;
