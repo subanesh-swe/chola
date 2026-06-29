@@ -89,7 +89,19 @@ function LeafRow({
       )}
     >
       <span className="font-mono truncate">{leaf.label}</span>
-      <StatusBadge status={leaf.state} />
+      <span className="flex items-center gap-2 shrink-0">
+        {leaf.exitCode !== null && (
+          <span
+            className={clsx(
+              'font-mono text-[10px]',
+              leaf.exitCode === 0 ? 'text-disabled' : 'text-danger',
+            )}
+          >
+            exit {leaf.exitCode}
+          </span>
+        )}
+        <StatusBadge status={leaf.state} />
+      </span>
     </button>
   );
 }
@@ -166,6 +178,9 @@ export function PipelineExplorer({ jobs, filesPurgedAt, onRetryJob }: Props) {
   });
 
   const selectedJob = active ? jobs.find((j) => j.id === active.jobId) ?? null : null;
+  const activeLeaf = active
+    ? nodes.flatMap((n) => n.leaves).find((l) => l.key === active.leafKey) ?? null
+    : null;
 
   if (!nodes.length) {
     return (
@@ -210,14 +225,29 @@ export function PipelineExplorer({ jobs, filesPurgedAt, onRetryJob }: Props) {
           <h3 className="text-sm font-semibold text-secondary truncate">
             {selectedJob ? `${selectedJob.stage_name} · ${active?.kind}` : 'Output'}
           </h3>
-          {selectedJob && <StatusBadge status={selectedJob.state} />}
           {selectedJob?.state === 'failed' && onRetryJob && (
             <button
               onClick={() => onRetryJob(selectedJob)}
-              className="ml-auto px-3 py-1 text-xs bg-warning-soft text-warning border border-warning/30 rounded-lg hover:opacity-80 transition-colors focus:outline-none focus:ring-2 focus:ring-warning"
+              className="px-3 py-1 text-xs bg-warning-soft text-warning border border-warning/30 rounded-lg hover:opacity-80 transition-colors focus:outline-none focus:ring-2 focus:ring-warning"
             >
               Retry stage
             </button>
+          )}
+          {/* Selected step status + exit code, pinned to the right. */}
+          {activeLeaf && (
+            <span className="ml-auto flex items-center gap-2 shrink-0">
+              {activeLeaf.exitCode !== null && (
+                <span
+                  className={clsx(
+                    'font-mono text-xs',
+                    activeLeaf.exitCode === 0 ? 'text-disabled' : 'text-danger',
+                  )}
+                >
+                  exit {activeLeaf.exitCode}
+                </span>
+              )}
+              <StatusBadge status={activeLeaf.state} />
+            </span>
           )}
         </div>
         <div className="flex-1 p-2 overflow-hidden">
