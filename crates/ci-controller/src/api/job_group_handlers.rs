@@ -248,18 +248,17 @@ pub async fn get_one(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("Job group not found".into()))?;
 
-    // Look up repo name
-    let repo_name = if let Some(rid) = group.repo_id {
-        storage
-            .get_repo(rid)
-            .await
-            .ok()
-            .flatten()
-            .map(|r| r.repo_name)
-            .unwrap_or_default()
+    // Look up the repo once — used for repo_name AND the global pre/post
+    // scripts (so the UI can render global script nodes with scope).
+    let repo = if let Some(rid) = group.repo_id {
+        storage.get_repo(rid).await.ok().flatten()
     } else {
-        String::new()
+        None
     };
+    let repo_name = repo
+        .as_ref()
+        .map(|r| r.repo_name.clone())
+        .unwrap_or_default();
 
     // The granted stage manifest (set at reservation time, post silent-
     // filter). Empty for legacy rows from before migration 034 — fall
@@ -521,6 +520,13 @@ pub async fn get_one(
         "status_reason": group.status_reason,
         "reserved_stages": reserved_stages,
         "submitted_stages": submitted_stages,
+        // Repo-level global pre/post scripts + scope (worker|controller|both)
+        // so the UI can show global script nodes that expand into the
+        // controller/worker variants.
+        "global_pre_script": repo.as_ref().and_then(|r| r.global_pre_script.clone()),
+        "global_pre_script_scope": repo.as_ref().map(|r| r.global_pre_script_scope.clone()),
+        "global_post_script": repo.as_ref().and_then(|r| r.global_post_script.clone()),
+        "global_post_script_scope": repo.as_ref().map(|r| r.global_post_script_scope.clone()),
         "allocated_resources": alloc_json,
         "created_at": group.created_at.to_rfc3339(),
         "updated_at": group.updated_at.to_rfc3339(),
