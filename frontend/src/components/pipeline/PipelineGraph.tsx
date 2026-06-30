@@ -5,7 +5,6 @@ import {
   clusterRows,
   leafToStep,
   type PipelineModel,
-  type PipelineNode,
   type StepRef,
 } from '../../lib/pipeline';
 
@@ -15,25 +14,67 @@ interface Props {
   onSelect: (step: StepRef) => void;
 }
 
-/** Horizontal centre (0..1) of lane `i` in a row of `count` lanes. */
-function laneX(i: number, count: number): number {
-  return (i + 0.5) / count;
+const LANE_W = 22; // px per lane in the graph gutter
+const DOT_CY = 18; // px — vertical centre of a node's dot (aligns with header)
+
+interface RailItem {
+  key: string;
+  title: string;
+  state: string;
+  /** Lane (column) this node sits on; 0 = main spine. */
+  lane: number;
+  steps: StepRef[];
 }
 
-/** Split/join connector band between `prev` lanes (top) and `cur` (bottom). */
-function Connector({ prev, cur }: { prev: number; cur: number }) {
-  const lines: { x1: number; x2: number }[] = [];
-  const mx = 50;
-  for (let i = 0; i < prev; i++) lines.push({ x1: laneX(i, prev) * 100, x2: mx });
-  const top = lines.map((l, i) => ({ ...l, y1: 0, y2: 50, k: `t${i}` }));
-  const bottom: { x1: number; y1: number; x2: number; y2: number; k: string }[] = [];
-  for (let j = 0; j < cur; j++) bottom.push({ x1: mx, y1: 50, x2: laneX(j, cur) * 100, y2: 100, k: `b${j}` });
-  const all = [...top.map((l) => ({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, k: l.k })), ...bottom];
+/** dot/branch colour by node state. */
+function dotColor(state: string): string {
+  switch (state) {
+    case 'success': return 'var(--color-success)';
+    case 'failed': return 'var(--color-danger)';
+    case 'cancelled':
+    case 'expired': return 'var(--color-warning)';
+    case 'running':
+    case 'assigned': return 'var(--color-accent)';
+    default: return 'var(--color-text-muted)';
+  }
+}
+
+/** Per-row graph gutter: the continuous spine (lane 0), an elbow to this
+ *  node's lane when it branches, and the node's dot. The SVG stretches to the
+ *  row height so the spine stays connected even when a row is expanded. */
+function Gutter({
+  lane,
+  maxLane,
+  isFirst,
+  isLast,
+  color,
+}: {
+  lane: number;
+  maxLane: number;
+  isFirst: boolean;
+  isLast: boolean;
+  color: string;
+}) {
+  const width = (maxLane + 1) * LANE_W;
+  const x0 = LANE_W / 2; // spine x
+  const xL = lane * LANE_W + LANE_W / 2; // this node's x
   return (
-    <svg className="w-full h-5 text-border-strong" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      {all.map((l) => (
-        <line key={l.k} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="currentColor" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-      ))}
+    <svg width={width} className="shrink-0 h-full text-border-strong" preserveAspectRatio="none" aria-hidden="true">
+      {/* main spine (lane 0) */}
+      <line
+        x1={x0}
+        y1={isFirst ? DOT_CY : 0}
+        x2={x0}
+        y2={isLast && lane === 0 ? DOT_CY : '100%'}
+        stroke="currentColor"
+        strokeWidth={2}
+      />
+      {/* elbow from the spine out to a branch lane */}
+      {lane > 0 && (
+        <line x1={x0} y1={DOT_CY} x2={xL} y2={DOT_CY} stroke="currentColor" strokeWidth={2} />
+      )}
+      {/* node dot */}
+      <circle cx={xL} cy={DOT_CY} r={4.5} fill={color} stroke="var(--color-surface)" strokeWidth={2} />
     </svg>
   );
 }
@@ -61,53 +102,42 @@ function StepChip({ step, selected, onClick }: { step: StepRef; selected: boolea
   );
 }
 
-function ExpandableNode({
-  title,
-  state,
-  expanded,
-  onToggle,
-  children,
-}: {
-  title: string;
-  state: string;
-  expanded: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="w-full rounded-lg border border-border/60 bg-surface-2/40 overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-surface-hover/50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
-        aria-expanded={expanded}
-      >
-        <svg
-          className={clsx('w-3.5 h-3.5 text-disabled transition-transform shrink-0', expanded && 'rotate-90')}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-        <span className="text-xs font-medium text-secondary font-mono truncate flex-1">{title}</span>
-        <StatusBadge status={state} />
-      </button>
-      {expanded && <div className="px-1.5 pb-1.5 pt-0.5 space-y-1">{children}</div>}
-    </div>
-  );
-}
-
-type RailRow =
-  | { kind: 'global-pre' }
-  | { kind: 'global-post' }
-  | { kind: 'stages'; lanes: PipelineNode[] };
-
 export function PipelineGraph({ model, selectedKey, onSelect }: Props) {
-  const rows = useMemo<RailRow[]>(() => {
-    const out: RailRow[] = [];
-    if (model.globalPre.present) out.push({ kind: 'global-pre' });
-    for (const lanes of clusterRows(model.stages)) out.push({ kind: 'stages', lanes });
-    if (model.globalPost.present) out.push({ kind: 'global-post' });
+  const items = useMemo<RailItem[]>(() => {
+    const out: RailItem[] = [];
+    if (model.globalPre.present) {
+      out.push({
+        key: 'global-pre',
+        title: 'Global pre-script',
+        state: model.globalPre.steps[0]?.state ?? 'unknown',
+        lane: 0,
+        steps: model.globalPre.steps,
+      });
+    }
+    for (const row of clusterRows(model.stages)) {
+      row.forEach((node, i) => {
+        out.push({
+          key: node.key,
+          title: node.stageName,
+          state: node.state,
+          lane: i, // node 0 stays on the spine; siblings branch off
+          steps: node.leaves.map(leafToStep),
+        });
+      });
+    }
+    if (model.globalPost.present) {
+      out.push({
+        key: 'global-post',
+        title: 'Global post-script',
+        state: model.globalPost.steps[0]?.state ?? 'unknown',
+        lane: 0,
+        steps: model.globalPost.steps,
+      });
+    }
     return out;
   }, [model]);
+
+  const maxLane = useMemo(() => items.reduce((m, it) => Math.max(m, it.lane), 0), [items]);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (key: string) =>
@@ -117,68 +147,48 @@ export function PipelineGraph({ model, selectedKey, onSelect }: Props) {
       return next;
     });
 
-  const laneCount = (r: RailRow) => (r.kind === 'stages' ? r.lanes.length : 1);
-
   return (
-    <div className="flex flex-col items-start w-full">
-      {rows.map((row, ri) => (
-        <div key={ri} className="w-full">
-          {ri > 0 && <Connector prev={laneCount(rows[ri - 1])} cur={laneCount(row)} />}
-
-          {row.kind === 'global-pre' && (
-            <ExpandableNode
-              title="Global pre-script"
-              state={model.globalPre.steps[0]?.state ?? 'unknown'}
-              expanded={expanded.has('global-pre')}
-              onToggle={() => toggle('global-pre')}
-            >
-              {model.globalPre.steps.map((s) => (
-                <StepChip key={s.key} step={s} selected={selectedKey === s.key} onClick={() => onSelect(s)} />
-              ))}
-            </ExpandableNode>
-          )}
-
-          {row.kind === 'global-post' && (
-            <ExpandableNode
-              title="Global post-script"
-              state={model.globalPost.steps[0]?.state ?? 'unknown'}
-              expanded={expanded.has('global-post')}
-              onToggle={() => toggle('global-post')}
-            >
-              {model.globalPost.steps.map((s) => (
-                <StepChip key={s.key} step={s} selected={selectedKey === s.key} onClick={() => onSelect(s)} />
-              ))}
-            </ExpandableNode>
-          )}
-
-          {row.kind === 'stages' && (
-            <div className="flex items-start justify-start gap-3">
-              {row.lanes.map((node) => {
-                const steps = node.leaves.map(leafToStep);
-                return (
-                  <div key={node.key} className="flex-1 min-w-[8rem] max-w-[16rem]">
-                    <ExpandableNode
-                      title={node.stageName}
-                      state={node.state}
-                      expanded={expanded.has(node.key)}
-                      onToggle={() => {
-                        toggle(node.key);
-                        // selecting the stage also surfaces its command output
-                        const cmd = steps.find((s) => s.type === 'job' && s.kind === 'cmd');
-                        if (cmd && !expanded.has(node.key)) onSelect(cmd);
-                      }}
-                    >
-                      {steps.map((s) => (
-                        <StepChip key={s.key} step={s} selected={selectedKey === s.key} onClick={() => onSelect(s)} />
-                      ))}
-                    </ExpandableNode>
-                  </div>
-                );
-              })}
+    <div className="flex flex-col">
+      {items.map((it, i) => {
+        const isOpen = expanded.has(it.key);
+        return (
+          <div key={it.key} className="flex items-stretch">
+            <Gutter
+              lane={it.lane}
+              maxLane={maxLane}
+              isFirst={i === 0}
+              isLast={i === items.length - 1}
+              color={dotColor(it.state)}
+            />
+            <div className="flex-1 min-w-0 pb-1">
+              {/* node header: caret + name + status */}
+              <button
+                onClick={() => toggle(it.key)}
+                className="w-full flex items-center gap-2 pr-1 text-left hover:bg-surface-hover/40 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
+                style={{ minHeight: DOT_CY * 2 }}
+                aria-expanded={isOpen}
+              >
+                <svg
+                  className={clsx('w-3 h-3 text-disabled transition-transform shrink-0', isOpen && 'rotate-90')}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="text-xs font-medium text-secondary font-mono truncate flex-1">{it.title}</span>
+                <StatusBadge status={it.state} />
+              </button>
+              {/* expanded sub-steps as a small branch off the node */}
+              {isOpen && it.steps.length > 0 && (
+                <div className="ml-3 mt-0.5 mb-1 pl-2 border-l border-border/60 space-y-0.5">
+                  {it.steps.map((s) => (
+                    <StepChip key={s.key} step={s} selected={selectedKey === s.key} onClick={() => onSelect(s)} />
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
