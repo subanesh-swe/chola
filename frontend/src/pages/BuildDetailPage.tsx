@@ -467,6 +467,7 @@ export default function BuildDetailPage() {
           global post-script) + right output pane for the selected step. */}
       <PipelineExplorer
         jobs={jobs}
+        group={group}
         filesPurgedAt={group.files_purged_at}
         onRetryJob={canCancelJobs ? openRetryJob : undefined}
       />

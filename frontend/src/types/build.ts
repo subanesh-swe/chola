@@ -28,6 +28,11 @@ export interface JobGroup {
   reserved_stages?: string[];
   /** Stage names that have a submitted job. Derived from `jobs[].stage_name`. */
   submitted_stages?: string[];
+  /** Repo-level global scripts + scope (worker|controller|both). */
+  global_pre_script?: string | null;
+  global_pre_script_scope?: string | null;
+  global_post_script?: string | null;
+  global_post_script_scope?: string | null;
   allocated_resources?: AllocatedResources;
   last_activity_at?: string | null;
   time_until_timeout_secs?: number | null;

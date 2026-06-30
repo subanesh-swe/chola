@@ -12,7 +12,7 @@
 // and splits a stage log string into its pre/cmd/post sections so the right
 // pane can show just the selected leaf's output.
 
-import type { Job, JobState } from '../types';
+import type { Job, JobState, JobGroup } from '../types';
 
 export type PipelineLeafKind = 'pre' | 'cmd' | 'post';
 
@@ -210,4 +210,127 @@ export function parseLogSections(log: string): LogSections {
 /** Pull just one leaf's slice out of a full stage log. */
 export function sectionForLeaf(log: string, kind: PipelineLeafKind): string {
   return parseLogSections(log)[kind];
+}
+
+// ── Full vertical model (global pre/post boxes + stages) ────────────────────
+
+/**
+ * A selectable step in the graph. A `job` step points at a real job's log
+ * section; an `info` step (controller-scope global script) has no captured
+ * output and just shows an explanatory message.
+ */
+export type StepRef =
+  | {
+      type: 'job';
+      key: string;
+      jobId: string;
+      kind: PipelineLeafKind;
+      label: string;
+      state: JobState;
+      exitCode: number | null;
+    }
+  | { type: 'info'; key: string; label: string; message: string; state: JobState };
+
+export interface GlobalBox {
+  present: boolean;
+  /** Sub-steps revealed on expand (worker / controller variants). */
+  steps: StepRef[];
+}
+
+export interface PipelineModel {
+  globalPre: GlobalBox;
+  stages: PipelineNode[];
+  globalPost: GlobalBox;
+}
+
+const isWorker = (scope?: string | null) => scope === 'worker' || scope === 'both';
+const isController = (scope?: string | null) => scope === 'controller' || scope === 'both';
+
+/** Convert a stage leaf into a selectable job step. */
+export function leafToStep(leaf: PipelineLeaf): StepRef {
+  return {
+    type: 'job',
+    key: leaf.key,
+    jobId: leaf.jobId,
+    kind: leaf.kind,
+    label: leaf.label,
+    state: leaf.state,
+    exitCode: leaf.exitCode,
+  };
+}
+
+/** Build the full vertical pipeline model from jobs + the group's repo-level
+ *  global scripts. */
+export function buildPipelineModel(jobs: Job[], group: JobGroup): PipelineModel {
+  const nodes = buildPipeline(jobs);
+  const stages = nodes.filter((n) => n.kind === 'stage');
+  const cleanup = nodes.find((n) => n.kind === 'global-post') ?? null;
+  const firstStage = stages[0] ?? null;
+
+  // Global pre-script: worker-scope is prepended to the first stage's pre
+  // phase (no separate job); controller-scope has no captured output.
+  const preSteps: StepRef[] = [];
+  if (isWorker(group.global_pre_script_scope)) {
+    const preLeaf = firstStage?.leaves.find((l) => l.kind === 'pre');
+    if (firstStage && preLeaf) {
+      preSteps.push({
+        type: 'job',
+        key: 'global-pre:worker',
+        jobId: firstStage.job.id,
+        kind: 'pre',
+        label: 'Worker',
+        state: preLeaf.state,
+        exitCode: preLeaf.exitCode,
+      });
+    }
+  }
+  if (isController(group.global_pre_script_scope)) {
+    preSteps.push({
+      type: 'info',
+      key: 'global-pre:controller',
+      label: 'Controller',
+      message: 'Global pre-script runs on the controller; its output is not captured.',
+      state: 'unknown',
+    });
+  }
+
+  // Global post-script: worker-scope is the __cleanup__ job; controller-scope
+  // has no captured output.
+  const postSteps: StepRef[] = [];
+  if (isWorker(group.global_post_script_scope)) {
+    if (cleanup) {
+      postSteps.push({
+        type: 'job',
+        key: 'global-post:worker',
+        jobId: cleanup.job.id,
+        kind: 'cmd',
+        label: 'Worker',
+        state: cleanup.state,
+        exitCode: cleanup.job.exit_code,
+      });
+    } else {
+      postSteps.push({
+        type: 'info',
+        key: 'global-post:worker',
+        label: 'Worker',
+        message: 'Global post-script runs on the worker at group completion (no record yet).',
+        state: 'queued',
+      });
+    }
+  }
+  if (isController(group.global_post_script_scope)) {
+    postSteps.push({
+      type: 'info',
+      key: 'global-post:controller',
+      label: 'Controller',
+      message: 'Global post-script runs on the controller; its output is not captured.',
+      state: 'unknown',
+    });
+  }
+
+  return {
+    globalPre: { present: !!group.global_pre_script, steps: preSteps },
+    stages,
+    globalPost: { present: !!group.global_post_script || !!cleanup, steps: postSteps },
+  };
 }
