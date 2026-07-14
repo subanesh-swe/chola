@@ -31,6 +31,12 @@ pub struct ControllerConfig {
     /// exposed only over the tailnet.
     #[serde(default = "default_http_bind_address")]
     pub http_bind_address: String,
+    /// Directory of the built frontend (Vite `dist/`). When set and it
+    /// exists, the HTTP server serves it as a SPA (static assets + index.html
+    /// fallback for client routes), so no separate frontend service is
+    /// needed. Unset (default) = API only.
+    #[serde(default)]
+    pub frontend_dir: Option<String>,
     #[serde(default)]
     pub retention: Option<RetentionConfig>,
 }
