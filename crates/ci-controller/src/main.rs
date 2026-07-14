@@ -59,6 +59,11 @@ struct Cli {
     /// Override HTTP sidecar port (from config: http_port)
     #[arg(long)]
     http_port: Option<u16>,
+
+    /// Override the HTTP bind interface (from config: http_bind_address).
+    /// Local dev binds 0.0.0.0 via `just`; prod keeps the config default.
+    #[arg(long)]
+    http_bind: Option<String>,
 }
 
 #[tokio::main]
@@ -80,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(port) = cli.http_port {
         config.http_port = port;
+    }
+    if let Some(http_bind) = cli.http_bind {
+        config.http_bind_address = http_bind;
     }
 
     let log_level = cli.log_level.as_deref().unwrap_or(&config.logging.level);
@@ -105,7 +113,10 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting CI Controller");
     info!("Bind address: {}", config.bind_address);
-    info!("HTTP port: {}", config.http_port);
+    info!(
+        "HTTP bind: {}:{}",
+        config.http_bind_address, config.http_port
+    );
     info!("Scheduling strategy: {}", config.scheduling.strategy);
 
     // Connect to PostgreSQL (non-fatal)
@@ -542,7 +553,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Start HTTP sidecar in background
-    let http_addr: std::net::SocketAddr = format!("0.0.0.0:{}", config.http_port).parse()?;
+    let http_addr: std::net::SocketAddr =
+        format!("{}:{}", config.http_bind_address, config.http_port).parse()?;
     {
         let http_state = state.clone();
         let http_tls = config.http_tls.clone();

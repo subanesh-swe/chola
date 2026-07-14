@@ -30,12 +30,14 @@ fmt:
 
 # ─── Controller ───────────────────────────────────────────────────────────────
 
+# Local dev binds HTTP to 0.0.0.0 (reachable over LAN/Tailscale); prod keeps
+# the config default of 127.0.0.1.
 controller:
-    cargo run -p chola-controller -- --config config/controller.example.yaml
+    cargo run -p chola-controller -- --config config/controller.example.yaml --http-bind 0.0.0.0
 
 # Auto-restart controller on code change
 watch-controller:
-    cargo watch -x 'run -p chola-controller -- --config config/controller.example.yaml' -w crates/ci-controller -w crates/ci-core -i '*.log'
+    cargo watch -x 'run -p chola-controller -- --config config/controller.example.yaml --http-bind 0.0.0.0' -w crates/ci-controller -w crates/ci-core -i '*.log'
 # ─── Worker ───────────────────────────────────────────────────────────────────
 
 # Usage:
@@ -153,9 +155,10 @@ submit-auto cmd:
 frontend-install:
     cd frontend && npm install
 
-# Start frontend dev server (proxy to controller:8080)
+# Start frontend dev server (proxy to controller:8080).
+# VITE_HOST=true exposes it on 0.0.0.0 for LAN/Tailscale access in local dev.
 frontend-dev:
-    cd frontend && npm run dev
+    cd frontend && VITE_HOST=true npm run dev
 
 # Build frontend for production
 frontend-build:

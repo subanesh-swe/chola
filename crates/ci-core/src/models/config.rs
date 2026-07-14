@@ -23,12 +23,24 @@ pub struct ControllerConfig {
     pub auth: AuthConfig,
     #[serde(default = "default_controller_http_port")]
     pub http_port: u16,
+    /// Interface the REST/HTTP server binds to. Defaults to loopback
+    /// (127.0.0.1) — secure by default. To reach the dashboard/API over
+    /// LAN or Tailscale, set this explicitly: either "0.0.0.0" (all
+    /// interfaces; relies on token auth + your firewall/VPN as the
+    /// boundary), or, best, the host's Tailscale IP "100.x.y.z" so it's
+    /// exposed only over the tailnet.
+    #[serde(default = "default_http_bind_address")]
+    pub http_bind_address: String,
     #[serde(default)]
     pub retention: Option<RetentionConfig>,
 }
 
 fn default_controller_http_port() -> u16 {
     8080
+}
+
+fn default_http_bind_address() -> String {
+    "127.0.0.1".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
