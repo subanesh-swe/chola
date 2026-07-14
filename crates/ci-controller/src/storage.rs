@@ -4839,7 +4839,17 @@ impl Storage {
         .execute(&mut *tx)
         .await?;
 
-        // 2. Create worker_token row with worker_id binding
+        // 2. Clear any pre-existing token bound to this worker_id. The unique
+        // index `idx_worker_tokens_worker_id (worker_id) WHERE worker_id IS
+        // NOT NULL` would otherwise reject the insert below (e.g. an orphan
+        // token left over from a prior registration). Re-registration always
+        // mints a fresh token, so dropping the old binding is correct.
+        sqlx::query("DELETE FROM worker_tokens WHERE worker_id = $1")
+            .bind(worker_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // 3. Create worker_token row with worker_id binding
         sqlx::query(
             "INSERT INTO worker_tokens (name, token_hash, scope, created_by, worker_id) \
              VALUES ($1, $2, 'dedicated', $3, $4)",
@@ -4992,10 +5002,21 @@ impl Storage {
     }
 
     pub async fn delete_worker(&self, worker_id: &str) -> anyhow::Result<bool> {
+        // There is no FK cascade from worker_tokens -> workers, so deleting
+        // the worker alone would orphan its token rows. A leftover token
+        // still carries worker_id and would then collide with the unique
+        // index `idx_worker_tokens_worker_id` on the next registration. Drop
+        // the worker's tokens in the same transaction.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM worker_tokens WHERE worker_id = $1")
+            .bind(worker_id)
+            .execute(&mut *tx)
+            .await?;
         let result = sqlx::query("DELETE FROM workers WHERE worker_id = $1")
             .bind(worker_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
