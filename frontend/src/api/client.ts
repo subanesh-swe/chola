@@ -28,17 +28,25 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const url: string = error.config?.url || '';
+    // A 401 from the login endpoint means "bad credentials" — let the caller
+    // (LoginPage) show the error. Only treat 401 on OTHER endpoints as an
+    // expired/invalid session that should log out and redirect. Also skip the
+    // hard redirect when already on /login so we don't reload over the toast.
+    const isAuthAttempt = url.includes('/auth/login');
+    if (status === 401 && !isAuthAttempt) {
       useAuthStore.getState().logout();
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
       return Promise.reject(error);
     }
     const message = error.response?.data?.error
       || error.response?.statusText
       || error.message
       || 'An unexpected error occurred';
-    const status = error.response?.status;
-    error.userMessage = status >= 500
+    error.userMessage = status && status >= 500
       ? 'Server error. Please try again later.'
       : message;
     error.statusCode = status;
