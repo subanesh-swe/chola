@@ -558,8 +558,9 @@ async fn main() -> anyhow::Result<()> {
     {
         let http_state = state.clone();
         let http_tls = config.http_tls.clone();
+        let frontend_dir = config.frontend_dir.clone().map(std::path::PathBuf::from);
         tokio::spawn(async move {
-            if let Err(e) = http_server::run(http_addr, http_state, http_tls).await {
+            if let Err(e) = http_server::run(http_addr, http_state, http_tls, frontend_dir).await {
                 error!("HTTP server failed: {}", e);
             }
         });
