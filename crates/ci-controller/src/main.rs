@@ -64,12 +64,6 @@ struct Cli {
     /// Local dev binds 0.0.0.0 via `just`; prod keeps the config default.
     #[arg(long)]
     http_bind: Option<String>,
-
-    /// Override the built-frontend directory (from config: frontend_dir).
-    /// Prod wires this via CHOLA_FRONTEND_DIR in run-controller.sh so the
-    /// controller serves the dashboard without editing the config yaml.
-    #[arg(long)]
-    frontend_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -94,9 +88,6 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(http_bind) = cli.http_bind {
         config.http_bind_address = http_bind;
-    }
-    if let Some(frontend_dir) = cli.frontend_dir {
-        config.frontend_dir = Some(frontend_dir);
     }
 
     let log_level = cli.log_level.as_deref().unwrap_or(&config.logging.level);

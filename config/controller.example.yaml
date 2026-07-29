@@ -8,13 +8,7 @@ http_port: 8080
 #   "100.x.y.z"    the host's Tailscale IP — exposed only over the tailnet (best)
 # Leave as 127.0.0.1 and put a reverse proxy (nginx/Traefik) in front for prod.
 http_bind_address: "127.0.0.1"
-
-# Directory of the built frontend (Vite `dist/`). When set, the controller
-# serves the dashboard as a SPA on http_port alongside the API — one service,
-# one port. Leave UNSET for local dev: run the Vite dev server instead
-# (`just frontend-dev` on :3000, live HMR) and use the controller for the API.
-# In prod this is wired via CHOLA_FRONTEND_DIR in run-controller.sh.
-# frontend_dir: "/var/lib/chola/frontend/dist"
+frontend_dir: "frontend/dist"
 
 # Optional TLS for the REST API (HTTP server). Leave commented out for plain HTTP (dev).
 # For production with auth enabled: configure http_tls OR use a reverse proxy (nginx) with TLS.
