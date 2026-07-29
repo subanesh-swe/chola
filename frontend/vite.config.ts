@@ -20,10 +20,18 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        // Forward the original host as X-Forwarded-Host so the backend's
+        // same-origin CSRF check passes when the dev server is reached over
+        // LAN/Tailscale (not just localhost).
+        xfwd: true,
       },
       '/health': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        // Forward the original host as X-Forwarded-Host so the backend's
+        // same-origin CSRF check passes when the dev server is reached over
+        // LAN/Tailscale (not just localhost).
+        xfwd: true,
       },
     },
   },
