@@ -31,6 +31,14 @@ pub struct ControllerConfig {
     /// exposed only over the tailnet.
     #[serde(default = "default_http_bind_address")]
     pub http_bind_address: String,
+    /// Extra browser origins allowed to send mutating (POST/PUT/DELETE)
+    /// requests, on top of same-origin — which is ALWAYS allowed, so the
+    /// dashboard works over localhost, the machine IP, or a Tailscale host with
+    /// no config at all. Only needed for cross-origin setups (e.g. a
+    /// separately-hosted dashboard). Exact match, e.g. "https://ci.example.com".
+    /// Also settable via the CHOLA_ALLOWED_ORIGINS env var (comma-separated).
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
     #[serde(default)]
     pub retention: Option<RetentionConfig>,
 }

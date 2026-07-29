@@ -9,6 +9,14 @@ http_port: 8080
 # Leave as 127.0.0.1 and put a reverse proxy (nginx/Traefik) in front for prod.
 http_bind_address: "127.0.0.1"
 
+# Extra browser origins allowed to send mutating (POST/PUT/DELETE) requests.
+# Same-origin is ALWAYS allowed, so the dashboard already works over localhost,
+# the machine IP, or a Tailscale host with NO config here. Only set this for a
+# separately-hosted dashboard (cross-origin). Exact match. Also settable via the
+# CHOLA_ALLOWED_ORIGINS env var (comma-separated).
+# allowed_origins:
+#   - "https://ci.example.com"
+
 # Optional TLS for the REST API (HTTP server). Leave commented out for plain HTTP (dev).
 # For production with auth enabled: configure http_tls OR use a reverse proxy (nginx) with TLS.
 # Without TLS, credentials and tokens are transmitted in plaintext.
