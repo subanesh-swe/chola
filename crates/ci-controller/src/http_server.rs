@@ -56,11 +56,18 @@ async fn metrics_handler(State(state): State<Arc<ControllerState>>) -> impl Into
 // ---------------------------------------------------------------------------
 
 fn build_app(state: Arc<ControllerState>) -> Router {
+    // Same-origin is always allowed (works over localhost, the machine IP, or a
+    // Tailscale host with no config); `allowed_origins` adds cross-origin opt-ins.
+    let allowed_origins = Arc::new(state.config.allowed_origins.clone());
+
+    let cors_origins = allowed_origins.clone();
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _| {
-            let s = origin.to_str().unwrap_or("");
-            s.starts_with("http://localhost:") || s.starts_with("https://localhost:")
-        }))
+        .allow_origin(AllowOrigin::predicate(
+            move |origin: &HeaderValue, parts: &axum::http::request::Parts| {
+                let s = origin.to_str().unwrap_or("");
+                crate::csrf::origin_allowed(s, &parts.headers, &cors_origins)
+            },
+        ))
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -95,10 +102,13 @@ fn build_app(state: Arc<ControllerState>) -> Router {
             .url("/api-docs/openapi.json", crate::openapi::ApiDoc::openapi()),
     );
 
-    base.layer(middleware::from_fn(csrf_middleware))
-        .layer(cors)
-        .fallback(fallback_handler)
-        .with_state(state)
+    base.layer(middleware::from_fn_with_state(
+        allowed_origins,
+        csrf_middleware,
+    ))
+    .layer(cors)
+    .fallback(fallback_handler)
+    .with_state(state)
 }
 
 /// Middleware: if the response is a 4xx/5xx with non-JSON content-type, wrap in JSON.

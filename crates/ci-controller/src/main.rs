@@ -89,6 +89,17 @@ async fn main() -> anyhow::Result<()> {
     if let Some(http_bind) = cli.http_bind {
         config.http_bind_address = http_bind;
     }
+    // CHOLA_ALLOWED_ORIGINS (comma-separated) adds cross-origin opt-ins on top
+    // of config. Same-origin needs no config; this is only for a separately
+    // hosted dashboard. Lets `just`/systemd pass origins via env.
+    if let Ok(origins) = std::env::var("CHOLA_ALLOWED_ORIGINS") {
+        config.allowed_origins.extend(
+            origins
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+    }
 
     let log_level = cli.log_level.as_deref().unwrap_or(&config.logging.level);
 
