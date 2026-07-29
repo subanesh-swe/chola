@@ -46,8 +46,12 @@ export default function LoginPage() {
       const e = err as MutationError & { response?: unknown };
       if (!e.response) {
         toast.error('Cannot reach server. Check your connection.');
-      } else if (e.statusCode === 401 || e.statusCode === 403) {
+      } else if (e.statusCode === 401) {
         toast.error('Invalid credentials.');
+      } else if (e.statusCode === 403) {
+        // Not a credentials problem — e.g. a cross-origin/CSRF block. Show the
+        // backend's actual reason instead of misleading "Invalid credentials".
+        toast.error(e.userMessage || 'Request blocked.');
       } else if (e.statusCode && e.statusCode >= 500) {
         toast.error('Server error. Please try again later.');
       } else {
