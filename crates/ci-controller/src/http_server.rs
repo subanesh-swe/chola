@@ -1,13 +1,12 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::http::{HeaderName, HeaderValue, Uri};
+use axum::http::{HeaderName, HeaderValue};
 use axum::middleware;
 use axum::{
     extract::State,
     http::{Method, StatusCode},
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
@@ -56,7 +55,7 @@ async fn metrics_handler(State(state): State<Arc<ControllerState>>) -> impl Into
 // Router builder
 // ---------------------------------------------------------------------------
 
-fn build_app(state: Arc<ControllerState>, frontend_dir: Option<PathBuf>) -> Router {
+fn build_app(state: Arc<ControllerState>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _| {
             let s = origin.to_str().unwrap_or("");
@@ -96,63 +95,10 @@ fn build_app(state: Arc<ControllerState>, frontend_dir: Option<PathBuf>) -> Rout
             .url("/api-docs/openapi.json", crate::openapi::ApiDoc::openapi()),
     );
 
-    let base = base.layer(middleware::from_fn(csrf_middleware)).layer(cors);
-
-    // When a built frontend is configured, serve it as a SPA from the
-    // fallback; otherwise keep the JSON 404 (API-only). Canonicalize the dir
-    // once so the per-request traversal check is a cheap prefix compare.
-    let app = match frontend_dir.and_then(|d| std::fs::canonicalize(d).ok()) {
-        Some(dir) if dir.is_dir() => {
-            info!("Serving frontend from {}", dir.display());
-            let index = dir.join("index.html");
-            base.fallback(move |uri: Uri| {
-                let dir = dir.clone();
-                let index = index.clone();
-                async move { serve_spa(uri, dir, index).await }
-            })
-        }
-        _ => base.fallback(fallback_handler),
-    };
-    app.with_state(state)
-}
-
-/// SPA fallback: serve a static file from `dir` if it exists (and is safely
-/// under `dir`), otherwise `index.html` so client-side routes resolve. API /
-/// infra paths never fall back to HTML — they get a JSON 404.
-async fn serve_spa(uri: Uri, dir: PathBuf, index: PathBuf) -> Response {
-    let path = uri.path();
-    if path.starts_with("/api")
-        || path.starts_with("/health")
-        || path == "/metrics"
-        || path.starts_with("/swagger-ui")
-        || path.starts_with("/api-docs")
-    {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("Route not found: {}", path) })),
-        )
-            .into_response();
-    }
-
-    // Resolve the requested file; fall back to index.html for SPA routes and
-    // reject path traversal (canonical path must stay under `dir`).
-    let candidate = dir.join(path.trim_start_matches('/'));
-    let serve_path = match tokio::fs::canonicalize(&candidate).await {
-        Ok(c) if c.starts_with(&dir) && c.is_file() => c,
-        _ => index,
-    };
-
-    match tokio::fs::read(&serve_path).await {
-        Ok(bytes) => {
-            let mime = mime_guess::from_path(&serve_path).first_or_octet_stream();
-            ([(axum::http::header::CONTENT_TYPE, mime.as_ref())], bytes).into_response()
-        }
-        Err(_) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "frontend index.html not found" })),
-        )
-            .into_response(),
-    }
+    base.layer(middleware::from_fn(csrf_middleware))
+        .layer(cors)
+        .fallback(fallback_handler)
+        .with_state(state)
 }
 
 /// Middleware: if the response is a 4xx/5xx with non-JSON content-type, wrap in JSON.
@@ -196,9 +142,8 @@ pub async fn run(
     http_addr: SocketAddr,
     state: Arc<ControllerState>,
     tls_config: Option<TlsServerConfig>,
-    frontend_dir: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let app = build_app(state, frontend_dir);
+    let app = build_app(state);
     match tls_config {
         Some(tls) if tls.enabled => serve_tls(http_addr, app, &tls).await,
         _ => serve_plain(http_addr, app).await,
