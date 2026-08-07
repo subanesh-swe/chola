@@ -487,11 +487,9 @@ async fn handle_job_assignment(
         .cloned()
         .collect();
 
-    // Per-build workspace + log path. The new layout
-    // (`<scratch_root>/<gid>/...`) kicks in when the group was created
-    // at-or-after this worker process booted. The controller populates
-    // `assignment.group_created_at` as RFC3339; empty string means
-    // "unknown" → resolver falls through to legacy paths.
+    // Grouped jobs always resolve under the unified scratch layout
+    // (`<scratch_root>/<gid>/...`). Ad-hoc jobs with no group id keep the
+    // single-job fallback layout.
     let group_created_at = if assignment.group_created_at.is_empty() {
         None
     } else {
@@ -784,6 +782,18 @@ async fn run_job_with_streaming(
         ctx.job_id, ctx.command, ctx.workspace_dir
     );
 
+    // Cleanup scripts may delete CHOLA_WORK_DIR; run the synthetic cleanup
+    // command from the group's parent scratch directory so a removed workspace
+    // does not break command startup.
+    let command_work_dir = if ctx.stage_name == "__cleanup__" {
+        std::path::Path::new(&ctx.workspace_dir)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| ctx.workspace_dir.clone())
+    } else {
+        ctx.workspace_dir.clone()
+    };
+
     // Ensure the shared build workspace directory exists.
     if let Err(e) = tokio::fs::create_dir_all(&ctx.workspace_dir).await {
         warn!(
@@ -853,7 +863,7 @@ async fn run_job_with_streaming(
                 &ctx.command,
                 &ctx.pre_script,
                 &ctx.post_script,
-                &ctx.workspace_dir,
+                &command_work_dir,
                 &log_path,
                 log_tx,
                 cancel_rx,
@@ -881,7 +891,7 @@ async fn run_job_with_streaming(
         let result = executor
             .execute_streaming(
                 &ctx.command,
-                &ctx.workspace_dir,
+                &command_work_dir,
                 &log_path,
                 log_tx,
                 cancel_rx,

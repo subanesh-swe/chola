@@ -261,9 +261,8 @@ mod tests {
 }
 
 /// Build a `JobAssignment` proto from a domain `Job`. `group_created_at`
-/// is the parent group's RFC3339 creation timestamp, used by the worker
-/// to pick between the new unified scratch root and the legacy paths.
-/// Empty string means "unknown — fall through to legacy".
+/// is preserved for older workers, but current grouped jobs always resolve
+/// under the unified scratch root on the worker.
 fn build_job_assignment(job: Job, group_created_at: String) -> JobAssignment {
     JobAssignment {
         job_id: job.job_id,
