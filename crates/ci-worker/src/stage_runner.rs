@@ -15,6 +15,96 @@ pub struct ScriptLockConfig {
     pub scope: String, // "worker" (flock) or "controller" (Redis via gRPC)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::StageRunner;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn resolve_paths_new_layout_uses_shared_workspace_and_stage_dir() {
+        let created = Utc.with_ymd_and_hms(2026, 8, 7, 10, 0, 0).unwrap();
+        let startup = Utc.with_ymd_and_hms(2026, 8, 7, 9, 0, 0).unwrap();
+
+        let resolved = StageRunner::resolve_paths(
+            "/scratch",
+            "/logs",
+            "/work",
+            Some(created),
+            Some(startup),
+            "gid-1",
+            "build",
+            "job-1",
+        );
+
+        assert_eq!(
+            resolved.workspace_dir,
+            std::path::PathBuf::from("/scratch/gid-1/workspace")
+        );
+        assert_eq!(
+            resolved.stage_dir,
+            Some(std::path::PathBuf::from("/scratch/gid-1/stages/build"))
+        );
+        assert_eq!(
+            resolved.log_path,
+            std::path::PathBuf::from("/scratch/gid-1/logs/build.log")
+        );
+    }
+
+    #[test]
+    fn resolve_paths_cleanup_job_has_no_stage_dir() {
+        let created = Utc.with_ymd_and_hms(2026, 8, 7, 10, 0, 0).unwrap();
+        let startup = Utc.with_ymd_and_hms(2026, 8, 7, 9, 0, 0).unwrap();
+
+        let resolved = StageRunner::resolve_paths(
+            "/scratch",
+            "/logs",
+            "/work",
+            Some(created),
+            Some(startup),
+            "gid-1",
+            "__cleanup__",
+            "gid-1-__cleanup__",
+        );
+
+        assert_eq!(
+            resolved.workspace_dir,
+            std::path::PathBuf::from("/scratch/gid-1/workspace")
+        );
+        assert_eq!(resolved.stage_dir, None);
+        assert_eq!(
+            resolved.log_path,
+            std::path::PathBuf::from("/scratch/gid-1/logs/__cleanup__.log")
+        );
+    }
+
+    #[test]
+    fn resolve_paths_legacy_layout_keeps_group_workspace() {
+        let created = Utc.with_ymd_and_hms(2026, 8, 7, 8, 0, 0).unwrap();
+        let startup = Utc.with_ymd_and_hms(2026, 8, 7, 9, 0, 0).unwrap();
+
+        let resolved = StageRunner::resolve_paths(
+            "/scratch",
+            "/logs",
+            "/work",
+            Some(created),
+            Some(startup),
+            "gid-1",
+            "build",
+            "job-1",
+        );
+
+        assert_eq!(
+            resolved.workspace_dir,
+            std::path::PathBuf::from("/work/gid-1")
+        );
+        assert_eq!(resolved.stage_dir, None);
+        assert_eq!(
+            resolved.log_path,
+            std::path::PathBuf::from("/logs/gid-1/build.log")
+        );
+    }
+}
+
 impl ScriptLockConfig {
     pub fn from_proto(proto: Option<ci_core::proto::orchestrator::ScriptLockConfig>) -> Self {
         match proto {
@@ -294,7 +384,8 @@ pub enum StageState {
 #[derive(Debug, Clone)]
 pub struct ResolvedStagePaths {
     pub log_path: PathBuf,
-    pub workspace: PathBuf,
+    pub workspace_dir: PathBuf,
+    pub stage_dir: Option<PathBuf>,
 }
 
 /// Runs a complete stage: pre_script -> command -> post_script
@@ -338,12 +429,14 @@ impl StageRunner {
     ///
     /// New layout (group created at-or-after worker boot):
     /// - log:       `<scratch_root>/<gid>/logs/<stage>.log`
-    /// - workspace: `<scratch_root>/<gid>/workspace/<stage>/`
+    /// - workspace: `<scratch_root>/<gid>/workspace/`
+    /// - stage dir: `<scratch_root>/<gid>/stages/<stage>/`
     ///
     /// Legacy layout (group from before the upgrade, or unknown
     /// `created_at`):
     /// - log:       `<log_dir>/<gid>/<stage>.log`
     /// - workspace: `<work_dir>/<gid>/`
+    /// - stage dir: none
     ///
     /// See `local/docs/retention-implementation-plan.md` §3.D + §4.
     #[allow(clippy::too_many_arguments)]
@@ -364,21 +457,26 @@ impl StageRunner {
 
         if use_new_layout && !job_group_id.is_empty() {
             let safe_group = Self::sanitize_path_component(job_group_id);
+            let group_root = PathBuf::from(scratch_root).join(&safe_group);
             let safe_stage = if stage_name.is_empty() {
                 Self::sanitize_path_component(job_id)
             } else {
                 Self::sanitize_path_component(stage_name)
             };
-            let group_root = PathBuf::from(scratch_root).join(&safe_group);
             let log_path = group_root.join("logs").join(format!("{}.log", &safe_stage));
-            let workspace = group_root.join("workspace").join(&safe_stage);
+            let workspace_dir = group_root.join("workspace");
+            let stage_dir = match stage_name {
+                "" | "__cleanup__" => None,
+                _ => Some(group_root.join("stages").join(&safe_stage)),
+            };
             ResolvedStagePaths {
                 log_path,
-                workspace,
+                workspace_dir,
+                stage_dir,
             }
         } else {
             let log_path = Self::log_path(log_dir, job_group_id, stage_name, job_id);
-            let workspace = if !job_group_id.is_empty() {
+            let workspace_dir = if !job_group_id.is_empty() {
                 let safe_group = Self::sanitize_path_component(job_group_id);
                 PathBuf::from(work_dir).join(safe_group)
             } else {
@@ -386,7 +484,8 @@ impl StageRunner {
             };
             ResolvedStagePaths {
                 log_path,
-                workspace,
+                workspace_dir,
+                stage_dir: None,
             }
         }
     }
