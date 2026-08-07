@@ -207,6 +207,45 @@ pub async fn dispatch_global_post_script(
     }
 }
 
+fn prepend_global_pre_script(global_pre: &str, stage_pre: &str) -> String {
+    let mut script = String::from(
+        "if [ \"${CHOLA_STAGE_DIR+x}\" = x ]; then\n\
+__CHOLA_STAGE_DIR_SAVED=\"$CHOLA_STAGE_DIR\"\n\
+unset CHOLA_STAGE_DIR\n\
+else\n\
+__CHOLA_STAGE_DIR_SAVED=\"\"\n\
+fi\n",
+    );
+    script.push_str(global_pre);
+    if !global_pre.ends_with('\n') {
+        script.push('\n');
+    }
+    script.push_str(
+        "if [ -n \"$__CHOLA_STAGE_DIR_SAVED\" ]; then\n\
+export CHOLA_STAGE_DIR=\"$__CHOLA_STAGE_DIR_SAVED\"\n\
+else\n\
+unset CHOLA_STAGE_DIR\n\
+fi\n\
+unset __CHOLA_STAGE_DIR_SAVED\n",
+    );
+    script.push_str(stage_pre);
+    script
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepend_global_pre_script;
+
+    #[test]
+    fn prepended_global_pre_unsets_stage_dir_then_restores_it() {
+        let script = prepend_global_pre_script("echo global", "echo stage");
+        assert!(script.contains("unset CHOLA_STAGE_DIR"));
+        assert!(script.contains("export CHOLA_STAGE_DIR=\"$__CHOLA_STAGE_DIR_SAVED\""));
+        assert!(script.contains("echo global"));
+        assert!(script.contains("echo stage"));
+    }
+}
+
 /// Build a `JobAssignment` proto from a domain `Job`. `group_created_at`
 /// is the parent group's RFC3339 creation timestamp, used by the worker
 /// to pick between the new unified scratch root and the legacy paths.
@@ -1373,9 +1412,9 @@ async fn do_submit_stage(
                         };
                         if is_first {
                             if pre_script.is_empty() {
-                                pre_script = g_pre_body.clone();
+                                pre_script = prepend_global_pre_script(g_pre_body, "");
                             } else {
-                                pre_script = format!("{}\n{}", g_pre_body, pre_script);
+                                pre_script = prepend_global_pre_script(g_pre_body, &pre_script);
                             }
                             // Use global pre-script lock if stage doesn't have its own
                             if pre_lock.is_none() && repo.global_pre_script_lock_enabled {
