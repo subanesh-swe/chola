@@ -214,6 +214,12 @@ __CHOLA_STAGE_DIR_SAVED=\"$CHOLA_STAGE_DIR\"\n\
 unset CHOLA_STAGE_DIR\n\
 else\n\
 __CHOLA_STAGE_DIR_SAVED=\"\"\n\
+fi\n\
+if [ \"${CHOLA_STAGE_NAME+x}\" = x ]; then\n\
+__CHOLA_STAGE_NAME_SAVED=\"$CHOLA_STAGE_NAME\"\n\
+unset CHOLA_STAGE_NAME\n\
+else\n\
+__CHOLA_STAGE_NAME_SAVED=\"\"\n\
 fi\n",
     );
     script.push_str(global_pre);
@@ -226,7 +232,13 @@ export CHOLA_STAGE_DIR=\"$__CHOLA_STAGE_DIR_SAVED\"\n\
 else\n\
 unset CHOLA_STAGE_DIR\n\
 fi\n\
-unset __CHOLA_STAGE_DIR_SAVED\n",
+unset __CHOLA_STAGE_DIR_SAVED\n\
+if [ -n \"$__CHOLA_STAGE_NAME_SAVED\" ]; then\n\
+export CHOLA_STAGE_NAME=\"$__CHOLA_STAGE_NAME_SAVED\"\n\
+else\n\
+unset CHOLA_STAGE_NAME\n\
+fi\n\
+unset __CHOLA_STAGE_NAME_SAVED\n",
     );
     script.push_str(stage_pre);
     script
@@ -241,6 +253,8 @@ mod tests {
         let script = prepend_global_pre_script("echo global", "echo stage");
         assert!(script.contains("unset CHOLA_STAGE_DIR"));
         assert!(script.contains("export CHOLA_STAGE_DIR=\"$__CHOLA_STAGE_DIR_SAVED\""));
+        assert!(script.contains("unset CHOLA_STAGE_NAME"));
+        assert!(script.contains("export CHOLA_STAGE_NAME=\"$__CHOLA_STAGE_NAME_SAVED\""));
         assert!(script.contains("echo global"));
         assert!(script.contains("echo stage"));
     }

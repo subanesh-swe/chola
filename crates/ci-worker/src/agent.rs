@@ -510,6 +510,10 @@ async fn handle_job_assignment(
         &job_id,
     );
     let workspace_dir = resolved.workspace_dir.to_string_lossy().to_string();
+    let stages_dir = resolved
+        .stages_dir
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
     let stage_dir = resolved
         .stage_dir
         .as_ref()
@@ -522,6 +526,12 @@ async fn handle_job_assignment(
     environment.insert("CHOLA_REPOS_DIR".into(), config.execution.repos_dir.clone());
     environment.insert("CHOLA_WORKSPACE_DIR".into(), workspace_dir.clone());
     environment.insert("CHOLA_WORK_DIR".into(), workspace_dir.clone());
+    if let Some(ref stages_dir) = stages_dir {
+        environment.insert("CHOLA_STAGES_DIR".into(), stages_dir.clone());
+    }
+    if !assignment.stage_name.is_empty() && assignment.stage_name != "__cleanup__" {
+        environment.insert("CHOLA_STAGE_NAME".into(), assignment.stage_name.clone());
+    }
     if let Some(ref stage_dir) = stage_dir {
         environment.insert("CHOLA_STAGE_DIR".into(), stage_dir.clone());
     }

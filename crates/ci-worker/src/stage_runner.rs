@@ -41,6 +41,10 @@ mod tests {
             std::path::PathBuf::from("/scratch/gid-1/workspace")
         );
         assert_eq!(
+            resolved.stages_dir,
+            Some(std::path::PathBuf::from("/scratch/gid-1/stages"))
+        );
+        assert_eq!(
             resolved.stage_dir,
             Some(std::path::PathBuf::from("/scratch/gid-1/stages/build"))
         );
@@ -70,6 +74,10 @@ mod tests {
             resolved.workspace_dir,
             std::path::PathBuf::from("/scratch/gid-1/workspace")
         );
+        assert_eq!(
+            resolved.stages_dir,
+            Some(std::path::PathBuf::from("/scratch/gid-1/stages"))
+        );
         assert_eq!(resolved.stage_dir, None);
         assert_eq!(
             resolved.log_path,
@@ -97,6 +105,7 @@ mod tests {
             resolved.workspace_dir,
             std::path::PathBuf::from("/work/gid-1")
         );
+        assert_eq!(resolved.stages_dir, None);
         assert_eq!(resolved.stage_dir, None);
         assert_eq!(
             resolved.log_path,
@@ -385,6 +394,7 @@ pub enum StageState {
 pub struct ResolvedStagePaths {
     pub log_path: PathBuf,
     pub workspace_dir: PathBuf,
+    pub stages_dir: Option<PathBuf>,
     pub stage_dir: Option<PathBuf>,
 }
 
@@ -465,13 +475,15 @@ impl StageRunner {
             };
             let log_path = group_root.join("logs").join(format!("{}.log", &safe_stage));
             let workspace_dir = group_root.join("workspace");
+            let stages_dir = Some(group_root.join("stages"));
             let stage_dir = match stage_name {
                 "" | "__cleanup__" => None,
-                _ => Some(group_root.join("stages").join(&safe_stage)),
+                _ => Some(stages_dir.as_ref().expect("stages dir").join(&safe_stage)),
             };
             ResolvedStagePaths {
                 log_path,
                 workspace_dir,
+                stages_dir,
                 stage_dir,
             }
         } else {
@@ -485,6 +497,7 @@ impl StageRunner {
             ResolvedStagePaths {
                 log_path,
                 workspace_dir,
+                stages_dir: None,
                 stage_dir: None,
             }
         }
