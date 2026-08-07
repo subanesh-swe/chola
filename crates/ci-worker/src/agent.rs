@@ -36,7 +36,8 @@ struct JobContext {
     worker_id: String,
     job_id: String,
     command: String,
-    work_dir: String,
+    workspace_dir: String,
+    stage_dir: Option<String>,
     /// Pre-resolved per-stage log path (new vs legacy layout decided up
     /// front in `handle_job_assignment`).
     log_path: String,
@@ -508,21 +509,30 @@ async fn handle_job_assignment(
         &assignment.stage_name,
         &job_id,
     );
-    let work_dir = resolved.workspace.to_string_lossy().to_string();
+    let workspace_dir = resolved.workspace_dir.to_string_lossy().to_string();
+    let stage_dir = resolved
+        .stage_dir
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
     let stage_log_path = resolved.log_path.to_string_lossy().to_string();
 
     // Build environment: assignment env + worker-local paths
     let mut environment: HashMap<String, String> =
         assignment.environment.clone().into_iter().collect();
     environment.insert("CHOLA_REPOS_DIR".into(), config.execution.repos_dir.clone());
-    environment.insert("CHOLA_WORK_DIR".into(), work_dir.clone());
+    environment.insert("CHOLA_WORKSPACE_DIR".into(), workspace_dir.clone());
+    environment.insert("CHOLA_WORK_DIR".into(), workspace_dir.clone());
+    if let Some(ref stage_dir) = stage_dir {
+        environment.insert("CHOLA_STAGE_DIR".into(), stage_dir.clone());
+    }
     environment.insert("WORKER_ID".into(), config.worker_id.clone());
 
     let ctx = JobContext {
         worker_id: config.worker_id.clone(),
         job_id: job_id.clone(),
         command: assignment.command.clone(),
-        work_dir,
+        workspace_dir,
+        stage_dir,
         log_path: stage_log_path,
         pre_script: assignment.pre_script.clone(),
         post_script: assignment.post_script.clone(),
@@ -760,13 +770,21 @@ async fn run_job_with_streaming(
     cancel_rx: mpsc::Receiver<i32>,
 ) -> ci_core::proto::orchestrator::JobState {
     info!(
-        "run_job_with_streaming: job_id={}, command={}, work_dir={}",
-        ctx.job_id, ctx.command, ctx.work_dir
+        "run_job_with_streaming: job_id={}, command={}, workspace_dir={}",
+        ctx.job_id, ctx.command, ctx.workspace_dir
     );
 
-    // Ensure per-build workspace directory exists
-    if let Err(e) = tokio::fs::create_dir_all(&ctx.work_dir).await {
-        warn!("Failed to create workspace dir {}: {}", ctx.work_dir, e);
+    // Ensure the shared build workspace directory exists.
+    if let Err(e) = tokio::fs::create_dir_all(&ctx.workspace_dir).await {
+        warn!(
+            "Failed to create workspace dir {}: {}",
+            ctx.workspace_dir, e
+        );
+    }
+    if let Some(ref stage_dir) = ctx.stage_dir {
+        if let Err(e) = tokio::fs::create_dir_all(stage_dir).await {
+            warn!("Failed to create stage dir {}: {}", stage_dir, e);
+        }
     }
 
     let has_stage_scripts = !ctx.pre_script.is_empty() || !ctx.post_script.is_empty();
@@ -825,7 +843,7 @@ async fn run_job_with_streaming(
                 &ctx.command,
                 &ctx.pre_script,
                 &ctx.post_script,
-                &ctx.work_dir,
+                &ctx.workspace_dir,
                 &log_path,
                 log_tx,
                 cancel_rx,
@@ -853,7 +871,7 @@ async fn run_job_with_streaming(
         let result = executor
             .execute_streaming(
                 &ctx.command,
-                &ctx.work_dir,
+                &ctx.workspace_dir,
                 &log_path,
                 log_tx,
                 cancel_rx,
