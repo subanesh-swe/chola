@@ -1079,6 +1079,11 @@ impl Storage {
                 "retention_archive",
                 include_str!("../../../migrations/033_retention_archive.sql"),
             ),
+            (
+                34,
+                "reserved_stages",
+                include_str!("../../../migrations/034_reserved_stages.sql"),
+            ),
         ];
 
         for (version, name, sql) in migrations {
